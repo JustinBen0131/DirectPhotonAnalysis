@@ -71,7 +71,7 @@ class caloTreeGen : public SubsysReco
 
   void doZDC(int zdcOn, std::string zdcNode) {storeZDC = zdcOn; m_zdcTowerNode = zdcNode;}
   
-  void doTrig(int trigOn, std::string trigNode) {storeTrig = trigOn; m_trigNode = trigNode;}
+//  void doTrig(int trigOn, std::string trigNode) {storeTrig = trigOn; m_trigNode = trigNode;}
 
  private:
 
@@ -157,9 +157,9 @@ class caloTreeGen : public SubsysReco
   int storeEMCal = 1;
   int storeHCals = 1;
   int storeZDC = 1;
-  int storeTrig = 1;
+ // int storeTrig = 1;
   
-  std::string m_trigNode;
+ // std::string m_trigNode;
   std::string m_emcTowerNode;
   std::string m_ohcTowerNode;
   std::string m_ihcTowerNode;
