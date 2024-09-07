@@ -45,5 +45,3 @@ while IFS= read -r runnumber; do
 done < "$dst_file"
  
 echo "All runnumbers processed. Results saved in list_allFEM_clock directory"
-
-
