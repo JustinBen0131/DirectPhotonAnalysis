@@ -60,4 +60,3 @@ void FinalizeGoldenRunList_calo_gl1_fem() {
 
     std::cout << "Number of Calo + GL1 GOLDEN runs saved to FinalGoldenRunList_calo_gl1_femChecked.txt: " << golden_runs.size() << std::endl;
 }
-
