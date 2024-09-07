@@ -133,17 +133,16 @@ int caloTreeGen::Init(PHCompositeNode *topNode)
   T -> Branch("totalCaloEZDC",&totalCaloEZDC);
   T -> Branch("zvertex",&m_vertex);
   
-  //GL1 Information
-  if(storeTrig) {
-      T->Branch("gl1_clock",&b_gl1_clock, "gl1_clock/l");
-      T->Branch("gl1_scaled",b_gl1_scaled, "gl1_scaled[64]/l");
-      T->Branch("gl1_live",b_gl1_live, "gl1_live[64]/l");
-      T->Branch("gl1_raw",b_gl1_raw, "gl1_raw[64]/l");
-      T->Branch("gl1_rawvec",&b_gl1_rawvec, "gl1_rawvec/l");
-      T->Branch("gl1_livevec",&b_gl1_livevec, "gl1_livevec/l");
-      T->Branch("gl1_scaledvec",&b_gl1_scaledvec, "gl1_scaledvec/l");
+
+  T->Branch("gl1_clock",&b_gl1_clock, "gl1_clock/l");
+  T->Branch("gl1_scaled",b_gl1_scaled, "gl1_scaled[64]/l");
+  T->Branch("gl1_live",b_gl1_live, "gl1_live[64]/l");
+  T->Branch("gl1_raw",b_gl1_raw, "gl1_raw[64]/l");
+  T->Branch("gl1_rawvec",&b_gl1_rawvec, "gl1_rawvec/l");
+  T->Branch("gl1_livevec",&b_gl1_livevec, "gl1_livevec/l");
+  T->Branch("gl1_scaledvec",&b_gl1_scaledvec, "gl1_scaledvec/l");
         
-  }
+  
 
   
   
@@ -362,7 +361,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode)
 
   
   _gl1_packet = findNode::getClass<Gl1Packet>(topNode, "GL1Packet");
-  if (storeTrig && _gl1_packet) {
+  if (_gl1_packet) {
       b_gl1_clock = _gl1_packet->lValue(0, "BCO");
       b_gl1_rawvec = _gl1_packet->lValue(0, "TriggerInput");
       b_gl1_livevec = _gl1_packet->lValue(0, "TriggerVector");
