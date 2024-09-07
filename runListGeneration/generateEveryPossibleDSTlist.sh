@@ -72,4 +72,3 @@ echo -e "\033[1;31mTotal dropped segments from CreateDstList.pl: $dropped_segmen
 # Output results
 echo "All run numbers processed. Results saved in dst_list directory."
 echo "Segment comparison completed."
-
