@@ -23,16 +23,25 @@ std::map<int, std::string> getTriggerMappingForRun(int run) {
         return triggerMap;
     }
 
-    // Query for trigger mapping
+    // Construct a query to get the trigger mapping for a specific run
     std::string query =
+        // Generate a list of indices from 0 to 63
         "WITH all_indices AS ( "
         "SELECT generate_series(0, 63) AS index) "
+    
+        // Select the index and corresponding trigger name, using 'EMPTY' if no trigger name exists
         "SELECT ai.index, COALESCE(gt.triggername, 'EMPTY') AS triggername "
+    
+        // Join the generated indices with the gl1_triggernames table to find matching trigger names
         "FROM all_indices ai "
         "LEFT JOIN gl1_triggernames gt "
         "ON ai.index = gt.index "
+    
+        // Filter the results to get trigger names valid for the given run number
         "AND gt.runnumber <= " + std::to_string(run) + " "
         "AND gt.runnumber_last >= " + std::to_string(run) + " "
+    
+        // Sort the results by index
         "ORDER BY ai.index;";
 
     TSQLResult* res = db->Query(query.c_str());
