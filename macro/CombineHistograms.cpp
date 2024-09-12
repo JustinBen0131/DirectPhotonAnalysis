@@ -20,6 +20,41 @@
 const int colWidthName = 50;
 const int colWidthCount = 20;
 
+void get_scaledowns(int runnumber, int scaledowns[]) {
+  TSQLServer *db = TSQLServer::Connect("pgsql://sphnxdaqdbreplica:5432/daq","phnxro","");
+ 
+  if (db) {
+      printf("Server info: %s\n", db->ServerInfo());
+  }
+  else {
+      printf("bad\n");
+  }
+  TSQLRow *row;
+  TSQLResult *res;
+  TString cmd = "";
+  char sql[1000];
+  
+  for (int is = 0; is < 64; is++) {
+      sprintf(sql, "select scaledown%02d from gl1_scaledown where runnumber = %d;", is, runnumber);
+      printf("%s \n" , sql);
+ 
+      res = db->Query(sql);
+      
+      int nrows = res->GetRowCount();
+
+      int nfields = res->GetFieldCount();
+      for (int i = 0; i < nrows; i++) {
+          row = res->Next();
+          for (int j = 0; j < nfields; j++) {
+              scaledowns[is] = stoi(row->GetField(j));
+          }
+          delete row;
+      }
+      delete res;
+  }
+  delete db;
+}
+
 void CombineHistograms() {
     // Input and output directories
     TString inputDir = "/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/outputHists";
@@ -241,9 +276,8 @@ void CombineHistograms() {
         TDirectory* invMassDir = (TDirectory*)runFile->Get("InvariantMassDistributions");
         TDirectory* qaDir = (TDirectory*)runFile->Get("QA");
         
-        int nEvents = 1;  // Default value for normalization, assuming at least 1 event in case no count is available.
+        int nEvents = 1;  
         
-        // Retrieve number of events from a histogram or TTree (assuming you have a histogram like "EventCount")
         TH1* eventCountHist = (TH1*)runFile->Get("EventCount");
         if (eventCountHist) {
             nEvents = eventCountHist->GetEntries();
