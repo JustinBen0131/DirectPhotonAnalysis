@@ -63,7 +63,7 @@ void setTreeBranches(TTree* tree, const std::string& fin,
     }
 }
 void fillQAHistograms(TH2F* h2_EMCal_TowerEtaPhi_2D, TH2F* h2_OHCal_TowerEnergy, TH2F* h2_IHCal_TowerEnergy,
-                      TH1F* hTotalCaloEEMCal, TH1F* hTotalCaloEOHCal, TH1F* hTotalCaloEIHCal,
+                      TH1F* hTotalCaloEEMCal, TH1F* hTotalCaloEOHCal, TH1F* hTotalCaloEIHCal, TH1F* h8by8TowerEnergySum,
                       TH1F* hClusterECore, TH1F* hClusterPt, TH1F* hClusterChi2, TH1F* h_ohcalChi2, TH1F* h_ihcalChi2, TH1F* hVtxZ,
                       const std::vector<float>* emcTowE, const std::vector<int>* emcTowiEta, const std::vector<int>* emcTowiPhi,
                       const std::vector<float>* ohcTowE, const std::vector<float>* ohcTowiEta, const std::vector<float>* ohcTowiPhi,
@@ -72,22 +72,39 @@ void fillQAHistograms(TH2F* h2_EMCal_TowerEtaPhi_2D, TH2F* h2_OHCal_TowerEnergy,
                       const std::vector<float>* ohcChi2, const std::vector<float>* ihcChi2, const float* totalCaloEEMCal,
                       const float* totalCaloEOHCal, const float* totalCaloEIHCal, const float* zvertex) {
 
-
+    // Initialize a 2D array to store energy sums for each 8x8 block
+    float energymap[12][35] = {0};
+    // Calculate the energy sum for each 8x8 block in the EMCal
     for (size_t j = 0; j < emcTowE->size(); j++) {
         int iEta_emc = emcTowiEta->at(j);
         int iPhi_emc = emcTowiPhi->at(j);
         float energy_emc = emcTowE->at(j);
+        // Fill the 2D energy distribution histogram
         h2_EMCal_TowerEtaPhi_2D->Fill(iEta_emc, iPhi_emc, energy_emc);
+
+        // Sum the energy into 8x8 blocks
+        int ebin = iEta_emc / 8;
+        int pbin = iPhi_emc / 8;
+        energymap[ebin][pbin] += energy_emc;
     }
-
-
+    // Find the maximum energy sum in the 8x8 blocks
+    float max_energy_sum = 0.0;
+    for (int ebin = 0; ebin < 12; ++ebin) {
+        for (int pbin = 0; pbin < 35; ++pbin) {
+            if (energymap[ebin][pbin] > max_energy_sum) {
+                max_energy_sum = energymap[ebin][pbin];
+            }
+        }
+    }
+    // Fill the maximum 8x8 tower energy sum histogram
+    h8by8TowerEnergySum->Fill(max_energy_sum);
+    // Fill OHCal Tower Energy
     for (size_t j = 0; j < ohcTowE->size(); j++) {
         int iEta_ohc = ohcTowiEta->at(j);
         int iPhi_ohc = ohcTowiPhi->at(j);
         float energy_ohc = ohcTowE->at(j);
         h2_OHCal_TowerEnergy->Fill(iEta_ohc, iPhi_ohc, energy_ohc);
     }
-
     // Fill IHCal Tower Energy
     for (size_t j = 0; j < ihcTowE->size(); j++) {
         int iEta_ihc = ihcTowiEta->at(j);
@@ -95,14 +112,10 @@ void fillQAHistograms(TH2F* h2_EMCal_TowerEtaPhi_2D, TH2F* h2_OHCal_TowerEnergy,
         float energy_ihc = ihcTowE->at(j);
         h2_IHCal_TowerEnergy->Fill(iEta_ihc, iPhi_ihc, energy_ihc);
     }
-
-
     hTotalCaloEEMCal->Fill(*totalCaloEEMCal);
     hTotalCaloEOHCal->Fill(*totalCaloEOHCal);
     hTotalCaloEIHCal->Fill(*totalCaloEIHCal);
     hVtxZ->Fill(*zvertex);
-
-
 
     if (!clusterECore->empty()) {
         float maxClusterECore = *std::max_element(clusterECore->begin(), clusterECore->end());
@@ -166,37 +179,174 @@ std::vector<int> extractTriggerBits(uint64_t b_gl1_scaledvec, int entry) {
     }
     return trig_bits;
 }
-bool checkTriggerCondition(const std::vector<int> &trig_bits) {
+bool checkTriggerCondition(const std::vector<int> &trig_bits, int inputBit) {
     for (const int &bit : trig_bits) {
         // Check if the bit is either in the range 24-31 or is exactly 10
-        if ((bit >= 24 && bit <= 31) || bit == 10 || bit == 12 || bit == 13) {
-//            std::cout << "  Trigger condition met with bit: " << bit << std::endl;
+        if (bit == inputBit) {
+            std::cout << "  Trigger condition met with bit: " << bit << std::endl;
             return true;  // At least one of the desired bits is set
         }
     }
-//    std::cout << "  No relevant trigger conditions met." << std::endl;
+    std::cout << "  No relevant trigger conditions met." << std::endl;
     return false;
 }
+void createHistogramsForTriggers(TFile* outFile, const std::vector<int>& triggerIndices,
+                                 std::map<int, std::map<std::string, TObject*>>& qaHistogramsByTrigger,
+                                 std::map<int, std::map<std::string, TH1F*>>& massHistogramsByTrigger,
+                                 const std::vector<float>& asymmetry_values,
+                                 const std::vector<float>& clus_chi_values,
+                                 const std::vector<float>& clus_E_values) {
+    // Create directories and histograms for each trigger index
+    for (int triggerIndex : triggerIndices) {
+        std::cout << "Creating histograms for trigger bit: " << triggerIndex << std::endl;
+        
+        // Create trigger-specific directories within the output file
+        std::string qaDir = "QA/Trigger" + std::to_string(triggerIndex);
+        std::string invMassDir = "InvariantMassDistributions/Trigger" + std::to_string(triggerIndex);
 
+        outFile->mkdir(qaDir.c_str());
+        outFile->mkdir(invMassDir.c_str());
 
-void compareHistograms(TH1F* h1, TH1F* h2, const std::string& label) {
-    bool identical = true;
-    // Check if bin contents are identical
-    if (h1->GetNbinsX() != h2->GetNbinsX()) {
-        identical = false;
-    } else {
-        for (int i = 1; i <= h1->GetNbinsX(); ++i) {
-            if (h1->GetBinContent(i) != h2->GetBinContent(i)) {
-                identical = false;
-                break;
+        // Create QA histograms
+        outFile->cd(qaDir.c_str());
+        std::map<std::string, TObject*> qaHistograms;
+        qaHistograms["h2_EMCal_TowerEtaPhi_2D"] = new TH2F("h2_EMCal_TowerEtaPhi_2D", "EMCal Tower Energy; iEta; iPhi; Energy (GeV)", 96, 0, 96, 256, 0, 256);
+        qaHistograms["h2_OHCal_TowerEnergy"] = new TH2F("h2_OHCal_TowerEnergy", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
+        qaHistograms["h2_IHCal_TowerEnergy"] = new TH2F("h2_IHCal_TowerEnergy", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
+        qaHistograms["hTotalCaloEEMCal"] = new TH1F("hTotalCaloEEMCal", "Total EMCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hTotalCaloEOHCal"] = new TH1F("hTotalCaloEOHCal", "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hTotalCaloEIHCal"] = new TH1F("hTotalCaloEIHCal", "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hClusterChi2"] = new TH1F("hClusterChi2", "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_ohcalChi2"] = new TH1F("h_ohcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_ihcalChi2"] = new TH1F("h_ihcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["hClusterECore"] = new TH1F("hClusterECore", "Cluster ECore; Cluster ECore [GeV]", 100, 0, 100);
+        qaHistograms["hClusterPt"] = new TH1F("hClusterPt", "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
+        qaHistograms["hVtxZ"] = new TH1F("hVtxZ", "Z-vertex Distribution; z [cm]", 100, -70, 70);
+        qaHistograms["h8by8TowerEnergySum"] = new TH1F("h8by8TowerEnergySum", "Max 8x8 Tower Energy Sum; Energy (GeV); Events", 100, 0, 500);
+
+        qaHistogramsByTrigger[triggerIndex] = qaHistograms;
+
+        // Create invariant mass histograms
+        outFile->cd(invMassDir.c_str());
+        std::map<std::string, TH1F*> massHistograms;
+
+        for (float maxAsym : asymmetry_values) {
+            for (float maxChi2 : clus_chi_values) {
+                for (float minClusE : clus_E_values) {
+                    std::string histName = "invMass_E" + formatFloatForFilename(minClusE) +
+                                           "_Chi" + formatFloatForFilename(maxChi2) +
+                                           "_Asym" + formatFloatForFilename(maxAsym);
+                    massHistograms[histName] = new TH1F(histName.c_str(), histName.c_str(), 80, 0, 1.0);
+                    massHistograms[histName]->SetTitle(";M_{#gamma#gamma};");
+                }
             }
         }
+        massHistogramsByTrigger[triggerIndex] = massHistograms;
     }
+}
+void processEvents(TTree* T, const std::vector<int>& triggerIndices,
+                   const std::vector<float>& asymmetry_values,
+                   const std::vector<float>& clus_chi_values,
+                   const std::vector<float>& clus_E_values,
+                   std::map<int, std::map<std::string, TObject*>>& qaHistogramsByTrigger,
+                   std::map<int, std::map<std::string, TH1F*>>& massHistogramsByTrigger,
+                   ULong64_t& b_gl1_scaledvec, float& zvertex,
+                   std::vector<float>* clusterE, std::vector<float>* clusterECore,
+                   std::vector<float>* clusterTowMaxE, std::vector<float>* clusterPhi,
+                   std::vector<float>* clusterEta, std::vector<float>* clusterPt,
+                   std::vector<float>* clusterChi2, std::vector<float>* clusterNtow,
+                   std::vector<float>* emcTowE, std::vector<int>* emcTowiEta,
+                   std::vector<int>* emcTowiPhi, std::vector<float>* ohcTowE,
+                   std::vector<float>* ohcTowiEta, std::vector<float>* ohcTowiPhi,
+                   std::vector<float>* ihcTowE, std::vector<float>* ihcTowiEta,
+                   std::vector<float>* ihcTowiPhi, std::vector<float>* ohcChi2,
+                   std::vector<float>* ihcChi2, float& totalCaloEEMCal,
+                   float& totalCaloEOHCal, float& totalCaloEIHCal) {
 
-    if (!identical) {
-        std::cout << "\033[1;31m" << "ERROR: The histograms from the two strategies (" << label << ") are NOT identical!" << "\033[0m" << std::endl;
-    } else {
-        std::cout << "The histograms from the two strategies (" << label << ") are identical." << std::endl;
+    // Loop over all events once
+    for (int i = 0; i < T->GetEntries(); i++) {
+        T->GetEntry(i);
+
+        // Extract trigger bits for this event
+        std::vector<int> trig_bits = extractTriggerBits(b_gl1_scaledvec, i);
+
+        // Apply event-level cuts (e.g., zvertex)
+        if (fabs(zvertex) >= 30) {
+            continue;
+        }
+
+        // For each trigger bit, fill corresponding histograms if it is active
+        for (int triggerIndex : triggerIndices) {
+            if (!checkTriggerCondition(trig_bits, triggerIndex)) {
+                continue;  // Skip if this trigger bit is not set
+            }
+            std::cout << "Filling histograms for trigger bit: " << triggerIndex << " in event " << i << std::endl;
+            // Fill QA histograms for this trigger
+            auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
+            fillQAHistograms(
+                (TH2F*)qaHistograms["h2_EMCal_TowerEtaPhi_2D"],
+                (TH2F*)qaHistograms["h2_OHCal_TowerEnergy"],
+                (TH2F*)qaHistograms["h2_IHCal_TowerEnergy"],
+                (TH1F*)qaHistograms["hTotalCaloEEMCal"],
+                (TH1F*)qaHistograms["hTotalCaloEOHCal"],
+                (TH1F*)qaHistograms["hTotalCaloEIHCal"],
+                (TH1F*)qaHistograms["h8by8TowerEnergySum"],
+                (TH1F*)qaHistograms["hClusterECore"],
+                (TH1F*)qaHistograms["hClusterPt"],
+                (TH1F*)qaHistograms["hClusterChi2"],
+                (TH1F*)qaHistograms["h_ohcalChi2"],
+                (TH1F*)qaHistograms["h_ihcalChi2"],
+                (TH1F*)qaHistograms["hVtxZ"],
+                emcTowE, emcTowiEta, emcTowiPhi, ohcTowE, ohcTowiEta, ohcTowiPhi,
+                ihcTowE, ihcTowiEta, ihcTowiPhi, clusterECore, clusterPt, clusterChi2,
+                ohcChi2, ihcChi2, &totalCaloEEMCal, &totalCaloEOHCal, &totalCaloEIHCal, &zvertex
+            );
+
+            // Cache cluster properties to avoid repeated access to the vector
+            size_t nClusters = clusterE->size();
+            std::vector<float> cachedPt(nClusters), cachedE(nClusters), cachedChi2(nClusters);
+            for (size_t clus = 0; clus < nClusters; ++clus) {
+                cachedPt[clus] = clusterPt->at(clus);
+                cachedE[clus] = clusterE->at(clus);
+                cachedChi2[clus] = clusterChi2->at(clus);
+            }
+
+            // Fill invariant mass histograms for this trigger
+            auto& massHistograms = massHistogramsByTrigger[triggerIndex];
+            for (size_t clus1 = 0; clus1 < nClusters; ++clus1) {
+                for (size_t clus2 = clus1 + 1; clus2 < nClusters; ++clus2) {
+                    float pt1 = cachedPt[clus1], pt2 = cachedPt[clus2];
+                    float E1 = cachedE[clus1], E2 = cachedE[clus2];
+                    float chi1 = cachedChi2[clus1], chi2 = cachedChi2[clus2];
+
+                    if (pt1 < 2 || pt1 >= 20 || pt2 < 2 || pt2 >= 20) {
+                        continue;
+                    }
+
+                    TLorentzVector photon1, photon2;
+                    photon1.SetPtEtaPhiE(pt1, clusterEta->at(clus1), clusterPhi->at(clus1), E1);
+                    photon2.SetPtEtaPhiE(pt2, clusterEta->at(clus2), clusterPhi->at(clus2), E2);
+                    TLorentzVector meson = photon1 + photon2;
+                    float mesonMass = meson.M();
+                    float asym = fabs(E1 - E2) / (E1 + E2);
+
+                    // Apply cuts and fill histograms
+                    for (float maxAsym : asymmetry_values) {
+                        if (asym >= maxAsym) continue;
+                        for (float maxChi2 : clus_chi_values) {
+                            if (chi1 >= maxChi2 || chi2 >= maxChi2) continue;
+                            for (float minClusE : clus_E_values) {
+                                if (E1 < minClusE || E2 < minClusE) continue;
+                                std::string histName = "invMass_E" + formatFloatForFilename(minClusE) +
+                                                       "_Chi" + formatFloatForFilename(maxChi2) +
+                                                       "_Asym" + formatFloatForFilename(maxAsym);
+                                massHistograms[histName]->Fill(mesonMass);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -217,203 +367,77 @@ void process_nTuples(int nEvents = 0, const std::string &fin = "/Users/patsfan75
         delete f;
         return;
     }
+
+    // Declare variables for branch addresses
+    ULong64_t b_gl1_scaledvec = 0;
+    float zvertex = 0;
+    std::vector<float> *clusterE{0}, *clusterECore{0}, *clusterTowMaxE{0}, *clusterPhi{0}, *clusterEta{0}, *clusterPt{0}, *clusterChi2{0}, *clusterNtow{0};
+    float totalCaloEEMCal = 0, totalCaloEOHCal = 0, totalCaloEIHCal = 0;
+    std::vector<float> *emcTowE{0}, *ohcTowE{0}, *ihcTowE{0}, *ohcChi2{0}, *ihcChi2{0};
+    std::vector<int> *emcTowiEta{0}, *emcTowiPhi{0};
+    std::vector<float> *ohcTowiEta{0}, *ohcTowiPhi{0}, *ihcTowiEta{0}, *ihcTowiPhi{0};
+
+    try {
+        // Set branch addresses using the utility function carefully in case corruption don't override memory
+        setTreeBranches(T, fin, &b_gl1_scaledvec, &zvertex, &clusterE, &clusterECore, &clusterTowMaxE, &clusterPhi,
+                        &clusterEta, &clusterPt, &clusterChi2, &clusterNtow, &totalCaloEEMCal, &emcTowE,
+                        &emcTowiEta, &emcTowiPhi, &totalCaloEOHCal, &ohcTowE, &ohcTowiEta, &ohcTowiPhi, &ohcChi2,
+                        &totalCaloEIHCal, &ihcTowE, &ihcTowiEta, &ihcTowiPhi, &ihcChi2);
     
+    } catch (const std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
+        f->Close();
+        delete f;
+        return;
+    }
 
-  // Declare variables for branch addresses
-  ULong64_t b_gl1_scaledvec = 0;
-  float zvertex = 0;
-  std::vector<float> *clusterE{0}, *clusterECore{0}, *clusterTowMaxE{0}, *clusterPhi{0}, *clusterEta{0}, *clusterPt{0}, *clusterChi2{0}, *clusterNtow{0};
-  float totalCaloEEMCal = 0, totalCaloEOHCal = 0, totalCaloEIHCal = 0;
-  std::vector<float> *emcTowE{0}, *ohcTowE{0}, *ihcTowE{0}, *ohcChi2{0}, *ihcChi2{0};
-  std::vector<int> *emcTowiEta{0}, *emcTowiPhi{0};
-  std::vector<float> *ohcTowiEta{0}, *ohcTowiPhi{0}, *ihcTowiEta{0}, *ihcTowiPhi{0};
-
-  try {
-    // Set branch addresses using the utility function carefully in case corruption don't override memory
-      setTreeBranches(T, fin, &b_gl1_scaledvec, &zvertex, &clusterE, &clusterECore, &clusterTowMaxE, &clusterPhi,
-                      &clusterEta, &clusterPt, &clusterChi2, &clusterNtow, &totalCaloEEMCal, &emcTowE,
-                      &emcTowiEta, &emcTowiPhi, &totalCaloEOHCal, &ohcTowE, &ohcTowiEta, &ohcTowiPhi, &ohcChi2,
-                      &totalCaloEIHCal, &ihcTowE, &ihcTowiEta, &ihcTowiPhi, &ihcChi2);
-    
-  } catch (const std::runtime_error& e) {
-      std::cerr << e.what() << std::endl;
-      f->Close();
-      delete f;
-      return;
-  }
-
-
-    
-
-  // Create output file
-  TFile* outFile = new TFile(fout.c_str(), "RECREATE");
-  if (!outFile || outFile->IsZombie()) {
+    // Create output file
+    TFile* outFile = new TFile(fout.c_str(), "RECREATE");
+    if (!outFile || outFile->IsZombie()) {
         std::cerr << "Error: Cannot create output file " << fout << std::endl;
         logCorruptedFile(fout);  // Log the corrupted output file
         f->Close();
         delete f;
         return;
-  }
- 
-  // Create the two directories for the output
-  outFile->mkdir("QA");
-  outFile->mkdir("InvariantMassDistributions");
+    }
 
-    
-  outFile->cd("QA");
-  // Create 2D histogram for EMC tower energy distribution
-  TH2F* h2_EMCal_TowerEtaPhi_2D = new TH2F("h2_EMCal_TowerEtaPhi_2D", "EMCal Tower Energy; iEta; iPhi; Energy (GeV)", 96, 0, 96, 256, 0, 256);  // 96 bins in iEta, 256 bins in iPhi
-  TH2F* h2_OHCal_TowerEnergy = new TH2F("h2_OHCal_TowerEtaPhi_2D", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);  // 24 bins in iEta, 64 bins in iPhi
-  TH2F* h2_IHCal_TowerEnergy = new TH2F("h2_IHCal_TowerEtaPhi_2D", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);  // 24 bins in iEta, 64 bins in iPhi
-  TH1F* hTotalCaloEEMCal = new TH1F("hTotalCaloEEMCal", "Total EMCal Energy; Energy (GeV)", 100, 0, 500);
-  TH1F* hTotalCaloEOHCal = new TH1F("hTotalCaloEOHCal", "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
-  TH1F* hTotalCaloEIHCal = new TH1F("hTotalCaloEIHCal", "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
-  TH1F* hClusterChi2 = new TH1F("hClusterChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-  TH1F* h_ohcalChi2 = new TH1F("h_ohcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-  TH1F* h_ihcalChi2 = new TH1F("h_ihcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-  TH1F* hClusterECore = new TH1F("hClusterECore", "Cluster ECore; Cluster ECore [GeV]", 100, 0, 100);
-  TH1F* hClusterPt = new TH1F("hClusterPt", "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
-  TH1F* hVtxZ = new TH1F("hVtxZ", "Z-vertex Distribution; z [cm]", 100, -70, 70);
+    // Define the relevant trigger indices , 25, 26, 27, 28, 29, 30, 31
+    std::vector<int> triggerIndices = {10, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};  // Add/remove as needed
 
-  std::map<std::string, TObject*> qaHistograms;
+    // Asymmetry, chi2, and energy cut parameters
+    std::vector<float> asymmetry_values = {0.5, 0.7};
+    std::vector<float> clus_chi_values = {3, 4};
+    std::vector<float> clus_E_values = {0.5, 0.75, 1};
 
-  qaHistograms["h2_EMCal_TowerEtaPhi_2D"] = h2_EMCal_TowerEtaPhi_2D;
-  qaHistograms["h2_OHCal_TowerEnergy"] = h2_OHCal_TowerEnergy;
-  qaHistograms["h2_IHCal_TowerEnergy"] = h2_IHCal_TowerEnergy;
-  qaHistograms["hTotalCaloEEMCal"] = hTotalCaloEEMCal;
-  qaHistograms["hTotalCaloEOHCal"] = hTotalCaloEOHCal;
-  qaHistograms["hTotalCaloEIHCal"] = hTotalCaloEIHCal;
-  qaHistograms["hClusterChi2"] = hClusterChi2;
-  qaHistograms["h_ohcalChi2"] = h_ohcalChi2;
-  qaHistograms["h_ihcalChi2"] = h_ihcalChi2;
-  qaHistograms["hClusterECore"] = hClusterECore;
-  qaHistograms["hClusterPt"] = hClusterPt;
-  qaHistograms["hVtxZ"] = hVtxZ;
+    // Maps to hold histograms for each trigger bit
+    std::map<int, std::map<std::string, TObject*>> qaHistogramsByTrigger;
+    std::map<int, std::map<std::string, TH1F*>> massHistogramsByTrigger;
+
+    createHistogramsForTriggers(outFile, triggerIndices, qaHistogramsByTrigger, massHistogramsByTrigger, asymmetry_values, clus_chi_values, clus_E_values);
+
+    // Call the function to process all events
+    processEvents(T, triggerIndices, asymmetry_values, clus_chi_values, clus_E_values, qaHistogramsByTrigger, massHistogramsByTrigger,
+                  b_gl1_scaledvec, zvertex, clusterE, clusterECore, clusterTowMaxE, clusterPhi, clusterEta, clusterPt, clusterChi2, clusterNtow,
+                  emcTowE, emcTowiEta, emcTowiPhi, ohcTowE, ohcTowiEta, ohcTowiPhi, ihcTowE, ihcTowiEta, ihcTowiPhi, ohcChi2, ihcChi2, totalCaloEEMCal, totalCaloEOHCal, totalCaloEIHCal);
 
 
-  std::map<std::string, TH1F*> massHistograms;
-  std::vector<float> asymmetry_values = {0.5, 0.7};
-  std::vector<float> clus_chi_values = {3, 4};
-  std::vector<float> clus_E_values = {0.5, 0.75, 1};
-    
-    // Create histograms based on cut parameters
-    for (float maxAsym : asymmetry_values) {
-        for (float maxChi2 : clus_chi_values) {
-            for (float minClusE : clus_E_values) {
-                // Add cuts to the histogram name
-                std::string histName = "invMass_E" + formatFloatForFilename(minClusE) +
-                                        "_Chi" + formatFloatForFilename(maxChi2) +
-                                        "_Asym" + formatFloatForFilename(maxAsym);
-                TH1F* mass = new TH1F(histName.c_str(), histName.c_str(), 80, 0, 1.0);
-                mass->SetTitle(";M_{#gamma#gamma};");
-                massHistograms[histName] = mass;  // Store histogram in the map
-            }
+    // Write all histograms to file and clean up
+    for (const auto& [triggerIndex, qaHistograms] : qaHistogramsByTrigger) {
+        outFile->cd(("QA/Trigger" + std::to_string(triggerIndex)).c_str());
+        for (const auto& [name, hist] : qaHistograms) {
+            hist->Write();
+            delete hist;
         }
     }
-    /*
-     Loop over all events
-    */
- 
-  for (int i = 0; i < T -> GetEntries(); i++) {
-      T->GetEntry(i);
-      
-      std::cout << "Processing event: " << i << std::endl;
-      //create QA histograms
-      fillQAHistograms(h2_EMCal_TowerEtaPhi_2D, h2_OHCal_TowerEnergy, h2_IHCal_TowerEnergy,
-                         hTotalCaloEEMCal, hTotalCaloEOHCal, hTotalCaloEIHCal,
-                         hClusterECore, hClusterPt, hClusterChi2, h_ohcalChi2, h_ihcalChi2, hVtxZ,
-                         emcTowE, emcTowiEta, emcTowiPhi,
-                         ohcTowE, ohcTowiEta, ohcTowiPhi,
-                         ihcTowE, ihcTowiEta, ihcTowiPhi,
-                         clusterECore, clusterPt, clusterChi2, ohcChi2, ihcChi2,
-                         &totalCaloEEMCal, &totalCaloEOHCal, &totalCaloEIHCal, &zvertex);
-      
-      // Apply event-level cuts (e.g., zvertex, trigger condition)
-      if (fabs(zvertex) >= 30) {
-          continue;
-      }
-      std::vector<int> trig_bits = extractTriggerBits(b_gl1_scaledvec, i);
 
-      // Check if the event passes the trigger condition
-      if (!checkTriggerCondition(trig_bits)) {
-          continue;  // Skip this event if no relevant trigger bits are set
-      }
-      // Cache cluster properties to avoid repeated access to the vector
-      size_t nClusters = clusterE->size();
-      std::vector<float> cachedPt(nClusters), cachedE(nClusters), cachedChi2(nClusters);
-      for (size_t clus = 0; clus < nClusters; ++clus) {
-          cachedPt[clus] = clusterPt->at(clus);
-          cachedE[clus] = clusterE->at(clus);
-          cachedChi2[clus] = clusterChi2->at(clus);
-      }
+    for (const auto& [triggerIndex, massHistograms] : massHistogramsByTrigger) {
+        outFile->cd(("InvariantMassDistributions/Trigger" + std::to_string(triggerIndex)).c_str());
+        for (const auto& [name, hist] : massHistograms) {
+            hist->Write();
+            delete hist;
+        }
+    }
 
-      // Loop over unique cluster pairs
-      for (size_t clus1 = 0; clus1 < nClusters; ++clus1) {
-          for (size_t clus2 = clus1 + 1; clus2 < nClusters; ++clus2) {
-              float pt1 = cachedPt[clus1], pt2 = cachedPt[clus2];
-              float E1 = cachedE[clus1], E2 = cachedE[clus2];
-              float chi1 = cachedChi2[clus1], chi2 = cachedChi2[clus2];
-
-              // Apply the pT cut (2-20 GeV)
-              if (pt1 < 1 || pt1 >= 50 || pt2 < 1 || pt2 >= 50) {
-                  continue;
-              }
-
-              TLorentzVector photon1, photon2;
-              photon1.SetPtEtaPhiE(pt1, clusterEta->at(clus1), clusterPhi->at(clus1), E1);
-              photon2.SetPtEtaPhiE(pt2, clusterEta->at(clus2), clusterPhi->at(clus2), E2);
-              TLorentzVector meson = photon1 + photon2;
-              float mesonMass = meson.M();
-              float asym = fabs(E1 - E2) / (E1 + E2);
-
-
-              // Now apply all combinations of cuts
-              for (float maxAsym : asymmetry_values) {
-                  if (asym >= maxAsym) {
-                      continue;
-                  }
-
-                  for (float maxChi2 : clus_chi_values) {
-                      if (chi1 >= maxChi2 || chi2 >= maxChi2) {
-                          continue;
-                      }
-
-                      for (float minClusE : clus_E_values) {
-                          if (E1 < minClusE || E2 < minClusE) {
-                              continue;
-                          }
-
-                          // Build the histogram name based on cuts
-                          std::string histName = "invMass_E" + formatFloatForFilename(minClusE) +
-                                                "_Chi" + formatFloatForFilename(maxChi2) +
-                                                "_Asym" + formatFloatForFilename(maxAsym);
-
-                          // Fill the corresponding histogram with the meson mass
-                          massHistograms[histName]->Fill(mesonMass);
-                      }
-                  }
-              }
-          }
-      }
-  }
-  // After the event loop, write histograms to file
-  outFile->cd("InvariantMassDistributions");
-  for (auto& pair : massHistograms) {
-      pair.second->Write();
-      delete pair.second;  // Clean up
-  }
-    
-  // Write QA histograms
-  outFile->cd("QA");
-  for (auto &qaHist : qaHistograms) {
-       if (TH1F* hist1D = dynamic_cast<TH1F*>(qaHist.second)) {
-           hist1D->Write();
-       } else if (TH2F* hist2D = dynamic_cast<TH2F*>(qaHist.second)) {
-           hist2D->Write();
-       }
-       delete qaHist.second;  // Clean up after writing
-   }
-
-   outFile->Close();  // Close the output file
-   delete f;  // Clean up the input file
+    outFile->Close();
+    delete f;
 }
