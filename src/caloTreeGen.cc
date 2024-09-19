@@ -58,7 +58,6 @@
  * uses geometry to find a given tower's eta using the correct vertex.
  */
 double caloTreeGen::getTowerEta(RawTowerGeom *tower_geom, double vx, double vy, double vz) {
-    
   float r;
   if (vx == 0 && vy == 0 && vz == 0) {
     r = tower_geom->get_eta();
@@ -89,9 +88,9 @@ caloTreeGen::~caloTreeGen()
 }
 
 //____________________________________________________________________________..
-int caloTreeGen::Init(PHCompositeNode *topNode)
-{
-  
+int caloTreeGen::Init(PHCompositeNode *topNode) {
+  start_time = std::chrono::high_resolution_clock::now();  // Add this line
+
   out = new TFile(Outfile.c_str(),"RECREATE");
 
   
@@ -375,11 +374,6 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         m_vy = 0;
         m_vz = 0;
     }
-
-
-    // Fetch tower containers and geometry once
-    std::cout << "Fetching tower containers and geometry..." << std::endl;
-
     // Declare tower container pointers
     TowerInfoContainer* emcTowerContainer = nullptr;
     TowerInfoContainer* ohcTowerContainer = nullptr;
@@ -419,9 +413,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         if (!*geomContainer) {
             std::cout << "Error: Missing " << geomLabel << " Geometry Container: " << geomName << std::endl;
             return Fun4AllReturnCodes::ABORTEVENT;
-        } else {
-            std::cout << "Loaded " << geomLabel << " Geometry Container: " << geomName << std::endl;
-        }
+        } 
     }
     
     if (storeEMCal && emcTowerContainer) {
@@ -459,7 +451,6 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             if (m_vertex != -9999) {
                 vertex.setZ(m_vertex);
             }
-          
             CLHEP::Hep3Vector E_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);
             CLHEP::Hep3Vector E_vec_cluster_Full = RawClusterUtility::GetEVec(*cluster, vertex);
 
@@ -472,7 +463,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             float clus_chi = cluster -> get_chi2();
             float nTowers = cluster ->getNTowers();
             float maxTowerEnergy = getMaxTowerE(cluster,emcTowerContainer);
-        
+
             m_clusterE.push_back(clusE);
             m_clusterECore.push_back(clusEcore);
             m_clusterPhi.push_back(clus_phi);
@@ -488,10 +479,13 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                 m_clusTowE.push_back(returnClusterTowE(cluster,emcTowerContainer));
             }
             // Calculate isolation energy
+            double ecore_cut_threshold = 0.5;  // Adjust this value to set the desired ECORE cut threshold
+            if (clusEcore < ecore_cut_threshold) {
+                continue;  // Skip clusters that do not meet the ECORE cut
+            }
             double et = clusEcore / cosh(clus_eta);
             double isoEt = 0;
-            if (et < 0) {
-                std::cout << "Skipping cluster with et < 0 in event " << event_count << std::endl;
+            if (et < 1) {
                 continue;  // Skip clusters below eT cut of 0.5 GeV
             }
 
@@ -515,9 +509,6 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             m_clusterEtIso.push_back(isoEt);
         }
     }
-  
-
-    
 
     if(storeZDC && zdcTowerContainer) {
         unsigned int tower_range = zdcTowerContainer->size();
@@ -625,13 +616,23 @@ int caloTreeGen::EndRun(const int runnumber) {
 //____________________________________________________________________________..
 int caloTreeGen::End(PHCompositeNode *topNode) {
   std::cout << "caloTreeGen::End(PHCompositeNode *topNode) This is the End..." << std::endl;
+    
+    
+    // Capture the end time
+  auto end_time = std::chrono::high_resolution_clock::now();  // Add this line
+
+    // Calculate the duration in seconds
+  auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);  // Add this line
+    
+    // Print the total time taken
+  std::cout << "Total runtime of the macro: " << duration.count() << " seconds." << std::endl;  // Add this line
+
 
   out -> cd();
   T -> Write();
   zVertex -> Write();
   out -> Close();
   delete out;
-    
     
   // At the end of the event loop, print out the summary
   std::cout << "Summary of Isolation Energy Calculation:" << std::endl;
