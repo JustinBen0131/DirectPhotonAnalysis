@@ -11,6 +11,19 @@
 #include <ffarawobjects/Gl1Packet.h>
 #include <ffarawobjects/Gl1Packetv1.h>
 #include <ffarawobjects/Gl1Packetv2.h>
+#include <calobase/RawTowerGeom.h>
+#include <calobase/TowerInfoContainer.h>
+#include <calobase/TowerInfoContainerv1.h>
+#include <calobase/TowerInfo.h>
+#include <calobase/TowerInfoDefs.h>
+#include <calobase/RawTowerGeomContainer.h>
+
+
+//for the vertex
+#include <globalvertex/GlobalVertex.h>
+#include <globalvertex/GlobalVertexMap.h>
+
+
 
 class TTree;
 class PHCompositeNode;
@@ -71,11 +84,18 @@ class caloTreeGen : public SubsysReco
 
   void doZDC(int zdcOn, std::string zdcNode) {storeZDC = zdcOn; m_zdcTowerNode = zdcNode;}
   
-//  void doTrig(int trigOn, std::string trigNode) {storeTrig = trigOn; m_trigNode = trigNode;}
+
 
  private:
 
   TTree *T;
+    // Declare counters to track across events
+  int positive_isoEt_count;
+  int negative_isoEt_count;
+  int skipped_tower_count;
+  int towers_in_cone_count;
+  int event_count = 0;
+    
   //EMCal
   std::vector<float> m_emcTowE;
   std::vector<float> m_emciEta;
@@ -83,6 +103,7 @@ class caloTreeGen : public SubsysReco
   std::vector<int> m_emcTime;
   std::vector<float> m_emcChi2;
   std::vector<float> m_emcPed;
+  std::vector<short> m_emcal_good;
   
   //OHCal
   std::vector<float> m_ohciTowPhi;
@@ -91,6 +112,7 @@ class caloTreeGen : public SubsysReco
   std::vector<int> m_ohcTime;
   std::vector<float> m_ohcChi2;
   std::vector<float> m_ohcPed;
+  std::vector<short> m_ohc_good;
     
   //IHCal
   std::vector<float> m_ihciTowPhi;
@@ -99,6 +121,7 @@ class caloTreeGen : public SubsysReco
   std::vector<int> m_ihcTime;
   std::vector<float> m_ihcChi2;
   std::vector<float> m_ihcPed;
+  std::vector<short> m_ihc_good;
 
   //ZDC
   std::vector<float> m_zdcTowE;
@@ -117,6 +140,7 @@ class caloTreeGen : public SubsysReco
   std::vector<float> m_clusterNtow;
   std::vector<float> m_clusterTowMaxE;
   std::vector<float> m_clusterECore;
+  std::vector<float> m_clusterEtIso;
   
   std::vector<std::vector<int> > m_clusTowEta;
   std::vector<std::vector<int> > m_clusTowPhi;
@@ -133,17 +157,34 @@ class caloTreeGen : public SubsysReco
   uint64_t b_gl1_scaled[64];
 
   float m_vertex;
+  double m_vx, m_vy, m_vz;
+    
+  struct TowerData {
+      unsigned int ieta;
+      unsigned int iphi;
+      double energy;
+      int time;
+      float chi2;
+      float pedestal;
+      short good;
+      bool isAcceptable;
+  };
 
   TFile *out;
   //Fun4AllHistoManager *hm = nullptr;
   std::string Outfile = "commissioning.root";
 
   TH1F *zVertex;
-  
+  void collectTowerData(TowerInfoContainer* towerContainer, std::vector<TowerData>& towerDataList);
+  void processTowers(TowerInfoContainer* towerContainer, float& totalCaloE, std::vector<float>& towEta, std::vector<float>& towPhi, std::vector<float>& towE, std::vector<int>& towTime, std::vector<float>& towChi2, std::vector<float>& towPed, std::vector<short>& towGood);
+    
+  void calculateIsoEt(TowerInfoContainer* towerContainer, RawTowerGeomContainer* geomContainer, double& isoEt, const double clus_eta, const double clus_phi, const double m_vx, const double m_vy, const double m_vz, int& skipped_tower_count, int& towers_in_cone_count, const std::string& geomContainerName);
+
   float getMaxTowerE(RawCluster *cluster, TowerInfoContainer *towerContainer);
   std::vector<float> returnClusterTowE(RawCluster *cluster, TowerInfoContainer *towerContainer);
   std::vector<int> returnClusterTowPhi(RawCluster *cluster, TowerInfoContainer *towerContainer);
   std::vector<int> returnClusterTowEta(RawCluster *cluster, TowerInfoContainer *towerContainer);
+    
 
   
   float totalCaloEEMCal;
@@ -157,15 +198,25 @@ class caloTreeGen : public SubsysReco
   int storeEMCal = 1;
   int storeHCals = 1;
   int storeZDC = 1;
- // int storeTrig = 1;
+
   
- // std::string m_trigNode;
   std::string m_emcTowerNode;
   std::string m_ohcTowerNode;
   std::string m_ihcTowerNode;
   std::string m_zdcTowerNode;
   std::string m_clusterNode;
   
+  // Inline deltaR function for calculating distance between points in η-φ space
+  inline float deltaR(float eta1, float eta2, float phi1, float phi2) {
+    float deta = eta1 - eta2;
+    float dphi = phi1 - phi2;
+    if (dphi > M_PI) dphi -= 2 * M_PI;
+    if (dphi < -M_PI) dphi += 2 * M_PI;
+    return sqrt(deta * deta + dphi * dphi);
+  }
+  double getTowerEta(RawTowerGeom* tower_geom, double vx, double vy, double vz);
+  bool IsAcceptableTower(TowerInfo* tower);
+
 };
 
-#endif
+#endif  // CALOTREEGEN_H
