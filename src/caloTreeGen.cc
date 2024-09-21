@@ -97,40 +97,71 @@ caloTreeGen::~caloTreeGen()
 
 //____________________________________________________________________________..
 int caloTreeGen::Init(PHCompositeNode *topNode) {
+    std::cout << ANSI_COLOR_BLUE_BOLD << "Initializing caloTreeGen..." << ANSI_COLOR_RESET << std::endl;
     out = new TFile(Outfile.c_str(),"RECREATE");
+    std::cout << ANSI_COLOR_BLUE_BOLD << "Output file created: " << Outfile << ANSI_COLOR_RESET << std::endl;
+
     
     for (int triggerIndex : triggerIndices) {
         // Create trigger-specific directories within the output file
         std::string qaDir = "QA/Trigger" + std::to_string(triggerIndex);
         std::string invMassDir = "InvariantMassDistributions/Trigger" + std::to_string(triggerIndex);
 
+        std::cout << ANSI_COLOR_BLUE_BOLD << "Creating directories: " << qaDir << ", " << invMassDir << ANSI_COLOR_RESET << std::endl;
+        
         out->mkdir(qaDir.c_str());
         out->mkdir(invMassDir.c_str());
 
         // Create QA histograms
+        std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to QA directory: " << qaDir << ANSI_COLOR_RESET << std::endl;
         out->cd(qaDir.c_str());
         std::map<std::string, TObject*> qaHistograms;
-        qaHistograms["h2_EMCal_TowerEtaPhi_2D"] = new TH2F("h2_EMCal_TowerEtaPhi_2D", "EMCal Tower Energy; iEta; iPhi; Energy (GeV)", 96, 0, 96, 256, 0, 256);
-        qaHistograms["h2_OHCal_TowerEnergy"] = new TH2F("h2_OHCal_TowerEnergy", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
-        qaHistograms["h2_IHCal_TowerEnergy"] = new TH2F("h2_IHCal_TowerEnergy", "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
-        qaHistograms["hTotalCaloEEMCal"] = new TH1F("hTotalCaloEEMCal", "Total EMCal Energy; Energy (GeV)", 100, 0, 500);
-        qaHistograms["hTotalCaloEOHCal"] = new TH1F("hTotalCaloEOHCal", "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
-        qaHistograms["hTotalCaloEIHCal"] = new TH1F("hTotalCaloEIHCal", "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
-        qaHistograms["hClusterChi2"] = new TH1F("hClusterChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["h_emcalChi2"] = new TH1F("h_ihcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["h_ohcalChi2"] = new TH1F("h_ohcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["h_ihcalChi2"] = new TH1F("h_ihcalChi2", "Cluster Chi2; Chi2", 100, 0, 100);
         
-        qaHistograms["hCluster_maxECore"] = new TH1F("hCluster_maxECore", "Max Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
-        qaHistograms["hClusterECore"] = new TH1F("hClusterECore", "Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
-        qaHistograms["hClusterPt"] = new TH1F("hClusterPt", "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
-        qaHistograms["hVtxZ"] = new TH1F("hVtxZ", "Z-vertex Distribution; z [cm]", 100, -70, 70);
-        qaHistograms["h8by8TowerEnergySum"] = new TH1F("h8by8TowerEnergySum", "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20);
-        qaHistograms["h_hcal_energy"] = new TH1F("h_hcal_energy", "Max HCal Tower Energy Sums; Energy [GeV]; Events", 40, 0, 20);
-        qaHistograms["h_jet_energy"] = new TH1F("h_jet_energy", "Maximum 0.8x0.8 Energy Sum (EMCAL + HCAL) [GeV]; Events", 50, 0, 50);
-        qaHistograms["h2_isoEtE"] = new TH2F("h2_isoEtE", "Cluster Isolation Energy vs Cluster Energy;Cluster E [GeV];E_{T}^{iso} [GeV]", 500, 20, 100, 500, -10, 10);
+        // Helper functions for creating histograms with logging
+        auto createHistogram = [&](const std::string& name, const std::string& title, int bins, double xMin, double xMax) {
+            std::cout << ANSI_COLOR_RED_BOLD << "Creating histogram: " << name << " - " << title << ANSI_COLOR_RESET << std::endl;
+            return new TH1F(name.c_str(), title.c_str(), bins, xMin, xMax);
+        };
+
+        auto create2DHistogram = [&](const std::string& name, const std::string& title, int xBins, double xMin, double xMax, int yBins, double yMin, double yMax) {
+            std::cout << ANSI_COLOR_RED_BOLD << "Creating 2D histogram: " << name << " - " << title << ANSI_COLOR_RESET << std::endl;
+            return new TH2F(name.c_str(), title.c_str(), xBins, xMin, xMax, yBins, yMin, yMax);
+        };
+
+        // Create histograms using helper functions to ensure consistent logging
+        qaHistograms["h2_EMCal_TowerEtaPhi_2D_" + std::to_string(triggerIndex)] = create2DHistogram("h2_EMCal_TowerEtaPhi_2D_" + std::to_string(triggerIndex), "EMCal Tower Energy; iEta; iPhi; Energy (GeV)", 96, 0, 96, 256, 0, 256);
+        qaHistograms["h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex)] = create2DHistogram("h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex), "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
+        qaHistograms["h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex)] = create2DHistogram("h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex), "HCal Tower Energy; iEta; iPhi; Energy (GeV)", 24, 0, 24, 64, 0, 64);
+        qaHistograms["hTotalCaloEEMCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEEMCal_" + std::to_string(triggerIndex), "Total EMCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex), "Total EMCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hTotalCaloEOHCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEOHCal_" + std::to_string(triggerIndex), "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hTotalCaloEIHCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEIHCal_" + std::to_string(triggerIndex), "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["hClusterChi2_" + std::to_string(triggerIndex)] = createHistogram("hClusterChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_emcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_emcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_ohcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_ohcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_ihcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_ihcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["hCluster_maxECore_" + std::to_string(triggerIndex)] = createHistogram("hCluster_maxECore_" + std::to_string(triggerIndex), "Max Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
+        qaHistograms["hClusterECore_" + std::to_string(triggerIndex)] = createHistogram("hClusterECore_" + std::to_string(triggerIndex), "Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
+        qaHistograms["hClusterPt_" + std::to_string(triggerIndex)] = createHistogram("hClusterPt_" + std::to_string(triggerIndex), "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
+        qaHistograms["hVtxZ_" + std::to_string(triggerIndex)] = createHistogram("hVtxZ_" + std::to_string(triggerIndex), "Z-vertex Distribution; z [cm]", 100, -70, 70);
+        qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)] = createHistogram("h8by8TowerEnergySum_" + std::to_string(triggerIndex), "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20);
+        qaHistograms["h_hcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_hcal_energy_" + std::to_string(triggerIndex), "Max HCal Tower Energy Sums; Energy [GeV]; Events", 40, 0, 20);
+        qaHistograms["h_jet_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_energy_" + std::to_string(triggerIndex), "Maximum 0.8x0.8 Energy Sum (EMCAL + HCAL) [GeV]; Events", 50, 0, 50);
+        qaHistograms["h_jet_emcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_emcal_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
+        qaHistograms["h_jet_hcalin_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalin_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
+        qaHistograms["h_jet_hcalout_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalout_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
+
+
+        // Create histograms for each dR_cut value
+        for (double dR_cut : dR_values) {
+            std::string dR_cut_str = formatFloatForFilename(dR_cut);
+            std::string histName = "h2_isoEtE_" + std::to_string(triggerIndex) + "_" + dR_cut_str;
+            qaHistograms[histName] = create2DHistogram(histName, "Cluster Isolation Energy vs Cluster Energy;Cluster E [GeV];E_{T}^{iso} [GeV]", 500, 20, 100, 500, -10, 10);
+        }
 
         qaHistogramsByTrigger[triggerIndex] = qaHistograms;
+        
+        std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to Invariant Mass directory: " << invMassDir << ANSI_COLOR_RESET << std::endl;
 
         // Create invariant mass histograms
         out->cd(invMassDir.c_str());
@@ -141,7 +172,9 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                 for (float minClusE : clus_Ecore_values) {
                     std::string histName = "invMass_E" + formatFloatForFilename(minClusE) +
                                            "_Chi" + formatFloatForFilename(maxChi2) +
-                                           "_Asym" + formatFloatForFilename(maxAsym);
+                                           "_Asym" + formatFloatForFilename(maxAsym) +
+                                           "_" + std::to_string(triggerIndex);
+                    std::cout << ANSI_COLOR_RED_BOLD << "Creating invariant mass histogram: " << histName << ANSI_COLOR_RESET << std::endl;
                     TH1F* hist = new TH1F(histName.c_str(), histName.c_str(), 80, 0, 1.0);
                     hist->SetTitle(";M_{#gamma#gamma};");
                     massHistograms[histName] = hist; // Store it as TObject*
@@ -175,13 +208,15 @@ int caloTreeGen::InitRun(PHCompositeNode *topNode) {
 void caloTreeGen::collectTowerData(TowerInfoContainer* towerContainer,
                                    std::vector<TowerData>& towerDataList) {
     if (!towerContainer) {
-        std::cout << "Error: Tower container is null." << std::endl;
+        std::cout << ANSI_COLOR_RED_BOLD << "Error: Tower container is null." << ANSI_COLOR_RESET << std::endl;
         return;
     }
 
     unsigned int tower_range = towerContainer->size();
     towerDataList.reserve(tower_range);
+//    std::cout << ANSI_COLOR_BLUE_BOLD << "Collecting tower data from container, expecting " << tower_range << " towers..." << ANSI_COLOR_RESET << std::endl;
 
+    unsigned int validTowerCount = 0;
     for (unsigned int iter = 0; iter < tower_range; ++iter) {
         TowerInfo* tower = towerContainer->get_tower_at_channel(iter);
         if (!tower) {
@@ -203,9 +238,10 @@ void caloTreeGen::collectTowerData(TowerInfoContainer* towerContainer,
             .good = static_cast<short>(tower->get_isGood() ? 1 : 0),
             .isAcceptable = IsAcceptableTower(tower) // For calculateIsoEt
         };
-
         towerDataList.push_back(data);
+        validTowerCount++;
     }
+//    std::cout << ANSI_COLOR_BLUE_BOLD << "Collected data for " << validTowerCount << " valid towers out of " << tower_range << " total." << ANSI_COLOR_RESET << std::endl;
 }
 
 void caloTreeGen::processTowers(TowerInfoContainer* towerContainer,
@@ -228,6 +264,8 @@ void caloTreeGen::processTowers(TowerInfoContainer* towerContainer,
     towChi2.reserve(towerDataList.size());
     towPed.reserve(towerDataList.size());
     towGood.reserve(towerDataList.size());
+    
+    std::cout << ANSI_COLOR_BLUE_BOLD << "Processing " << towerDataList.size() << " towers..." << ANSI_COLOR_RESET << std::endl;
 
     for (const auto& data : towerDataList) {
         totalCaloE += data.energy;
@@ -239,8 +277,20 @@ void caloTreeGen::processTowers(TowerInfoContainer* towerContainer,
         towPed.push_back(data.pedestal);
         towGood.push_back(data.good);
     }
+//    std::cout << ANSI_COLOR_BLUE_BOLD
+//              << "Completed tower processing: "
+//              << "Total energy = " << totalCaloE << ", "
+//              << "towEta size = " << towEta.size() << ", "
+//              << "towPhi size = " << towPhi.size() << ", "
+//              << "towE size = " << towE.size() << ", "
+//              << "towTime size = " << towTime.size() << ", "
+//              << "towChi2 size = " << towChi2.size() << ", "
+//              << "towPed size = " << towPed.size() << ", "
+//              << "towGood size = " << towGood.size() << "."
+//              << ANSI_COLOR_RESET << std::endl;
 }
-void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const std::vector<float>* m_emciEta, const std::vector<float>* m_emciPhi, const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi, const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi, std::vector<short>** m_emcal_good, std::vector<short>** m_ohc_good, std::vector<short>** m_ihc_good, float& max_8by8energy_emcal, float& max_energy_hcal, float& max_energy_jet) {
+void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const std::vector<float>* m_emciEta, const std::vector<float>* m_emciPhi, const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi, const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi, std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, float& max_8by8energy_emcal, float& max_energy_hcal, float& max_energy_jet,
+    std::map<std::string, TObject*>& qaHistograms, int triggerIndex) {
     
     float energymap[12][32] = {0};
     float energymap_emcal[12][35] = {0};
@@ -273,9 +323,9 @@ void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const s
         int pbin = static_cast<int>(phi / 8.0);
         
         // Skip entries that are not marked as good
-        if (!(*m_emcal_good)->at(ie)) {
-            continue;
-        }
+         if (!m_emcal_good->at(ie)) {
+             continue;
+         }
         energymap[ebin][pbin] += m_emcTowE->at(ie);
         energymap_emcal[ebin][pbin] += m_emcTowE->at(ie);
         energymap_extend[ebin][pbin] += m_emcTowE->at(ie);
@@ -293,7 +343,7 @@ void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const s
         int ebin_ihc = static_cast<int>(eta_ihc / 8.0);
         int pbin_ihc = static_cast<int>(phi_ihc / 8.0);
         
-        if (!(*m_ihc_good)->at(ie)) continue;
+        if (!m_ihc_good->at(ie)) continue;
         energymap_extend[ebin_ihc][pbin_ihc] += m_ihcTowE->at(ie);
         energymap_hcalin[ebin_ihc][pbin_ihc] += m_ihcTowE->at(ie);
         if (pbin_ihc < 3) {
@@ -308,7 +358,7 @@ void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const s
         int ebin_ohc = static_cast<int>(eta_ohc / 8.0);
         int pbin_ohc = static_cast<int>(phi_ohc / 8.0);
 
-        if (!(*m_ohc_good)->at(ie)) continue;
+        if (!m_ohc_good->at(ie)) continue;
         energymap_extend[ebin_ohc][pbin_ohc] += m_ohcTowE->at(ie);
         energymap_hcalout[ebin_ohc][pbin_ohc] += m_ohcTowE->at(ie);
         if (pbin_ohc < 3) {
@@ -331,13 +381,12 @@ void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const s
             }
         }
     }
-    
+    //in case want good trigger map for EMCal
 //    int ebin = 0;
 //    int pbin = 0;
-//    int hcal_ebin = 0;
-//    int hcal_pbin = 0;
-//    int jet_ebin = 0;
-//    int jet_pbin = 0;
+
+    int jet_ebin = 0;
+    int jet_pbin = 0;
 
 
     // Loop over eta bins and phi bins to find the maximum energy in EMCal
@@ -346,25 +395,31 @@ void caloTreeGen::processEnergyMaps(const std::vector<float>* m_emcTowE, const s
             if (k < 9) {
                 if (energymap_jet[k][j] > max_energy_jet) {
                     max_energy_jet = energymap_jet[k][j];
-//                    jet_ebin = k;
-//                    jet_pbin = j;
+                    jet_ebin = k;
+                    jet_pbin = j;
                 }
             }
             if (energymap[k][j] > max_8by8energy_emcal) {
                 max_8by8energy_emcal = energymap[k][j]; // Update maximum EMCal energy
+                //in case want good trigger map
 //                ebin = k;
 //                pbin = j;
             }
             if (energymap_hcalout[k][j] + energymap_hcalin[k][j] > max_energy_hcal) {
                 max_energy_hcal = energymap_hcalin[k][j] + energymap_hcalout[k][j];
-//                hcal_ebin = k;
-//                hcal_pbin = j;
             }
         }
     }
+    // Fill histograms for overall maximum values
+    ((TH1F*)qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)])->Fill(max_8by8energy_emcal);
+    ((TH1F*)qaHistograms["h_hcal_energy_" + std::to_string(triggerIndex)])->Fill(max_energy_hcal);
+    ((TH1F*)qaHistograms["h_jet_energy_" + std::to_string(triggerIndex)])->Fill(max_energy_jet);
+
+    // Fill histograms for contributions from each calorimeter component
+    ((TH1F*)qaHistograms["h_jet_emcal_energy_" + std::to_string(triggerIndex)])->Fill(energymap_jet_emcal[jet_ebin][jet_pbin]);
+    ((TH1F*)qaHistograms["h_jet_hcalin_energy_" + std::to_string(triggerIndex)])->Fill(energymap_jet_hcalin[jet_ebin][jet_pbin]);
+    ((TH1F*)qaHistograms["h_jet_hcalout_energy_" + std::to_string(triggerIndex)])->Fill(energymap_jet_hcalout[jet_ebin][jet_pbin]);
 }
-
-
 
 void caloTreeGen::calculateIsoEt(TowerInfoContainer* towerContainer,
                                  RawTowerGeomContainer* geomContainer,
@@ -419,44 +474,149 @@ void caloTreeGen::calculateIsoEt(TowerInfoContainer* towerContainer,
         }
     }
 }
+// New function to calculate isolation energy and fill histograms
+void caloTreeGen::processIsolationEnergy(
+    TowerInfoContainer* emcTowerContainer,
+    TowerInfoContainer* ihcTowerContainer,
+    TowerInfoContainer* ohcTowerContainer,
+    RawTowerGeomContainer* geomEM,
+    RawTowerGeomContainer* geomIH,
+    RawTowerGeomContainer* geomOH,
+    float clusEcore,
+    float clus_eta,
+    float clus_phi,
+    float m_vx,
+    float m_vy,
+    float m_vz,
+    std::map<std::string, TObject*>& qaHistograms,
+    int triggerIndex,
+    std::vector<double> dR_values,
+    int& skipped_tower_count,
+    int& towers_in_cone_count,
+    int& positive_isoEt_count,
+    int& negative_isoEt_count,
+    double& min_isoEt,
+    double& max_isoEt,
+    std::vector<float>& m_clusterEtIso) {
 
+    // Check the basic conditions as in the original code
+    if (clusEcore < 1) { // cut on ecore
+        return;
+    }
+
+    double et = clusEcore / cosh(clus_eta);
+    if (et < 2) { // cut on transverse energy
+        return;
+    }
+
+    // Calculate isoEt for each dR value
+    for (double dR_cut : dR_values) {
+        std::string dR_cut_str = formatFloatForFilename(dR_cut);
+        double isoEt = 0;
+
+        // Calculate isolation energy using different geometry containers
+        calculateIsoEt(emcTowerContainer, geomEM, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
+                       skipped_tower_count, towers_in_cone_count, "TOWERGEOM_CEMC", dR_cut);
+        calculateIsoEt(ihcTowerContainer, geomIH, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
+                       skipped_tower_count, towers_in_cone_count, "TOWERGEOM_HCALIN", dR_cut);
+        calculateIsoEt(ohcTowerContainer, geomOH, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
+                       skipped_tower_count, towers_in_cone_count, "TOWERGEOM_HCALOUT", dR_cut);
+
+        // Subtract cluster energy from isolation energy
+        isoEt -= et;
+
+        // Update isolation energy counters and limits
+        if (isoEt < 0) {
+            negative_isoEt_count++;
+        } else {
+            positive_isoEt_count++;
+        }
+
+        if (isoEt < min_isoEt) {
+            min_isoEt = isoEt;
+        }
+        if (isoEt > max_isoEt) {
+            max_isoEt = isoEt;
+        }
+
+        // Store the isoEt value and fill the histogram
+        m_clusterEtIso.push_back(isoEt);
+        ((TH1F*)qaHistograms["h2_isoEtE_" + std::to_string(triggerIndex) + "_" + dR_cut_str])->Fill(clusEcore, isoEt);
+    }
+}
+void caloTreeGen::processClusterInvariantMass(
+    const std::vector<float>& clusterE,
+    const std::vector<float>& clusterPt,
+    const std::vector<float>& clusterChi2,
+    const std::vector<float>& clusterEta,
+    const std::vector<float>& clusterPhi,
+    int triggerIndex,
+    std::map<std::string, TObject*>& massHistograms,
+    const std::vector<float>& asymmetry_values,
+    const std::vector<float>& clus_chi_values,
+    const std::vector<float>& clus_Ecore_values)
+{
+    // Loop over all pairs of clusters
+    for (size_t clus1 = 0; clus1 < clusterE.size(); clus1++) {
+        for (size_t clus2 = clus1 + 1; clus2 < clusterE.size(); clus2++) {
+
+            // Extract cluster properties
+            float E1 = clusterE[clus1], E2 = clusterE[clus2];
+            float pt1 = clusterPt[clus1], pt2 = clusterPt[clus2];
+            float chi1 = clusterChi2[clus1], chi2 = clusterChi2[clus2];
+            float eta1 = clusterEta[clus1], eta2 = clusterEta[clus2];
+            float phi1 = clusterPhi[clus1], phi2 = clusterPhi[clus2];
+
+            // Skip combinations based on basic cuts
+            if (pt1 < 2 || pt1 >= 10 || pt2 < 2 || pt2 >= 10) continue;
+
+            // Create Lorentz vectors for the clusters
+            TLorentzVector photon1, photon2;
+            photon1.SetPtEtaPhiE(pt1, eta1, phi1, E1);
+            photon2.SetPtEtaPhiE(pt2, eta2, phi2, E2);
+            TLorentzVector meson = photon1 + photon2;
+            float mesonMass = meson.M();
+            float asym = fabs(E1 - E2) / (E1 + E2);
+
+            // Apply all combinations of cuts and fill histograms
+            for (float maxAsym : asymmetry_values) {
+                for (float maxChi2 : clus_chi_values) {
+                    for (float minClusEcore : clus_Ecore_values) {
+                        std::cout << "Trigger Index: " << triggerIndex
+                                  << ", Cut Values -> Asymmetry: " << maxAsym
+                                  << ", Chi2: " << maxChi2
+                                  << ", Ecore: " << minClusEcore << std::endl;
+
+                        // Apply selection criteria
+                        if (asym >= maxAsym || chi1 >= maxChi2 || chi2 >= maxChi2 || E1 < minClusEcore || E2 < minClusEcore) {
+                            continue;
+                        }
+
+                        // Format the histogram name based on the cut values
+                        std::string histName = "invMass_E" + formatFloatForFilename(minClusEcore) +
+                                               "_Chi" + formatFloatForFilename(maxChi2) +
+                                               "_Asym" + formatFloatForFilename(maxAsym) +
+                                               "_" + std::to_string(triggerIndex);
+
+                        // Fill the corresponding histogram
+                        ((TH1F*)massHistograms[histName])->Fill(mesonMass);
+                    }
+                }
+            }
+        }
+    }
+}
 
 //____________________________________________________________________________..
 int caloTreeGen::process_event(PHCompositeNode *topNode) {
     event_count++;
     std::cout << "\n========== Processing Event " << event_count << " ==========\n";
     
-    
-    // Initialize vertex coordinates to zero early
-    m_vertex = -9999;
-    m_vx = m_vy = m_vz = 0;
-
-    // Fetch the GlobalVertexMap node
-    GlobalVertexMap* vertexmap = findNode::getClass<GlobalVertexMap>(topNode, "GlobalVertexMap");
-    if (vertexmap && !vertexmap->empty()) {
-        GlobalVertex* vtx = vertexmap->begin()->second;  // Fetch the first vertex
-        if (vtx) {
-            m_vx = vtx->get_x();
-            m_vy = vtx->get_y();
-            m_vz = vtx->get_z();
-            m_vertex = vtx->get_z();
-        } else {
-            m_vx = 0;
-            m_vy = 0;
-            m_vz = 0;
-        }
-    } else {
-        m_vx = 0;
-        m_vy = 0;
-        m_vz = 0;
-    }
-    
     _gl1_packet = findNode::getClass<Gl1Packet>(topNode, "GL1Packet");
     if (_gl1_packet) {
         b_gl1_scaledvec = _gl1_packet->lValue(0, "ScaledVector");
     }
     std::vector<int> activeTriggerBits = extractTriggerBits(b_gl1_scaledvec, event_count);
-    std::cout << "We are now looping over trigger bits: ";
     for (int bit : activeTriggerBits) {
         std::cout << bit << " ";
     }
@@ -468,16 +628,32 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             continue;  // Skip if this trigger bit is not active
         }
         std::cout << "Processing Trigger Bit: " << triggerIndex << std::endl;
-        auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
-        if (fabs(m_vertex) >= 30) {
-            continue;
-        }
-        ((TH1F*)qaHistograms["hVtxZ"])->Fill(m_vertex);
-
         
+        m_vx = m_vy = m_vz = 0;
+
+        // Fetch the GlobalVertexMap node
+        GlobalVertexMap* vertexmap = findNode::getClass<GlobalVertexMap>(topNode, "GlobalVertexMap");
+        if (vertexmap && !vertexmap->empty()) {
+            GlobalVertex* vtx = vertexmap->begin()->second;  // Fetch the first vertex
+            m_vx = vtx->get_x();
+            m_vy = vtx->get_y();
+            m_vz = vtx->get_z();
+            m_vertex = vtx->get_z();
+        }
+        
+        // **Reset vectors for each trigger bit to ensure independent analysis**
+        clearVectors();
+
+        auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
+        ((TH1F*)qaHistograms["hVtxZ_" + std::to_string(triggerIndex)])->Fill(m_vertex);
+
         TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC");
         TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
         TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
+        if (!emcTowerContainer && !ihcTowerContainer && !ohcTowerContainer) {
+            std::cout << ANSI_COLOR_RED_BOLD << "No tower containers found, skipping tower processing." << ANSI_COLOR_RESET << std::endl;
+            continue;
+        }
 
         // Declare geometry container pointers
         RawTowerGeomContainer* geomEM = nullptr;
@@ -494,53 +670,78 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         for (auto& [geomContainer, geomName, geomLabel] : geomContainers) {
             *geomContainer = findNode::getClass<RawTowerGeomContainer>(topNode, geomName);
             if (!*geomContainer) {
-                std::cout << "Error: Missing " << geomLabel << " Geometry Container: " << geomName << std::endl;
+                std::cout << ANSI_COLOR_RED_BOLD << "Error: Missing " << geomLabel << " Geometry Container: " << geomName << ANSI_COLOR_RESET << std::endl;
                 return Fun4AllReturnCodes::ABORTEVENT;
             }
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Loaded " << geomLabel << " Geometry Container." << ANSI_COLOR_RESET << std::endl;
         }
         
         // Process towers and fill histograms
         if (emcTowerContainer) {
-            std::cout << "Processing EMCal Towers..." << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Processing EMCal Towers..." << ANSI_COLOR_RESET << std::endl;
             processTowers(emcTowerContainer, totalCaloEEMCal, m_emciEta, m_emciPhi, m_emcTowE, m_emcTime, m_emcChi2, m_emcPed, m_emcal_good);
             for (size_t i = 0; i < m_emcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_EMCal_TowerEtaPhi_2D"])->Fill(m_emciEta[i], m_emciPhi[i], m_emcTowE[i]);
+                ((TH2F*)qaHistograms["h2_EMCal_TowerEtaPhi_2D_" + std::to_string(triggerIndex)])->Fill(m_emciEta[i], m_emciPhi[i], m_emcTowE[i]);
             }
-            ((TH1F*)qaHistograms["hTotalCaloEEMCal"])->Fill(totalCaloEEMCal);
-            for (const auto& chi2 : m_emcChi2) {
-                ((TH1F*)qaHistograms["h_emcalChi2"])->Fill(chi2);
+            // Check if the total EMCal energy is positive or negative and fill the appropriate histogram
+            if (totalCaloEEMCal >= 0) {
+                ((TH1F*)qaHistograms["hTotalCaloEEMCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEEMCal);
+            } else {
+                ((TH1F*)qaHistograms["hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEEMCal);
             }
+            //maximum chi2 of all the towers fill the histograms for EMCAL chi2 for this event -- similar for other calos
+            if (!m_emcChi2.empty()) {
+                float max_emcalChi2 = *std::max_element(m_emcChi2.begin(), m_emcChi2.end());
+                ((TH1F*)qaHistograms["h_emcalChi2_" + std::to_string(triggerIndex)])->Fill(max_emcalChi2);
+            }
+
         }
         if (ihcTowerContainer) {
-            std::cout << "Processing IHCal Towers..." << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Processing IHCal Towers..." << ANSI_COLOR_RESET << std::endl;
             processTowers(ihcTowerContainer, totalCaloEIHCal, m_ihciTowEta, m_ihciTowPhi, m_ihcTowE, m_ihcTime, m_ihcChi2, m_ihcPed, m_ihc_good);
             for (size_t i = 0; i < m_ihcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_IHCal_TowerEnergy"])->Fill(m_ihciTowEta[i], m_ihciTowPhi[i], m_ihcTowE[i]);
+                ((TH2F*)qaHistograms["h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex)])->Fill(m_ihciTowEta[i], m_ihciTowPhi[i], m_ihcTowE[i]);
             }
-            ((TH1F*)qaHistograms["hTotalCaloEIHCal"])->Fill(totalCaloEIHCal);
-            for (const auto& chi2 : m_ihcChi2) {
-                ((TH1F*)qaHistograms["h_ihcalChi2"])->Fill(chi2);
+            ((TH1F*)qaHistograms["hTotalCaloEIHCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEIHCal);
+            if (!m_ihcChi2.empty()) {
+                float max_ihcalChi2 = *std::max_element(m_ihcChi2.begin(), m_ihcChi2.end());
+                ((TH1F*)qaHistograms["h_ihcalChi2_" + std::to_string(triggerIndex)])->Fill(max_ihcalChi2);
             }
         }
         if (ohcTowerContainer) {
-            std::cout << "Processing OHCal Towers..." << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Processing OHCal Towers..." << ANSI_COLOR_RESET << std::endl;
             processTowers(ohcTowerContainer, totalCaloEOHCal, m_ohciTowEta, m_ohciTowPhi, m_ohcTowE, m_ohcTime, m_ohcChi2, m_ohcPed, m_ohc_good);
             for (size_t i = 0; i < m_ohcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_OHCal_TowerEnergy"])->Fill(m_ohciTowEta[i], m_ohciTowPhi[i], m_ohcTowE[i]);
+                ((TH2F*)qaHistograms["h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex)])->Fill(m_ohciTowEta[i], m_ohciTowPhi[i], m_ohcTowE[i]);
             }
-            ((TH1F*)qaHistograms["hTotalCaloEOHCal"])->Fill(totalCaloEOHCal);
-            for (const auto& chi2 : m_ohcChi2) {
-                ((TH1F*)qaHistograms["h_ohcalChi2"])->Fill(chi2);
+            ((TH1F*)qaHistograms["hTotalCaloEOHCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEOHCal);
+            if (!m_ohcChi2.empty()) {
+                float max_ohcalChi2 = *std::max_element(m_ohcChi2.begin(), m_ohcChi2.end());
+                ((TH1F*)qaHistograms["h_ohcalChi2_" + std::to_string(triggerIndex)])->Fill(max_ohcalChi2);
             }
         }
+        // Initialize maximum energy variables for this event and trigger index
+        float max_8by8energy_emcal = 0.0;
+        float max_energy_hcal = 0.0;
+        float max_energy_jet = 0.0;
+
+
+        // Pass the addresses of the pointers to the function
+        processEnergyMaps(&m_emcTowE, &m_emciEta, &m_emciPhi, &m_ohcTowE, &m_ohciTowEta, &m_ohciTowPhi,
+                          &m_ihcTowE, &m_ihciTowEta, &m_ihciTowPhi,
+                          &m_emcal_good, &m_ohc_good, &m_ihc_good,
+                          max_8by8energy_emcal, max_energy_hcal, max_energy_jet, qaHistograms, triggerIndex);
+
+        std::cout << "Finished processing energy maps for Trigger Index: " << triggerIndex << std::endl;
         
 
+        std::cout << "Fetching RawClusterContainer..." << std::endl;
         RawClusterContainer *clusterContainer = findNode::getClass<RawClusterContainer>(topNode, "CLUSTERINFO_CEMC");
         if(!clusterContainer) {
             std::cout << PHWHERE << "Cluster node is missing. Output related to this node will be empty" << std::endl;
             return 0;
         }
-        
+        std::cout << "Processing clusters..." << std::endl;
         RawClusterContainer::ConstRange clusterRange = clusterContainer->getClusters();
         float max_energy_clus = 0.0;
         
@@ -550,13 +751,18 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                 std::cout << "Warning: Null cluster found." << std::endl;
                 continue;
             }
+            std::cout << "Cluster found, processing..." << std::endl;
             // Use vertex coordinates for cluster calculations
             // CLHEP::Hep3Vector vertex(0,0,0); --before in caloTreeGen -- IT WILL DO THIS if vertex map missing
             // Use vertex coordinates for cluster calculations
+            
             CLHEP::Hep3Vector vertex(m_vx, m_vy, m_vz);
-            if (m_vertex != -9999) {
-                vertex.setZ(m_vertex);
+            if (m_vertex == -9999 || fabs(m_vertex) >= 10) {
+                std::cout << "Vertex Z cut failed (either -9999 or >= 10 cm); skipping this cluster." << std::endl;
+                continue;
             }
+            std::cout << "Vertex used for cluster calculations: (" << m_vx << ", " << m_vy << ", " << m_vz << ")" << std::endl;
+            
             CLHEP::Hep3Vector E_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);
             CLHEP::Hep3Vector E_vec_cluster_Full = RawClusterUtility::GetEVec(*cluster, vertex);
 
@@ -586,58 +792,42 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             m_clusTowEta.push_back(returnClusterTowEta(cluster,emcTowerContainer));
             m_clusTowE.push_back(returnClusterTowE(cluster,emcTowerContainer));
             
-            ((TH1F*)qaHistograms["hClusterPt"])->Fill(clus_pt);
-            ((TH1F*)qaHistograms["hClusterChi2"])->Fill(clus_chi);
-            ((TH1F*)qaHistograms["hClusterEcore"])->Fill(clusEcore);
+            ((TH1F*)qaHistograms["hClusterPt_" + std::to_string(triggerIndex)])->Fill(clus_pt);
+            ((TH1F*)qaHistograms["hClusterChi2_" + std::to_string(triggerIndex)])->Fill(clus_chi);
+            ((TH1F*)qaHistograms["hClusterEcore_" + std::to_string(triggerIndex)])->Fill(clusEcore);
             
-            if (clusEcore < 1) { //cut on ecore
-                continue;
-            }
-            double et = clusEcore / cosh(clus_eta);
-            double isoEt = 0;
-            if (et < 2) { //cut on transverse energy
-                continue;
-            }
-    
-
-            for (double dR_cut : dR_values) {
-                std::string dR_cut_str = formatFloatForFilename(dR_cut);
-                
-                calculateIsoEt(emcTowerContainer, geomEM, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
-                               skipped_tower_count, towers_in_cone_count, "TOWERGEOM_CEMC", dR_cut);
-                calculateIsoEt(ihcTowerContainer, geomIH, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
-                               skipped_tower_count, towers_in_cone_count, "TOWERGEOM_HCALIN", dR_cut);
-                calculateIsoEt(ohcTowerContainer, geomOH, isoEt, clus_eta, clus_phi, m_vx, m_vy, m_vz,
-                               skipped_tower_count, towers_in_cone_count, "TOWERGEOM_HCALOUT", dR_cut);
-                
-                // Subtract cluster energy from isolation energy
-                isoEt -= et;
-
-                if (isoEt < 0) {
-                    negative_isoEt_count++;
-                } else {
-                    positive_isoEt_count++;
-                }
-                // Update the min and max isoEt values
-                if (isoEt < min_isoEt) {
-                    min_isoEt = isoEt;
-                }
-                if (isoEt > max_isoEt) {
-                    max_isoEt = isoEt;
-                }
-
-                m_clusterEtIso.push_back(isoEt);
-                ((TH1F*)qaHistograms["h2_isoEtE_" + dR_cut_str])->Fill(clusEcore, isoEt);
-                
-            }
+            std::cout << "Processing isolation energy..." << std::endl;
+            processIsolationEnergy(
+                emcTowerContainer, ihcTowerContainer, ohcTowerContainer,
+                geomEM, geomIH, geomOH,
+                clusEcore, clus_eta, clus_phi,
+                m_vx, m_vy, m_vz,
+                qaHistograms, triggerIndex,
+                dR_values,
+                skipped_tower_count, towers_in_cone_count,
+                positive_isoEt_count, negative_isoEt_count,
+                min_isoEt, max_isoEt,
+                m_clusterEtIso
+            );
+            std::cout << "Isolation energy processing complete." << std::endl;
+            
+            std::cout << "Processing cluster invariant mass..." << std::endl;
+            processClusterInvariantMass(
+                m_clusterE, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi,
+                triggerIndex, massHistogramsByTrigger[triggerIndex],
+                asymmetry_values, clus_chi_values, clus_Ecore_values
+            );
+            std::cout << "Cluster invariant mass processing complete." << std::endl;
+            
         }
-        ((TH1F*)qaHistograms["hCluster_maxECore"])->Fill(max_energy_clus);
+        std::cout << "Finished processing clusters for Trigger Index: " << triggerIndex << std::endl;
+        ((TH1F*)qaHistograms["hCluster_maxECore_" + std::to_string(triggerIndex)])->Fill(max_energy_clus);
     }
     return Fun4AllReturnCodes::EVENT_OK;
 }
 
 //____________________________________________________________________________..
-int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
+void caloTreeGen::clearVectors() {
   m_clusterE.clear();
   m_clusterPhi.clear();
   m_clusterEta.clear();
@@ -675,7 +865,11 @@ int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
   m_clusTowPhi.clear();
   m_clusTowEta.clear();
   m_clusTowE.clear();
- 
+}
+
+//____________________________________________________________________________..
+int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
+  clearVectors(); // Clear all relevant vectors
   return Fun4AllReturnCodes::EVENT_OK;
 }
 
@@ -688,88 +882,7 @@ int caloTreeGen::EndRun(const int runnumber) {
 //____________________________________________________________________________..
 int caloTreeGen::End(PHCompositeNode *topNode) {
     std::cout << "caloTreeGen::End(PHCompositeNode *topNode) All events have been processed. Beginning final analysis steps......" << std::endl;
-    for (int triggerIndex : triggerIndices) {
-        auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
-        
-        float max_8by8energy_emcal = 0.0;
-        float max_energy_hcal = 0.0;
-        float max_energy_jet = 0.0;
 
-        // Create pointers to the vectors
-        std::vector<short>* emcal_good_ptr = &m_emcal_good;
-        std::vector<short>* ohc_good_ptr = &m_ohc_good;
-        std::vector<short>* ihc_good_ptr = &m_ihc_good;
-
-        // Pass the addresses of the pointers to the function
-        processEnergyMaps(&m_emcTowE, &m_emciEta, &m_emciPhi, &m_ohcTowE, &m_ohciTowEta, &m_ohciTowPhi,
-                          &m_ihcTowE, &m_ihciTowEta, &m_ihciTowPhi,
-                          &emcal_good_ptr, &ohc_good_ptr, &ihc_good_ptr,
-                          max_8by8energy_emcal, max_energy_hcal, max_energy_jet);
-
-
-
-        std::cout << "Finished processing energy maps for Trigger Index: " << triggerIndex << std::endl;
-        
-        ((TH1F*)qaHistograms["h8by8TowerEnergySum"])->Fill(max_8by8energy_emcal);
-        ((TH1F*)qaHistograms["h_hcal_energy"])->Fill(max_energy_hcal);
-        ((TH1F*)qaHistograms["h_jet_energy"])->Fill(max_energy_jet);
-        
-        
-        std::cout << "Processing Invariant Mass Distributions for Trigger Index: " << triggerIndex << std::endl;
-        
-        // Cache cluster properties to avoid repeated access to the vector
-        size_t nClusters = m_clusterECore.size();
-        std::vector<float> cachedPt(nClusters), cachedEcore(nClusters), cachedChi2(nClusters);
-        for (size_t clus = 0; clus < nClusters; ++clus) {
-            cachedPt[clus] = m_clusterPt.at(clus);
-            cachedEcore[clus] = m_clusterECore.at(clus);
-            cachedChi2[clus] = m_clusterChi.at(clus);
-        }
-
-        // Fill invariant mass histograms for this trigger
-        auto& massHistograms = massHistogramsByTrigger[triggerIndex];
-        for (size_t clus1 = 0; clus1 < nClusters; ++clus1) {
-            for (size_t clus2 = clus1 + 1; clus2 < nClusters; ++clus2) {
-                float pt1 = cachedPt[clus1], pt2 = cachedPt[clus2];
-                float E1 = cachedEcore[clus1], E2 = cachedEcore[clus2];
-                float chi1 = cachedChi2[clus1], chi2 = cachedChi2[clus2];
-
-                if (pt1 < 2 || pt1 >= 10 || pt2 < 2 || pt2 >= 10) {
-                    continue;
-                }
-
-                TLorentzVector photon1, photon2;
-                photon1.SetPtEtaPhiE(pt1, m_clusterEta.at(clus1), m_clusterPhi.at(clus1), E1);
-                photon2.SetPtEtaPhiE(pt2, m_clusterEta.at(clus2), m_clusterPhi.at(clus2), E2);
-                TLorentzVector meson = photon1 + photon2;
-                float mesonMass = meson.M();
-                float asym = fabs(E1 - E2) / (E1 + E2);
-
-                // Apply cuts and fill histograms
-                for (float maxAsym : asymmetry_values) {
-                    for (float maxChi2 : clus_chi_values) {
-                        for (float minClusEcore : clus_Ecore_values) {
-                            std::cout << "Trigger Index: " << triggerIndex
-                                      << ", Cut Values -> Asymmetry: " << maxAsym
-                                      << ", Chi2: " << maxChi2
-                                      << ", Ecore: " << minClusEcore << std::endl;
-
-                            if (asym >= maxAsym || chi1 >= maxChi2 || chi2 >= maxChi2 || E1 < minClusEcore || E2 < minClusEcore) {
-                                continue;
-                            }
-                            std::string histName = "invMass_E" + formatFloatForFilename(minClusEcore) +
-                                                   "_Chi" + formatFloatForFilename(maxChi2) +
-                                                   "_Asym" + formatFloatForFilename(maxAsym);
-                            // When filling the histogram, cast to TH1F*
-                            ((TH1F*)massHistograms[histName])->Fill(mesonMass);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    
     // Write all histograms to file and clean up
     for (const auto& [triggerIndex, qaHistograms] : qaHistogramsByTrigger) {
         out->cd(("QA/Trigger" + std::to_string(triggerIndex)).c_str());
@@ -873,3 +986,4 @@ bool caloTreeGen::IsAcceptableTower(TowerInfo *tower) {
   }
   return true;
 }
+
