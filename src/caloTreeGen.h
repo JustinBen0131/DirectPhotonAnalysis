@@ -82,6 +82,8 @@ class caloTreeGen : public SubsysReco{
     std::string Outfile = "commissioning.root";
     std::map<int, std::map<std::string, TObject*>> qaHistogramsByTrigger;
     std::map<int, std::map<std::string, TObject*>> massHistogramsByTrigger;
+    std::map<int, TTree*> treesByTrigger; // Map of TTrees for each trigger bit
+
 
     std::vector<int> triggerIndices = {10, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<double> dR_values = {0.3, 0.4, 0.5};
@@ -157,20 +159,56 @@ class caloTreeGen : public SubsysReco{
         short good;
         bool isAcceptable;
     };
-
+    void clearVectors();
     void collectTowerData(TowerInfoContainer* towerContainer, std::vector<TowerData>& towerDataList);
 
     void processTowers(TowerInfoContainer* towerContainer, float& totalCaloE, std::vector<float>& towEta, std::vector<float>& towPhi, std::vector<float>& towE, std::vector<int>& towTime, std::vector<float>& towChi2, std::vector<float>& towPed, std::vector<short>& towGood);
     
-    void processEnergyMaps(const std::vector<float>* m_emcTowE, const std::vector<float>* m_emcTowiEta, const std::vector<float>* m_emcTowiPhi,
-                           const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohcTowiEta, const std::vector<float>* m_ohcTowiPhi,
-                           const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihcTowiEta, const std::vector<float>* m_ihcTowiPhi,
-                           std::vector<short>** m_emcal_good, std::vector<short>** m_ohc_good, std::vector<short>** m_ihc_good,
-                           float& max_8by8energy_emcal, float& max_energy_hcal, float& max_energy_jet);
-
-
+    void processEnergyMaps(
+        const std::vector<float>* m_emcTowE, const std::vector<float>* m_emciEta, const std::vector<float>* m_emciPhi,
+        const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi,
+        const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi,
+        std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good,
+        float& max_8by8energy_emcal, float& max_energy_hcal, float& max_energy_jet,
+        std::map<std::string, TObject*>& qaHistograms, int triggerIndex);
     
     void calculateIsoEt(TowerInfoContainer* towerContainer, RawTowerGeomContainer* geomContainer, double& isoEt, const double clus_eta, const double clus_phi, const double m_vx, const double m_vy, const double m_vz, int& skipped_tower_count, int& towers_in_cone_count, const std::string& geomContainerName, double dR_cut);
+
+    void processIsolationEnergy(
+        TowerInfoContainer* emcTowerContainer,
+        TowerInfoContainer* ihcTowerContainer,
+        TowerInfoContainer* ohcTowerContainer,
+        RawTowerGeomContainer* geomEM,
+        RawTowerGeomContainer* geomIH,
+        RawTowerGeomContainer* geomOH,
+        float clusEcore,
+        float clus_eta,
+        float clus_phi,
+        float m_vx,
+        float m_vy,
+        float m_vz,
+        std::map<std::string, TObject*>& qaHistograms,
+        int triggerIndex,
+        std::vector<double> dR_values,
+        int& skipped_tower_count,
+        int& towers_in_cone_count,
+        int& positive_isoEt_count,
+        int& negative_isoEt_count,
+        double& min_isoEt,
+        double& max_isoEt,
+        std::vector<float>& m_clusterEtIso
+    );
+    void processClusterInvariantMass(
+        const std::vector<float>& clusterE,
+        const std::vector<float>& clusterPt,
+        const std::vector<float>& clusterChi2,
+        const std::vector<float>& clusterEta,
+        const std::vector<float>& clusterPhi,
+        int triggerIndex,
+        std::map<std::string, TObject*>& massHistograms,
+        const std::vector<float>& asymmetry_values,
+        const std::vector<float>& clus_chi_values,
+        const std::vector<float>& clus_Ecore_values);
 
     float getMaxTowerE(RawCluster *cluster, TowerInfoContainer *towerContainer);
     std::vector<float> returnClusterTowE(RawCluster *cluster, TowerInfoContainer *towerContainer);
@@ -221,7 +259,7 @@ class caloTreeGen : public SubsysReco{
     inline std::vector<int> extractTriggerBits(uint64_t b_gl1_scaledvec, int entry) {
         std::vector<int> trig_bits;
         std::bitset<64> bits(b_gl1_scaledvec);
-        std::cout << "Processing entry " << entry << ", gl1_scaledvec (bits): " << bits.to_string() << std::endl;
+//        std::cout << "Processing entry " << entry << ", gl1_scaledvec (bits): " << bits.to_string() << std::endl;
         for (unsigned int bit = 0; bit < 64; bit++) {
             if (((b_gl1_scaledvec >> bit) & 0x1U) == 0x1U) {
                 trig_bits.push_back(bit);
@@ -234,11 +272,11 @@ class caloTreeGen : public SubsysReco{
     inline bool checkTriggerCondition(const std::vector<int> &trig_bits, int inputBit) {
         for (const int &bit : trig_bits) {
             if (bit == inputBit) {
-                std::cout << "  Trigger condition met with bit: " << bit << std::endl;
+//                std::cout << "  Trigger condition met with bit: " << bit << std::endl;
                 return true;
             }
         }
-        std::cout << "  No relevant trigger conditions met." << std::endl;
+//        std::cout << "  No relevant trigger conditions met." << std::endl;
         return false;
     }
     
