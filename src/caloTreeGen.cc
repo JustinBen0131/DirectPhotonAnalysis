@@ -147,10 +147,12 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         
         qaHistograms["hVtxZ_" + std::to_string(triggerIndex)] = createHistogram("hVtxZ_" + std::to_string(triggerIndex), "Z-vertex Distribution; z [cm]", 100, -70, 70);
         qaHistograms["hClusterPt_" + std::to_string(triggerIndex)] = createHistogram("hClusterPt_" + std::to_string(triggerIndex), "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
-        qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)] = createHistogram("h8by8TowerEnergySum_" + std::to_string(triggerIndex), "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20);
         
+        qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)] = createHistogram("h8by8TowerEnergySum_" + std::to_string(triggerIndex), "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20);
         qaHistograms["h_hcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_hcal_energy_" + std::to_string(triggerIndex), "Max HCal Tower Energy Sums; Energy [GeV]; Events", 40, 0, 20);
         qaHistograms["h_jet_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_energy_" + std::to_string(triggerIndex), "Maximum 0.8x0.8 Energy Sum (EMCAL + HCAL) [GeV]; Events", 50, 0, 50);
+        
+        
         qaHistograms["h_jet_emcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_emcal_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
         qaHistograms["h_jet_hcalin_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalin_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
         qaHistograms["h_jet_hcalout_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalout_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
@@ -161,6 +163,13 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             std::string dR_cut_str = formatFloatForFilename(dR_cut);
             std::string histName = "h2_isoEtE_" + std::to_string(triggerIndex) + "_" + dR_cut_str;
             qaHistograms[histName] = create2DHistogram(histName, "Cluster Isolation Energy vs Cluster Energy;Cluster E [GeV];E_{T}^{iso} [GeV]", 100, 0, 20, 100, -10, 30);
+            
+            
+            // Create the 1D histogram for Isolation Energy distribution
+            std::string histName1D = "h1_isoEt_" + std::to_string(triggerIndex) + "_" + dR_cut_str;
+            qaHistograms[histName1D] = new TH1F(histName1D.c_str(),
+                "Isolation Energy Distribution;E_{T}^{iso} [GeV];Counts",
+                100, -10, 30);
         }
 
         qaHistogramsByTrigger[triggerIndex] = qaHistograms;
@@ -478,6 +487,7 @@ void caloTreeGen::calculateIsoEt(TowerInfoContainer* towerContainer,
         }
     }
 }
+
 // New function to calculate isolation energy and fill histograms
 void caloTreeGen::processIsolationEnergy(
     TowerInfoContainer* emcTowerContainer,
@@ -541,8 +551,13 @@ void caloTreeGen::processIsolationEnergy(
         // Store the isoEt value and fill the histogram
         m_clusterEtIso.push_back(isoEt);
         ((TH1F*)qaHistograms["h2_isoEtE_" + std::to_string(triggerIndex) + "_" + dR_cut_str])->Fill(clusEcore, isoEt);
+        
+        
+        // Fill the 1D isolation energy histogram
+        ((TH1F*)qaHistograms["h1_isoEt_" + std::to_string(triggerIndex) + "_" + dR_cut_str])->Fill(isoEt);
     }
 }
+
 void caloTreeGen::processClusterInvariantMass(
     const std::vector<float>& clusterE,
     const std::vector<float>& clusterPt,
