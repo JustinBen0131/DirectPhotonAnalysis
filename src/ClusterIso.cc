@@ -63,11 +63,10 @@ double ClusterIso::getTowerEta(RawTowerGeom *tower_geom, double vx, double vy, d
  * Contructor takes the argument of the class name, the minimum eT of the clusters which defaults to 0,
  * and the isolation cone size which defaults to 0.3.
  */
-ClusterIso::ClusterIso(const std::string &kname, float eTCut = 0.0, int coneSize = 3, bool do_subtracted = 1, bool do_unsubtracted = 1, bool limitEvents = 1)
+ClusterIso::ClusterIso(const std::string &kname, float eTCut = 0.0, int coneSize = 3, bool do_subtracted = 1, bool do_unsubtracted = 1)
   : SubsysReco(kname)
   , m_do_subtracted(do_subtracted)
   , m_do_unsubtracted(do_unsubtracted)
-  , m_limitEvents(limitEvents)
 {
   if (Verbosity() >= VERBOSITY_SOME) std::cout << Name() << "::ClusterIso constructed" << '\n';
   if (coneSize == 0 && Verbosity() >= VERBOSITY_QUIET) std::cout << "WARNING in " << Name() << "ClusterIso:: cone size is zero" << '\n';
@@ -136,13 +135,6 @@ void ClusterIso::setConeSize(int coneSize)
 int ClusterIso::process_event(PHCompositeNode *topNode)
 {
   event_count++;
-    
-  if (m_limitEvents && event_count > m_eventLimit) {
-    if (Verbosity() >= VERBOSITY_QUIET) {
-      std::cout << "Event limit of " << m_eventLimit << " reached, skipping further events." << std::endl;
-    }
-    return Fun4AllReturnCodes::EVENT_OK;
-  }
 
   std::cout << "\n========== Processing ISOLATION ENERGY -- Event " << event_count << " ==========\n";
 
@@ -266,11 +258,10 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
           CLHEP::Hep3Vector E_core_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);
             
           double cluster_ecore = E_core_vec_cluster.mag();
-          if (cluster_ecore < 1) { // cut on ecore
-              continue;
+          if (cluster_ecore < 1)
+          {
+            continue;
           }
-            
-          //double cluster_energy = E_vec_cluster.mag();
             
           double cluster_eta = E_core_vec_cluster.pseudoRapidity();
           double cluster_phi = E_core_vec_cluster.phi();
