@@ -50,13 +50,6 @@ class caloTreeGen : public SubsysReco{
     */
     int Init(PHCompositeNode *topNode) override;
 
-    /** Called for first event when run number is known.
-      Typically this is where you may want to fetch data from
-      database, because you know the run number. A place
-      to book histograms which have to know the run number.
-    */
-    int InitRun(PHCompositeNode *topNode) override;
-
     /** Called for each event.
       This is where you do the real work.
     */
@@ -65,9 +58,6 @@ class caloTreeGen : public SubsysReco{
     /// Clean up internals after each event.
     int ResetEvent(PHCompositeNode *topNode) override;
 
-    /// Called at the end of each run.
-    int EndRun(const int runnumber) override;
-
     /// Called at the end of all processing.
     int End(PHCompositeNode *topNode) override;
 
@@ -75,29 +65,32 @@ class caloTreeGen : public SubsysReco{
     int Reset(PHCompositeNode * /*topNode*/) override;
 
     void Print(const std::string &what = "ALL") const override;
+    
+    void setGenEvent(int eventGet)     {getEvent = eventGet;}
+    
+    void setVerbose(bool v) { verbose = v; }
 
  private:
 
     TFile *out;
     std::string Outfile = "commissioning.root";
+    int getEvent;
     std::map<int, std::map<std::string, TObject*>> qaHistogramsByTrigger;
-    std::map<int, std::map<std::string, TObject*>> massHistogramsByTrigger;
-    std::map<int, TTree*> treesByTrigger; // Map of TTrees for each trigger bit
+    // Declare the map to hold histograms for each trigger, cut combination, and pT bin
+    std::map<int, std::map<std::tuple<float, float, float>, std::map<std::pair<float, float>, std::map<std::string, TObject*>>>> massAndIsolationHistograms;
 
+    bool verbose = false;
+    bool m_limitEvents = false;   // Enable event limiting by default
+    int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
 
-    std::vector<int> triggerIndices = {10, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    std::vector<double> dR_values = {0.3, 0.4, 0.5};
-    std::vector<float> asymmetry_values = {0.7};
-    std::vector<float> clus_chi_values = {4};
-    std::vector<float> clus_Ecore_values = {0.5, 1};
+    std::vector<int> triggerIndices = {3, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
+    std::vector<float> clus_chi_values = {3.5, 4};
+    std::vector<float> clus_Ecore_values = {1.0, 1.2, 1.5};
+    std::vector<std::pair<float, float>> pT_bins = {
+        {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}
+    };
 
-    // Declare counters to track across events
-    double min_isoEt;
-    double max_isoEt;
-    int positive_isoEt_count;
-    int negative_isoEt_count;
-    int skipped_tower_count;
-    int towers_in_cone_count;
     int event_count = 0;
 
     //EMCal
@@ -108,7 +101,7 @@ class caloTreeGen : public SubsysReco{
     std::vector<float> m_emcChi2;
     std::vector<float> m_emcPed;
     std::vector<short> m_emcal_good;
-
+    
     //OHCal
     std::vector<float> m_ohciTowPhi;
     std::vector<float> m_ohciTowEta;
@@ -133,15 +126,16 @@ class caloTreeGen : public SubsysReco{
     std::vector<float> m_clusterEta;
     std::vector<float> m_clusterPt;
     std::vector<float> m_clusterChi;
-    std::vector<float> m_clusterNtow;
     std::vector<float> m_clusterTowMaxE;
     std::vector<float> m_clusterECore;
     std::vector<float> m_clusterEtIso;
-
+    std::vector<int> m_clusterIds;
+    
     std::vector<std::vector<int> > m_clusTowEta;
     std::vector<std::vector<int> > m_clusTowPhi;
     std::vector<std::vector<float> > m_clusTowE;
-
+    std::map<int, std::pair<float, float>> clusterEtIsoMap; // <cluster ID, Ecore, Iso>
+    
     //GL1 information
     Gl1Packet *_gl1_packet;
     uint64_t b_gl1_scaledvec;
@@ -159,7 +153,7 @@ class caloTreeGen : public SubsysReco{
         short good;
         bool isAcceptable;
     };
-    void clearVectors();
+
     void collectTowerData(TowerInfoContainer* towerContainer, std::vector<TowerData>& towerDataList);
 
     void processTowers(TowerInfoContainer* towerContainer, float& totalCaloE, std::vector<float>& towEta, std::vector<float>& towPhi, std::vector<float>& towE, std::vector<int>& towTime, std::vector<float>& towChi2, std::vector<float>& towPed, std::vector<short>& towGood);
@@ -168,47 +162,17 @@ class caloTreeGen : public SubsysReco{
         const std::vector<float>* m_emcTowE, const std::vector<float>* m_emciEta, const std::vector<float>* m_emciPhi,
         const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi,
         const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi,
-        std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good,
-        float& max_8by8energy_emcal, float& max_energy_hcal, float& max_energy_jet,
-        std::map<std::string, TObject*>& qaHistograms, int triggerIndex);
-    
-    void calculateIsoEt(TowerInfoContainer* towerContainer, RawTowerGeomContainer* geomContainer, double& isoEt, const double clus_eta, const double clus_phi, const double m_vx, const double m_vy, const double m_vz, int& skipped_tower_count, int& towers_in_cone_count, const std::string& geomContainerName, double dR_cut);
+        std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, std::map<std::string, TObject*>& qaHistograms, int triggerIndex);
 
-    void processIsolationEnergy(
-        TowerInfoContainer* emcTowerContainer,
-        TowerInfoContainer* ihcTowerContainer,
-        TowerInfoContainer* ohcTowerContainer,
-        RawTowerGeomContainer* geomEM,
-        RawTowerGeomContainer* geomIH,
-        RawTowerGeomContainer* geomOH,
-        float clusEcore,
-        float clus_eta,
-        float clus_phi,
-        float m_vx,
-        float m_vy,
-        float m_vz,
-        std::map<std::string, TObject*>& qaHistograms,
-        int triggerIndex,
-        std::vector<double> dR_values,
-        int& skipped_tower_count,
-        int& towers_in_cone_count,
-        int& positive_isoEt_count,
-        int& negative_isoEt_count,
-        double& min_isoEt,
-        double& max_isoEt,
-        std::vector<float>& m_clusterEtIso
-    );
     void processClusterInvariantMass(
         const std::vector<float>& clusterE,
         const std::vector<float>& clusterPt,
         const std::vector<float>& clusterChi2,
         const std::vector<float>& clusterEta,
         const std::vector<float>& clusterPhi,
+        const std::vector<int>& clusterIDs,
         int triggerIndex,
-        std::map<std::string, TObject*>& massHistograms,
-        const std::vector<float>& asymmetry_values,
-        const std::vector<float>& clus_chi_values,
-        const std::vector<float>& clus_Ecore_values);
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap);
 
     float getMaxTowerE(RawCluster *cluster, TowerInfoContainer *towerContainer);
     std::vector<float> returnClusterTowE(RawCluster *cluster, TowerInfoContainer *towerContainer);
@@ -259,7 +223,10 @@ class caloTreeGen : public SubsysReco{
     inline std::vector<int> extractTriggerBits(uint64_t b_gl1_scaledvec, int entry) {
         std::vector<int> trig_bits;
         std::bitset<64> bits(b_gl1_scaledvec);
-//        std::cout << "Processing entry " << entry << ", gl1_scaledvec (bits): " << bits.to_string() << std::endl;
+        if (verbose) {
+            std::cout << "Processing entry " << entry << ", gl1_scaledvec (bits): " << bits.to_string() << std::endl;
+        }
+        
         for (unsigned int bit = 0; bit < 64; bit++) {
             if (((b_gl1_scaledvec >> bit) & 0x1U) == 0x1U) {
                 trig_bits.push_back(bit);
@@ -272,15 +239,19 @@ class caloTreeGen : public SubsysReco{
     inline bool checkTriggerCondition(const std::vector<int> &trig_bits, int inputBit) {
         for (const int &bit : trig_bits) {
             if (bit == inputBit) {
-//                std::cout << "  Trigger condition met with bit: " << bit << std::endl;
+                if (verbose) {
+                    std::cout << "  Trigger condition met with bit: " << bit << std::endl;
+                }
+                
                 return true;
             }
         }
-//        std::cout << "  No relevant trigger conditions met." << std::endl;
+        if (verbose) {
+            std::cout << "  No relevant trigger conditions met." << std::endl;
+        }
+        
         return false;
     }
-    
-    double getTowerEta(RawTowerGeom* tower_geom, double vx, double vy, double vz);
     bool IsAcceptableTower(TowerInfo* tower);
 
 };
