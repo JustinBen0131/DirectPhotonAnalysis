@@ -49,9 +49,9 @@ R__LOAD_LIBRARY(/sphenix/user/patsfan753/install/lib/libclusteriso.so)
 
 namespace Enable
 {
-  bool HIJETS = false;
+  bool HIJETS = true;
   int HIJETS_VERBOSITY = 0;
-  bool HIJETS_MC = true;
+  bool HIJETS_MC = false;
   bool HIJETS_TRUTH = false;
 }  // namespace Enable
 
@@ -82,6 +82,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
         truthjetreco->set_algo_node("ANTIKT");
         truthjetreco->set_input_node("TRUTH");
         truthjetreco->Verbosity(0);
+        std::cout << "[INFO] Registering truthjetreco subsystem..." << std::endl;
         se->registerSubsystem(truthjetreco);
       }
     gSystem->Load("libg4dst");
@@ -103,6 +104,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     rcemc->set_towerinfo(true);
     rcemc->set_frac_cut(0.5); //fraction of retower that must be masked to mask the full retower
     rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
+    std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
     se->registerSubsystem(rcemc);
     /*
      Relevent code from Calo_Calib.C since production p007 do not contain the TOWERS_CEMCnode that the Process_Calo_Calib() call needs
@@ -114,6 +116,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     emc_prof += "/EmcProfile/CEMCprof_Thresh30MeV.root";
     ClusterBuilder->LoadProfile(emc_prof);
     ClusterBuilder->set_UseTowerInfo(1);  // to use towerinfo objects rather than old RawTower
+    std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
     se->registerSubsystem(ClusterBuilder);
     
     std::cout << "status setters" << std::endl;
@@ -122,6 +125,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusEMC->set_time_cut(1);
     statusEMC->set_inputNodePrefix("TOWERINFO_CALIB_");
     statusEMC->Verbosity(Fun4AllBase::VERBOSITY_MORE);
+    std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
     se->registerSubsystem(statusEMC);
     
     CaloTowerStatus *statusHCalIn = new CaloTowerStatus("HCALINSTATUS");
@@ -129,6 +133,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusHCalIn->set_time_cut(2);
     statusHCalIn->set_inputNodePrefix("TOWERINFO_CALIB_");
     statusHCalIn->Verbosity(Fun4AllBase::VERBOSITY_MORE);
+    std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
     se->registerSubsystem(statusHCalIn);
 
     CaloTowerStatus *statusHCALOUT = new CaloTowerStatus("HCALOUTSTATUS");
@@ -181,13 +186,13 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     st->set_towerinfo(true);
     st->set_towerNodePrefix(HIJETS::tower_prefix);
     se->registerSubsystem(st);
-      
-    ClusterIso *makeClusterEt = new ClusterIso("caloTreeGen", 0, 3, 1, 0, 1);  // Last '1' enables the event limit
-    makeClusterEt->Verbosity(0);  // Set desired verbosity level
+    
+    ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 0);
+    makeClusterEt->Verbosity(0);
     se->registerSubsystem(makeClusterEt);
     std::cout << "[INFO] ClusterIso subsystem created and registered successfully." << std::endl;
     
-    
+    //the 0/1 in second argument referres to false/true have event limit 5000 for local tests
     caloTreeGen *eval = new caloTreeGen(inName);
     se -> registerSubsystem(eval);
     
@@ -197,7 +202,6 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     
     se->run(nEvents);
     se->End();
-    se->PrintTimer();
     std::cout << "All done!" << std::endl;
 
     gSystem->Exit(0);
