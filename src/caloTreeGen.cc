@@ -187,37 +187,13 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         if (verbose) {
             std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to Invariant Mass directory: " << invMassDir << ANSI_COLOR_RESET << std::endl;
         }
-        // Create invariant mass histograms
+        // Navigate into the invariant mass directory
         out->cd(invMassDir.c_str());
+        
         for (float maxAsym : asymmetry_values) {
             for (float maxChi2 : clus_chi_values) {
                 for (float minClusE : clus_Ecore_values) {
-                    
-                    // Create a subdirectory for each combination of cuts
-                    std::string cutDir = invMassDir + "/Asym" + formatFloatForFilename(maxAsym) +
-                                         "_Chi" + formatFloatForFilename(maxChi2) +
-                                         "_E" + formatFloatForFilename(minClusE);
-                    // Create directory and move into it
-                    if (!gDirectory->GetDirectory(cutDir.c_str())) {
-                        out->mkdir(cutDir.c_str());
-                    }
-                    out->cd(cutDir.c_str());
-                    if (verbose) {
-                        std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to Cut Directory: " << cutDir << ANSI_COLOR_RESET << std::endl;
-                    }
-                    
                     for (const auto& pT_bin : pT_bins) {
-                        std::string pTDir = cutDir + "/pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second);
-                        // Create directory for each pT bin and move into it
-                        if (!gDirectory->GetDirectory(pTDir.c_str())) {
-                            out->mkdir(pTDir.c_str());
-                        }
-                        out->cd(pTDir.c_str()); // Now move into the pT bin directory
-                        
-                        if (verbose) {
-                            std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to pT Directory: " << pTDir << ANSI_COLOR_RESET << std::endl;
-                        }
-                        
                         std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusE) +
                                                       "_Chi" + formatFloatForFilename(maxChi2) +
                                                       "_Asym" + formatFloatForFilename(maxAsym) +
@@ -267,15 +243,12 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                         massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][isolatedPhotonHistName] = isolatedPhotonHist;
                         massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName] = allPhotonHist;
                         massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName] = ptPhotonHist;
-
-                        out->cd(cutDir.c_str());
                     }
-                    // After processing the cut combination, return to invMassDir (for the next set of cuts)
                     out->cd(invMassDir.c_str());
                 }
             }
         }
-        // Finally, return to the root directory ("/") after processing all cuts and pT bins for the current trigger
+        // Finally, return to the root directory ("/") after processing trigger
         out->cd("/");
     }
     //so that the histos actually get written out
@@ -283,7 +256,6 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
     if (verbose) {
         se -> Print("NODETREE");
     }
-
     std::cout << "caloTreeGen::Init(PHCompositeNode *topNode) Initializing" << std::endl;
     
     return Fun4AllReturnCodes::EVENT_OK;
@@ -548,8 +520,8 @@ void caloTreeGen::processClusterInvariantMass(
     int triggerIndex,
     const std::map<int, std::pair<float, float>>& clusterEtIsoMap)
 {
-    const float pionMass = 0.14;    // Pion mass in GeV/c²
-    const float massWindow = .02; // Define the mass window
+    const float pionMass = 0.15;    // Pion mass in GeV/c²
+    const float massWindow = .025; // Define the mass window
 
     
     std::map<std::pair<float, float>, int> totalPhotonCountInBin;
@@ -675,7 +647,7 @@ void caloTreeGen::processClusterInvariantMass(
                                     std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEcore) +
                                                                     "_Chi" + formatFloatForFilename(maxChi2) +
                                                                     "_Asym" + formatFloatForFilename(maxAsym) +
-                                                                    "_pT_" + std::to_string(pT_min) + "to" + std::to_string(pT_max) +
+                                                                    "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
                                                                     "_" + std::to_string(triggerIndex);
                                     TH1F* allPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName]);
                                     if (allPhotonHist) {
@@ -1294,30 +1266,8 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
 
         // Iterate over each combination of cuts (asymmetry, chi2, and Ecore) for this trigger index
         for (const auto& [cutCombination, pTHistMap] : cutHistMap) {
-            // Extract the cut parameters from the tuple
-            float maxAsym = std::get<0>(cutCombination);
-            float maxChi2 = std::get<1>(cutCombination);
-            float minClusE = std::get<2>(cutCombination);
-
-            // Define the subdirectory for this specific combination of cuts
-            std::string cutDir = invMassDir + "/Asym" + formatFloatForFilename(maxAsym) +
-                                 "_Chi" + formatFloatForFilename(maxChi2) +
-                                 "_E" + formatFloatForFilename(minClusE);
-
-            // Attempt to change to the cut-specific directory; if this fails, log an error and skip to the next cut combination
-            if (!out->cd(cutDir.c_str())) {
-                std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to change directory to " << cutDir << " when writing mass histograms." << ANSI_COLOR_RESET << std::endl;
-                continue;
-            }
             // Loop over each pT bin within this cut combination
             for (const auto& [pT_bin, histMap] : pTHistMap) {
-                std::string pTDir = cutDir + "/pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second);
-
-                // Attempt to change to the pT bin directory; if this fails, log an error and skip this pT bin
-                if (!out->cd(pTDir.c_str())) {
-                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to change directory to " << pTDir << " when writing histograms." << ANSI_COLOR_RESET << std::endl;
-                    continue;
-                }
                 // Write each histogram in the current pT bin to the output file
                 for (const auto& [histName, hist] : histMap) {
                     // Ensure the histogram exists before attempting to write it
@@ -1328,23 +1278,20 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
                     // Attempt to write the histogram to the file; check the return code for success
                     int writeResult = hist->Write();
                     if (writeResult == 0) {
-                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write mass histogram " << histName << " to directory " << pTDir << "." << ANSI_COLOR_RESET << std::endl;
+                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write mass histogram " << histName << " to the current directory." << ANSI_COLOR_RESET << std::endl;
+
                     } else if (verbose) {
-                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote mass histogram " << histName << " to directory " << pTDir << "." << ANSI_COLOR_RESET << std::endl;
+                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote mass histogram " << histName << " to the current directory." << ANSI_COLOR_RESET << std::endl;
                     }
 
                     // Delete the histogram from memory after writing to avoid memory
                     delete hist;
                 }
             }
-            // After processing the pT bins, return to the cut directory
-            out->cd(cutDir.c_str());
         }
         // After processing all cut combinations, return to the trigger directory
         out->cd(invMassDir.c_str());
     }
-
-    // Change back to root directory before closing the file
     gDirectory->cd("/");
     // Close the output file and clean up
     std::cout << ANSI_COLOR_BLUE_BOLD << "Closing output file and cleaning up..." << ANSI_COLOR_RESET << std::endl;
