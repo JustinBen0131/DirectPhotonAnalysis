@@ -78,10 +78,13 @@ class caloTreeGen : public SubsysReco{
     std::map<int, std::map<std::string, TObject*>> qaHistogramsByTrigger;
     // Declare the map to hold histograms for each trigger, cut combination, and pT bin
     std::map<int, std::map<std::tuple<float, float, float>, std::map<std::pair<float, float>, std::map<std::string, TObject*>>>> massAndIsolationHistograms;
-
+    std::map<int, std::map<std::string, TH1F*>> massAndIsolationHistogramsNoPtBins;
+    
+    
+    
     bool verbose = false;
     bool m_limitEvents = false;   // Enable event limiting by default
-    int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
+    int m_eventLimit = 2000;    // Maximum number of events to process (10,000 by default)
 
     std::vector<int> triggerIndices = {3, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
@@ -101,6 +104,7 @@ class caloTreeGen : public SubsysReco{
     std::vector<float> m_emcChi2;
     std::vector<float> m_emcPed;
     std::vector<short> m_emcal_good;
+    std::vector<float> m_maxTowEnergy;
     
     //OHCal
     std::vector<float> m_ohciTowPhi;
@@ -122,6 +126,7 @@ class caloTreeGen : public SubsysReco{
 
     //Clusters
     std::vector<float> m_clusterE;
+    std::vector<float> m_clusterEt;
     std::vector<float> m_clusterPhi;
     std::vector<float> m_clusterEta;
     std::vector<float> m_clusterPt;
@@ -154,15 +159,26 @@ class caloTreeGen : public SubsysReco{
         bool isAcceptable;
     };
 
+    struct EnergyMaps {
+        float max_8by8energy_emcal;
+        float max_energy_hcal;
+        float max_energy_jet;
+        int jet_ebin;
+        int jet_pbin;
+        float energymap_jet_emcal[9][32];
+        float energymap_jet_hcalin[9][32];
+        float energymap_jet_hcalout[9][32];
+    };
+    
     void collectTowerData(TowerInfoContainer* towerContainer, std::vector<TowerData>& towerDataList);
 
     void processTowers(TowerInfoContainer* towerContainer, float& totalCaloE, std::vector<float>& towEta, std::vector<float>& towPhi, std::vector<float>& towE, std::vector<int>& towTime, std::vector<float>& towChi2, std::vector<float>& towPed, std::vector<short>& towGood);
     
-    void processEnergyMaps(
+    EnergyMaps processEnergyMaps(
         const std::vector<float>* m_emcTowE, const std::vector<float>* m_emciEta, const std::vector<float>* m_emciPhi,
         const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi,
         const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi,
-        std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, std::map<std::string, TObject*>& qaHistograms, int triggerIndex);
+        std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, std::vector<int> activeTriggerBits);
 
     void processClusterInvariantMass(
         const std::vector<float>& clusterE,
@@ -171,8 +187,7 @@ class caloTreeGen : public SubsysReco{
         const std::vector<float>& clusterEta,
         const std::vector<float>& clusterPhi,
         const std::vector<int>& clusterIDs,
-        int triggerIndex,
-        const std::map<int, std::pair<float, float>>& clusterEtIsoMap);
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap, std::vector<int> activeTriggerBits);
 
     float getMaxTowerE(RawCluster *cluster, TowerInfoContainer *towerContainer);
     std::vector<float> returnClusterTowE(RawCluster *cluster, TowerInfoContainer *towerContainer);
