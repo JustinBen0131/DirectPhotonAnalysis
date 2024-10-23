@@ -24,7 +24,6 @@ std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
 std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber44707.root";
 
 
-// Mapping trigger indices to names based on the provided trigger list
 std::map<int, std::string> triggerNameMap = {
     {0, "Clock"},
     {1, "ZDC South"},
@@ -179,7 +178,6 @@ void processRunFiles() {
 }
 
 int getDistinctColor(int index) {
-    // Define a fixed set of visually distinct colors
     static std::vector<int> colors = {
         kRed, kBlue, kGreen + 2, kMagenta, kCyan + 1, kOrange + 7, kViolet + 1,
         kPink + 9, kSpring + 4, kTeal, kAzure + 7, kGray + 2, kBlack
