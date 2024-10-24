@@ -81,11 +81,11 @@ class caloTreeGen : public SubsysReco{
     std::map<int, std::map<std::string, TH1F*>> massAndIsolationHistogramsNoPtBins;
     std::map<int, std::map<std::pair<float, float>, std::map<std::string, TObject*>>> qaIsolationHistogramsByTriggerAndPt;
 
+    static const std::string IN_MASS_WINDOW_LABEL;
+    static const std::string OUTSIDE_MASS_WINDOW_LABEL;
     
-    
-    
-    bool verbose = false;
-    bool m_limitEvents = false;   // Enable event limiting by default
+    bool verbose = true;
+    bool m_limitEvents = true;   // Enable event limiting by default
     int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
 
     std::vector<int> triggerIndices = {10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
@@ -95,6 +95,7 @@ class caloTreeGen : public SubsysReco{
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}
     };
+    
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-5, 0},
         {0, 2},
@@ -103,8 +104,6 @@ class caloTreeGen : public SubsysReco{
         {-10, 0},
         {0, 10}
     };
-    
-    
 
     int event_count = 0;
 
