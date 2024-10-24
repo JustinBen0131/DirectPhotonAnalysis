@@ -1563,7 +1563,9 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
                         continue;
                     }
                     std::string currentDir = gDirectory->GetPath();
-                    std::cout << ANSI_COLOR_BLUE_BOLD << "Writing histogram " << histName << " to directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                    if (verbose) {
+                        std::cout << ANSI_COLOR_BLUE_BOLD << "Writing histogram " << histName << " to directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                    }
                     
                     // Attempt to write the histogram to the file; check the return code for success
                     int writeResult = hist->Write();
@@ -1618,7 +1620,10 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
         out->Close();
         delete out;
         out = nullptr;
-        std::cout << ANSI_COLOR_GREEN_BOLD << "Output file successfully closed and deleted." << ANSI_COLOR_RESET << std::endl;
+        if (verbose) {
+            std::cout << ANSI_COLOR_GREEN_BOLD << "Output file successfully closed and deleted." << ANSI_COLOR_RESET << std::endl;
+        }
+
     } else {
         std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Output file was already null, possibly already closed or deleted." << ANSI_COLOR_RESET << std::endl;
     }
