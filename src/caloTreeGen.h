@@ -88,18 +88,20 @@ class caloTreeGen : public SubsysReco{
     bool m_limitEvents = false;   // Enable event limiting by default
     int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
 
-    std::vector<int> triggerIndices = {3, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    std::vector<int> triggerIndices = {10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
     std::vector<float> clus_chi_values = {4};
     std::vector<float> clus_Ecore_values = {1.0, 1.5};
     std::vector<std::pair<float, float>> pT_bins = {
-        {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}
+        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}
     };
     std::vector<std::pair<float, float>> isoEtRanges = {
-        {-5, 0},  // Strongly isolated
-        {0, 2},   // Weakly isolated
-        {2, 5},   // Non-isolated
-        {5, 10}   // Highly non-isolated
+        {-5, 0},
+        {0, 2},
+        {2, 5},
+        {5, 10},
+        {-10, 0},
+        {0, 10}
     };
     
     
