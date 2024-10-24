@@ -79,20 +79,30 @@ class caloTreeGen : public SubsysReco{
     // Declare the map to hold histograms for each trigger, cut combination, and pT bin
     std::map<int, std::map<std::tuple<float, float, float>, std::map<std::pair<float, float>, std::map<std::string, TObject*>>>> massAndIsolationHistograms;
     std::map<int, std::map<std::string, TH1F*>> massAndIsolationHistogramsNoPtBins;
+    std::map<int, std::map<std::pair<float, float>, std::map<std::string, TObject*>>> qaIsolationHistogramsByTriggerAndPt;
+
     
     
     
     bool verbose = false;
     bool m_limitEvents = false;   // Enable event limiting by default
-    int m_eventLimit = 2000;    // Maximum number of events to process (10,000 by default)
+    int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
 
     std::vector<int> triggerIndices = {3, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
-    std::vector<float> clus_chi_values = {3.5, 4};
-    std::vector<float> clus_Ecore_values = {1.0, 1.2, 1.5};
+    std::vector<float> clus_chi_values = {4};
+    std::vector<float> clus_Ecore_values = {1.0, 1.5};
     std::vector<std::pair<float, float>> pT_bins = {
         {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}
     };
+    std::vector<std::pair<float, float>> isoEtRanges = {
+        {-5, 0},  // Strongly isolated
+        {0, 2},   // Weakly isolated
+        {2, 5},   // Non-isolated
+        {5, 10}   // Highly non-isolated
+    };
+    
+    
 
     int event_count = 0;
 
@@ -179,6 +189,23 @@ class caloTreeGen : public SubsysReco{
         const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi,
         const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi,
         std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, std::vector<int> activeTriggerBits);
+    
+    void fillHistogramsForTriggers(
+        float mesonMass,
+        size_t clus1,
+        size_t clus2,
+        float pt1,
+        float pt2,
+        float E1,
+        float E2,
+        float minClusEcore,
+        float maxChi2,
+        float maxAsym,
+        size_t& filledHistogramCount,
+        const std::vector<int>& clusterIDs,
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
+        const std::vector<int>& activeTriggerBits,
+        bool& filledHistogram);
 
     void processClusterInvariantMass(
         const std::vector<float>& clusterE,
@@ -188,6 +215,8 @@ class caloTreeGen : public SubsysReco{
         const std::vector<float>& clusterPhi,
         const std::vector<int>& clusterIDs,
         const std::map<int, std::pair<float, float>>& clusterEtIsoMap, std::vector<int> activeTriggerBits);
+
+
 
     float getMaxTowerE(RawCluster *cluster, TowerInfoContainer *towerContainer);
     std::vector<float> returnClusterTowE(RawCluster *cluster, TowerInfoContainer *towerContainer);
