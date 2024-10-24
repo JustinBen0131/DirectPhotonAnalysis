@@ -64,6 +64,9 @@ struct TowerData {
     bool isAcceptable;
 };
 
+const std::string caloTreeGen::IN_MASS_WINDOW_LABEL = "_inMassWindow";
+const std::string caloTreeGen::OUTSIDE_MASS_WINDOW_LABEL = "_outsideMassWindow";
+
 //____________________________________________________________________________..
 caloTreeGen::caloTreeGen(const std::string &name):
 SubsysReco("CaloTreeGen")
@@ -221,7 +224,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
 //                    std::cout << "Creating histograms for Trigger Index: " << triggerIndex << std::endl;
 //                    std::cout << "Histogram name: " << invMassHistName_noBinsOfPt_name << std::endl;
 
-                    
+
                     for (const auto& pT_bin : pT_bins) {
                         std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusE) +
                                                       "_Chi" + formatFloatForFilename(maxChi2) +
@@ -236,72 +239,78 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                         TH1F* invMassHist = new TH1F(invMassHistName.c_str(), invMassHistName.c_str(), 80, 0, 1.0);
                         invMassHist->SetTitle(";M_{#gamma#gamma};");
 
-                        // Create the isolation energy histograms
-                        std::string hist2DName = "h2_cluster_iso_Ecore_E" + formatFloatForFilename(minClusE) +
-                                               "_Chi" + formatFloatForFilename(maxChi2) +
-                                               "_Asym" + formatFloatForFilename(maxAsym) +
-                                               "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                               "_" + std::to_string(triggerIndex);
+                        for (const std::string& massWindowLabel : {IN_MASS_WINDOW_LABEL, OUTSIDE_MASS_WINDOW_LABEL}) {
+                            // Adjust histogram names to include massWindowLabel
+                            std::string hist2DName = "h2_cluster_iso_Ecore_E" + formatFloatForFilename(minClusE) +
+                                                      "_Chi" + formatFloatForFilename(maxChi2) +
+                                                      "_Asym" + formatFloatForFilename(maxAsym) +
+                                                      massWindowLabel +
+                                                      "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                      "_" + std::to_string(triggerIndex);
+                             
+                             std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusE) +
+                                                      "_Chi" + formatFloatForFilename(maxChi2) +
+                                                      "_Asym" + formatFloatForFilename(maxAsym) +
+                                                      massWindowLabel +
+                                                      "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                      "_" + std::to_string(triggerIndex);
 
-                        std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusE) +
-                                               "_Chi" + formatFloatForFilename(maxChi2) +
-                                               "_Asym" + formatFloatForFilename(maxAsym) +
-                                               "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                               "_" + std::to_string(triggerIndex);
+                            // Create and store the 2D histogram (Isolation energy vs Ecore)
+                            TH2F* hist2D = new TH2F(hist2DName.c_str(),
+                                                  "Cluster Isolation Energy vs Cluster ECore;Cluster ECore [GeV];E_{T}^{iso} [GeV]",
+                                                  100, 0, 20, 100, -10, 30);
+                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][hist2DName] = hist2D;
 
-                        // Create and store the 2D histogram (Isolation energy vs Ecore)
-                        TH2F* hist2D = new TH2F(hist2DName.c_str(),
-                                              "Cluster Isolation Energy vs Cluster ECore;Cluster ECore [GeV];E_{T}^{iso} [GeV]",
-                                              100, 0, 20, 100, -10, 30);
-                        massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][hist2DName] = hist2D;
+                            // Create and store the 1D histogram (Isolation energy)
+                            TH1F* hist1D = new TH1F(hist1DName.c_str(),
+                                                  "Isolation Energy Distribution;E_{T}^{iso} [GeV];Counts",
+                                                  100, -10, 30);
+                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][hist1DName] = hist1D;
 
-                        // Create and store the 1D histogram (Isolation energy)
-                        TH1F* hist1D = new TH1F(hist1DName.c_str(),
-                                              "Isolation Energy Distribution;E_{T}^{iso} [GeV];Counts",
-                                              100, -10, 30);
-                        massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][hist1DName] = hist1D;
-
-                        
-                        for (const auto& isoRange : isoEtRanges) {
-                            float isoMin = isoRange.first;
-                            float isoMax = isoRange.second;
                             
-                            std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusE) +
-                                                                 "_Chi" + formatFloatForFilename(maxChi2) +
-                                                                 "_Asym" + formatFloatForFilename(maxAsym) +
-                                                                 "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
-                                                                 "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                                 "_" + std::to_string(triggerIndex);
+                            for (const auto& isoRange : isoEtRanges) {
+                                float isoMin = isoRange.first;
+                                float isoMax = isoRange.second;
+                                
+                                std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusE) +
+                                                                     "_Chi" + formatFloatForFilename(maxChi2) +
+                                                                     "_Asym" + formatFloatForFilename(maxAsym) +
+                                                                     massWindowLabel +
+                                                                     "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
+                                                                     "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                                     "_" + std::to_string(triggerIndex);
+                                
+                                TH1F* isolatedPhotonHist = new TH1F(isolatedPhotonHistName.c_str(), "Isolated Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                                
+                                massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][isolatedPhotonHistName] = isolatedPhotonHist;
+                            }
                             
-                            TH1F* isolatedPhotonHist = new TH1F(isolatedPhotonHistName.c_str(), "Isolated Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                            // Create the histogram for all photons from pi0 decays
+                            std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusE) +
+                                                            "_Chi" + formatFloatForFilename(maxChi2) +
+                                                            "_Asym" + formatFloatForFilename(maxAsym) +
+                                                            massWindowLabel +
+                                                            "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                            "_" + std::to_string(triggerIndex);
                             
-                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][isolatedPhotonHistName] = isolatedPhotonHist;
+                            TH1F* allPhotonHist = new TH1F(allPhotonHistName.c_str(), "All Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+
+                            // Create histogram for the pT distribution of all photons
+                            std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusE) +
+                                                           "_Chi" + formatFloatForFilename(maxChi2) +
+                                                           "_Asym" + formatFloatForFilename(maxAsym) +
+                                                           massWindowLabel +
+                                                           "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                           "_" + std::to_string(triggerIndex);
+
+                            TH1F* ptPhotonHist = new TH1F(ptPhotonHistName.c_str(), "pT of Photons; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                            
+                            // Store these histograms in the massAndIsolationHistograms structure
+                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][invMassHistName] = invMassHist;
+                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName] = allPhotonHist;
+                            massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName] = ptPhotonHist;
+                            
                         }
-                        
-                        // Create the histogram for all photons from pi0 decays
-                        std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusE) +
-                                                        "_Chi" + formatFloatForFilename(maxChi2) +
-                                                        "_Asym" + formatFloatForFilename(maxAsym) +
-                                                        "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                        "_" + std::to_string(triggerIndex);
-                        
-                        
-                        TH1F* allPhotonHist = new TH1F(allPhotonHistName.c_str(), "All Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
-
-                        // Create histogram for the pT distribution of all photons
-                        std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusE) +
-                                                       "_Chi" + formatFloatForFilename(maxChi2) +
-                                                       "_Asym" + formatFloatForFilename(maxAsym) +
-                                                       "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                       "_" + std::to_string(triggerIndex);
-
-                        TH1F* ptPhotonHist = new TH1F(ptPhotonHistName.c_str(), "pT of Photons; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
-                        
-                        
-                        // Store these histograms in the massAndIsolationHistograms structure
-                        massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][invMassHistName] = invMassHist;
-                        massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName] = allPhotonHist;
-                        massAndIsolationHistograms[triggerIndex][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName] = ptPhotonHist;
                     }
                 }
             }
@@ -574,11 +583,13 @@ void caloTreeGen::fillHistogramsForTriggers(
     const std::vector<int>& activeTriggerBits,
     bool& filledHistogram) {
     
-    
-    const float pionMass = 0.15;    // Pion mass in GeV/c²
+    /*
+     temporary -- next should do the invariant mass analysis in first passs go back through using proper mass window for each pT bin
+     */
+    const float pionMass = 0.15;
     const float pionMassWindow = 0.02; // Define the pion mass window
 
-    const float etaMass = 0.59;     // Eta mass in GeV/c²
+    const float etaMass = 0.59;
     const float etaMassWindow = 0.050; // Define the eta mass window
 
     
@@ -652,166 +663,174 @@ void caloTreeGen::fillHistogramsForTriggers(
                         std::cout << "Filled invariant mass histogram " << invMassHistName << " with meson mass " << mesonMass << std::endl;
                     }
                 }
-                // Check if meson mass is within the pion or eta mass window
-                if (fabs(mesonMass - pionMass) <= pionMassWindow || fabs(mesonMass - etaMass) <= etaMassWindow) {
-                    if (verbose) {
+                
+                // Determine if meson mass is within the pion or eta mass window
+                bool isInMassWindow = (fabs(mesonMass - pionMass) <= pionMassWindow) ||
+                                      (fabs(mesonMass - etaMass) <= etaMassWindow);
+                
+                std::string massWindowLabel = isInMassWindow ? "_inMassWindow" : "_outsideMassWindow";
+
+                if (verbose) {
+                    if (isInMassWindow) {
                         std::cout << "Meson mass " << mesonMass << " is within pion or eta mass window." << std::endl;
+                    } else {
+                        std::cout << "Meson mass " << mesonMass << " is outside pion and eta mass window." << std::endl;
                     }
-                    for (size_t clusterIndex : {clus1, clus2}) {
-                        int clusterID = clusterIDs[clusterIndex];
-
-                        if (verbose) {
-                            std::cout << "Processing cluster ID: " << clusterID << std::endl;
-                        }
-                        
-                        if (clusterEtIsoMap.count(clusterID)) {
-                            float ecore_fromMap = clusterEtIsoMap.at(clusterID).first;
-                            float isoEt_FromMap = clusterEtIsoMap.at(clusterID).second;
-                            
-                            if (verbose) {
-                                std::cout << "Cluster Ecore: " << ecore_fromMap << ", IsoEt: " << isoEt_FromMap << std::endl;
-                            }
-                            
-                            // Create unique histogram names based on cut combination and pT range
-                            std::string hist2DName = "h2_cluster_iso_Ecore_E" + formatFloatForFilename(minClusEcore) +
-                                                   "_Chi" + formatFloatForFilename(maxChi2) +
-                                                   "_Asym" + formatFloatForFilename(maxAsym) +
-                                                   "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                   "_" + std::to_string(triggerIndex);
-
-                            std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusEcore) +
-                                                   "_Chi" + formatFloatForFilename(maxChi2) +
-                                                   "_Asym" + formatFloatForFilename(maxAsym) +
-                                                   "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                   "_" + std::to_string(triggerIndex);
-                            
-                            if (verbose) {
-                                std::cout << "Attempting to fill histograms: " << hist2DName << " and " << hist1DName << std::endl;
-                            }
-
-                            // Retrieve or create the histograms
-                            auto hist2D = dynamic_cast<TH2F*>(cutHistMap[pT_bin][hist2DName]);
-                            auto hist1D = dynamic_cast<TH1F*>(cutHistMap[pT_bin][hist1DName]);
-
-                            if (hist2D && hist1D) {
-                                // Fill the histograms
-                                hist2D->Fill(ecore_fromMap, isoEt_FromMap);
-                                hist1D->Fill(isoEt_FromMap);
-                                filledHistogramCount++;
-                                filledHistogram = true;
-
-                                if (verbose) {
-                                    std::cout << "Filled histograms " << hist2DName << " and " << hist1DName << std::endl;
-                                }
-                            } else {
-                                std::cerr << "Error: Histograms for isolation energy are null." << std::endl;
-                            }
-                        }
+                }
+                for (size_t clusterIndex : {clus1, clus2}) {
+                    int clusterID = clusterIDs[clusterIndex];
+                    if (verbose) {
+                        std::cout << "Processing cluster ID: " << clusterID << std::endl;
                     }
-                    for (const auto& isoRange : isoEtRanges) {
-                        float isoMin = isoRange.first;
-                        float isoMax = isoRange.second;
+                    if (clusterEtIsoMap.count(clusterID)) {
+                        float ecore_fromMap = clusterEtIsoMap.at(clusterID).first;
+                        float isoEt_FromMap = clusterEtIsoMap.at(clusterID).second;
                         
                         if (verbose) {
-                            std::cout << "Processing isolation Et range: " << isoMin << " to " << isoMax << std::endl;
-                        }
-
-                        // Get the cluster IDs and check for isolation energy in the defined ranges
-                        bool clus1_isolated = clusterEtIsoMap.count(clusterIDs[clus1]) &&
-                                              (clusterEtIsoMap.at(clusterIDs[clus1]).second >= isoMin &&
-                                               clusterEtIsoMap.at(clusterIDs[clus1]).second < isoMax);
-
-                        bool clus2_isolated = clusterEtIsoMap.count(clusterIDs[clus2]) &&
-                                              (clusterEtIsoMap.at(clusterIDs[clus2]).second >= isoMin &&
-                                               clusterEtIsoMap.at(clusterIDs[clus2]).second < isoMax);
-
-                        if (verbose) {
-                            std::cout << "clus1_isolated: " << clus1_isolated << ", clus2_isolated: " << clus2_isolated << std::endl;
+                            std::cout << "Cluster Ecore: " << ecore_fromMap << ", IsoEt: " << isoEt_FromMap << std::endl;
                         }
                         
-                        if (clus1_isolated || clus2_isolated) {
-                            if (verbose) {
-                                std::cout << "At least one cluster is isolated in this isoEt range." << std::endl;
-                            }
-                            // Fill isolated photons histogram for the current isolation energy range
-                            std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusEcore) +
-                                                                 "_Chi" + formatFloatForFilename(maxChi2) +
-                                                                 "_Asym" + formatFloatForFilename(maxAsym) +
-                                                                 "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
-                                                                 "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                                 "_" + std::to_string(triggerIndex);
-                            
-                            if (verbose) {
-                                std::cout << "Attempting to fill isolated photon histogram: " << isolatedPhotonHistName << std::endl;
-                            }
+                        std::string hist2DName = "h2_cluster_iso_Ecore_E" + formatFloatForFilename(minClusEcore) +
+                                                 "_Chi" + formatFloatForFilename(maxChi2) +
+                                                 "_Asym" + formatFloatForFilename(maxAsym) +
+                                                 massWindowLabel +
+                                                 "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
+                                                 "_" + std::to_string(triggerIndex);
 
-                            TH1F* isolatedPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][isolatedPhotonHistName]);
-                            if (isolatedPhotonHist) {
-                                if (clus1_isolated) {
-                                    isolatedPhotonHist->Fill(1);
-                                    filledHistogram = true;
-                                    if (verbose) {
-                                        std::cout << "Filled isolatedPhotonHist for clus1." << std::endl;
-                                    }
-                                }
-                                if (clus2_isolated) {
-                                    isolatedPhotonHist->Fill(1);
-                                    filledHistogram = true;
-                                    if (verbose) {
-                                          std::cout << "Filled isolatedPhotonHist for clus2." << std::endl;
-                                    }
-                                }
+                        std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusEcore) +
+                                                 "_Chi" + formatFloatForFilename(maxChi2) +
+                                                 "_Asym" + formatFloatForFilename(maxAsym) +
+                                                 massWindowLabel +
+                                                 "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
+                                                 "_" + std::to_string(triggerIndex);
+
+                        
+                        if (verbose) {
+                            std::cout << "Attempting to fill histograms: " << hist2DName << " and " << hist1DName << std::endl;
+                        }
+                        
+                        
+                        // Retrieve or create the histograms
+                        auto hist2D = dynamic_cast<TH2F*>(cutHistMap[pT_bin][hist2DName]);
+                        auto hist1D = dynamic_cast<TH1F*>(cutHistMap[pT_bin][hist1DName]);
+                        
+                        if (hist2D && hist1D) {
+                            // Fill the histograms
+                            hist2D->Fill(ecore_fromMap, isoEt_FromMap);
+                            hist1D->Fill(isoEt_FromMap);
+                            filledHistogramCount++;
+                            filledHistogram = true;
+
+                            if (verbose) {
+                                std::cout << "Filled histograms " << hist2DName << " and " << hist1DName << std::endl;
                             }
+                        } else {
+                            std::cerr << "Error: Histograms for isolation energy are null." << std::endl;
                         }
                     }
-
-                    // Fill all photons histogram
-                    std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEcore) +
-                                                    "_Chi" + formatFloatForFilename(maxChi2) +
-                                                    "_Asym" + formatFloatForFilename(maxAsym) +
-                                                    "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                    "_" + std::to_string(triggerIndex);
+                }
+                for (const auto& isoRange : isoEtRanges) {
+                    float isoMin = isoRange.first;
+                    float isoMax = isoRange.second;
                     
                     if (verbose) {
-                        std::cout << "Attempting to fill all photons histogram: " << allPhotonHistName << std::endl;
+                        std::cout << "Processing isolation Et range: " << isoMin << " to " << isoMax << std::endl;
+                    }
+                    // Get the cluster IDs and check for isolation energy in the defined ranges
+                    bool clus1_isolated = clusterEtIsoMap.count(clusterIDs[clus1]) &&
+                                          (clusterEtIsoMap.at(clusterIDs[clus1]).second >= isoMin &&
+                                           clusterEtIsoMap.at(clusterIDs[clus1]).second < isoMax);
+
+                    bool clus2_isolated = clusterEtIsoMap.count(clusterIDs[clus2]) &&
+                                          (clusterEtIsoMap.at(clusterIDs[clus2]).second >= isoMin &&
+                                           clusterEtIsoMap.at(clusterIDs[clus2]).second < isoMax);
+                    if (verbose) {
+                        std::cout << "clus1_isolated: " << clus1_isolated << ", clus2_isolated: " << clus2_isolated << std::endl;
                     }
                     
-                    TH1F* allPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName]);
-                    if (allPhotonHist) {
-                        allPhotonHist->Fill(1);
-                        allPhotonHist->Fill(1); // 1 for each photon
+                    if (clus1_isolated || clus2_isolated) {
+                        
+                        if (verbose) {
+                            std::cout << "At least one cluster is isolated in this isoEt range." << std::endl;
+                        }
+                        std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusEcore) +
+                                                             "_Chi" + formatFloatForFilename(maxChi2) +
+                                                             "_Asym" + formatFloatForFilename(maxAsym) +
+                                                             massWindowLabel +
+                                                             "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
+                                                             "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
+                                                             "_" + std::to_string(triggerIndex);
+                        if (verbose) {
+                            std::cout << "Attempting to fill isolated photon histogram: " << isolatedPhotonHistName << std::endl;
+                        }
+                        TH1F* isolatedPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][isolatedPhotonHistName]);
+                        if (isolatedPhotonHist) {
+                            if (clus1_isolated) {
+                                isolatedPhotonHist->Fill(1);
+                                filledHistogram = true;
+                                if (verbose) {
+                                    std::cout << "Filled isolatedPhotonHist for clus1." << std::endl;
+                                }
+                            }
+                            if (clus2_isolated) {
+                                isolatedPhotonHist->Fill(1);
+                                filledHistogram = true;
+                                if (verbose) {
+                                    std::cout << "Filled isolatedPhotonHist for clus2." << std::endl;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fill all photons histogram
+                std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEcore) +
+                                                "_Chi" + formatFloatForFilename(maxChi2) +
+                                                "_Asym" + formatFloatForFilename(maxAsym) +
+                                                massWindowLabel +
+                                                "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
+                                                "_" + std::to_string(triggerIndex);
+
+                if (verbose) {
+                    std::cout << "Attempting to fill all photons histogram: " << allPhotonHistName << std::endl;
+                }
+
+                
+                TH1F* allPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName]);
+                if (allPhotonHist) {
+                    allPhotonHist->Fill(1);
+                    allPhotonHist->Fill(1); // 1 for each photon
+                    filledHistogram = true;
+                    if (verbose) {
+                        std::cout << "Filled allPhotonHist with 2 entries." << std::endl;
+                    }
+                }
+                
+                // Fill pT distribution histograms
+                std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusEcore) +
+                                               "_Chi" + formatFloatForFilename(maxChi2) +
+                                               "_Asym" + formatFloatForFilename(maxAsym) +
+                                               massWindowLabel +
+                                               "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
+                                               "_" + std::to_string(triggerIndex);
+
+                if (verbose) {
+                    std::cout << "Attempting to fill pT photon histogram: " << ptPhotonHistName << std::endl;
+                }
+
+                TH1F* ptPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][ptPhotonHistName]);
+                if (ptPhotonHist) {
+                    if (pt1 >= pT_min && pt1 < pT_max) {
+                        ptPhotonHist->Fill(pt1);
                         filledHistogram = true;
                         if (verbose) {
-                            std::cout << "Filled allPhotonHist with 2 entries." << std::endl;
+                            std::cout << "Filled ptPhotonHist with pt1: " << pt1 << std::endl;
                         }
                     }
-
-                    // Fill pT distribution histograms
-                    std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusEcore) +
-                                                   "_Chi" + formatFloatForFilename(maxChi2) +
-                                                   "_Asym" + formatFloatForFilename(maxAsym) +
-                                                   "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                   "_" + std::to_string(triggerIndex);
-
-                    if (verbose) {
-                        std::cout << "Attempting to fill pT photon histogram: " << ptPhotonHistName << std::endl;
-                    }
-
-                    TH1F* ptPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][ptPhotonHistName]);
-                    if (ptPhotonHist) {
-                        if (pt1 >= pT_min && pt1 < pT_max) {
-                            ptPhotonHist->Fill(pt1);
-                            filledHistogram = true;
-                            if (verbose) {
-                                std::cout << "Filled ptPhotonHist with pt1: " << pt1 << std::endl;
-                            }
-                        }
-                        if (pt2 >= pT_min && pt2 < pT_max) {
-                            ptPhotonHist->Fill(pt2);
-                            filledHistogram = true;
-                            if (verbose) {
-                                std::cout << "Filled ptPhotonHist with pt2: " << pt2 << std::endl;
-                            }
+                    if (pt2 >= pT_min && pt2 < pT_max) {
+                        ptPhotonHist->Fill(pt2);
+                        filledHistogram = true;
+                        if (verbose) {
+                            std::cout << "Filled ptPhotonHist with pt2: " << pt2 << std::endl;
                         }
                     }
                 }
