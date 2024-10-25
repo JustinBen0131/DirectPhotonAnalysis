@@ -20,7 +20,7 @@
 
 std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/output/";
 std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
-std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber44707.root";
+std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber46735.root";
 
 
 // Mapping trigger indices to names based on the provided trigger list
@@ -700,33 +700,35 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                 minY -= yMargin;
                 maxY += yMargin;
 
-                // Create canvas
-                TCanvas canvas;
-                canvas.SetGrid();
+                // Automatically determine the x-axis range based on the farthest pT bin
+                  double maxPt = *std::max_element(pTCentersPi0.begin(), pTCentersPi0.end());
 
-                // Draw graph for π⁰
-                TH1F* hFrame = canvas.DrawFrame(0, minY, 20, maxY, ";p_{T} [GeV];Mean #pi^{0} Mass [GeV]");
-                graphPi0->Draw("P SAME");
+                  // Create canvas
+                  TCanvas canvas;
 
-                // Add labels
-                TLatex latex;
-                latex.SetNDC();
-                latex.SetTextSize(0.04);
-                latex.DrawLatex(0.6, 0.85, ("Trigger: " + triggerName).c_str());
-                latex.DrawLatex(0.6, 0.80, ("Cut: " + cutCombination).c_str());
+                  // Draw graph for π⁰
+                  TH1F* hFrame = canvas.DrawFrame(0, minY, 12, maxY, ";p_{T} [GeV];Mean #pi^{0} Mass [GeV]");  // Multiply maxPt by 1.1 for margin
+                  graphPi0->Draw("P SAME");
 
-                // Save plot to the corresponding folder
-                std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
-                std::string outputFilePath = outputDirPath + "MeanPi0_vs_pT.png";
+                  // Add labels
+                  TLatex latex;
+                  latex.SetNDC();
+                  latex.SetTextSize(0.038);
+                  latex.DrawLatex(0.2, 0.85, ("Trigger: " + triggerName).c_str());
+                  latex.DrawLatex(0.2, 0.80, ("Cut: " + cutCombination).c_str());
 
-                // Ensure the directory exists
-                gSystem->mkdir(outputDirPath.c_str(), true);
+                  // Save plot to the corresponding folder
+                  std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
+                  std::string outputFilePath = outputDirPath + "MeanPi0_vs_pT.png";
 
-                canvas.SaveAs(outputFilePath.c_str());
-                std::cout << "Saved plot: " << outputFilePath << std::endl;
+                  // Ensure the directory exists
+                  gSystem->mkdir(outputDirPath.c_str(), true);
 
-                // Clean up
-                delete graphPi0;
+                  canvas.SaveAs(outputFilePath.c_str());
+                  std::cout << "Saved plot: " << outputFilePath << std::endl;
+
+                  // Clean up
+                  delete graphPi0;
             }
 
             // Generate Mean η Mass vs. pT Plot
@@ -752,24 +754,26 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                     minY = std::min(minY, yVal - yErr);
                     maxY = std::max(maxY, yVal + yErr);
                 }
-                double yMargin = 0.05 * (maxY - minY);  // Add 5% margin
+                double yMargin = 0.2 * (maxY - minY);  // Add 5% margin
                 minY -= yMargin;
                 maxY += yMargin;
 
+                // Automatically determine the x-axis range based on the farthest pT bin
+                double maxPt = *std::max_element(pTCentersEta.begin(), pTCentersEta.end());
+
                 // Create canvas
                 TCanvas canvas;
-                canvas.SetGrid();
 
                 // Draw graph for η
-                TH1F* hFrame = canvas.DrawFrame(0, minY, 20, maxY, ";p_{T} [GeV];Mean #eta Mass [GeV]");
+                TH1F* hFrame = canvas.DrawFrame(0, minY, 12, maxY, ";p_{T} [GeV];Mean #eta Mass [GeV]");
                 graphEta->Draw("P SAME");
 
                 // Add labels
                 TLatex latex;
                 latex.SetNDC();
-                latex.SetTextSize(0.04);
-                latex.DrawLatex(0.6, 0.85, ("Trigger: " + triggerName).c_str());
-                latex.DrawLatex(0.6, 0.80, ("Cut: " + cutCombination).c_str());
+                latex.SetTextSize(0.038);
+                latex.DrawLatex(0.2, 0.85, ("Trigger: " + triggerName).c_str());
+                latex.DrawLatex(0.2, 0.80, ("Cut: " + cutCombination).c_str());
 
                 // Save plot to the corresponding folder
                 std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
@@ -786,11 +790,9 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
             }
         }
     }
-    
     for (const auto& triggerPair : dataMap) {
         int triggerIndex = triggerPair.first;
         std::string triggerName = getTriggerName(triggerIndex);
-
         // Retrieve collected data for this trigger
         const auto& cuts = cutVariations[triggerIndex];
         const auto& pi0Means = meanPi0sPerTrigger[triggerIndex];
@@ -808,11 +810,14 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
 
             for (size_t i = 0; i < pi0Means.size(); ++i) {
                 if (std::isnan(pi0Means[i])) continue; // Skip invalid fits
-                xValues.push_back(i + 1);
+                xValues.push_back(i + 1);  // Use index values for x-axis
                 xErrors.push_back(0);
                 yValues.push_back(pi0Means[i]);
                 yErrors.push_back(pi0Errors[i]);
-                xLabels.push_back(cuts[i]);
+
+                // Replace cut combination with a simple label like "A", "B", "C", ...
+                std::string label = std::string(1, 'A' + i);
+                xLabels.push_back(label);
             }
 
             if (!xValues.empty()) {
@@ -830,42 +835,50 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                     minY = std::min(minY, yVal - yErr);
                     maxY = std::max(maxY, yVal + yErr);
                 }
-                double yMargin = 0.1 * (maxY - minY);
+                double yMargin = 0.2 * (maxY - minY);
                 minY -= yMargin;
                 maxY += yMargin;
 
                 // Create canvas
                 TCanvas canvas;
-                canvas.SetGrid();
+                canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
 
                 // Draw graph
-                double xMin = 0;
-                double xMax = xValues.size() + 1;
+                double xMin = 0.5;  // Start at 0.5 to center points between ticks
+                double xMax = xValues.size() + 0.5;
                 TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, ";Cut Variation;Mean #pi^{0} Mass [GeV]");
                 graphPi0->Draw("P SAME");
 
-                // Set x-axis labels
+                // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
                 TAxis* axis = hFrame->GetXaxis();
                 axis->SetNdivisions(xValues.size(), false);
                 axis->SetLabelSize(0.03);
-                axis->SetTickLength(0);
-                axis->SetLabelOffset(999); // Hide default labels
+                axis->SetTickLength(0.03); // Add visible ticks
+                axis->SetLabelOffset(999); // Hide default tick numbers
 
-                // Create custom labels
+                // Add simple alphabetical labels between ticks
                 for (size_t i = 0; i < xValues.size(); ++i) {
-                    double x = xValues[i];
+                    double x = xValues[i];  // Use xValues directly (centered between ticks)
                     TLatex label;
-                    label.SetTextAlign(33); // Center align
-                    label.SetTextSize(0.02);
-                    label.SetTextAngle(90); // Vertical text
-                    label.DrawLatex(x, minY - (maxY - minY)*0.02, xLabels[i].c_str());
+                    label.SetTextAlign(22); // Center align
+                    label.SetTextSize(0.03);
+                    label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
                 }
 
-                // Add labels
+                // Add legend to map cut combinations to labels
+                TLegend* legend = new TLegend(0.55, 0.25, 0.8, 0.45);  // Adjust size for clarity
+                legend->SetTextSize(0.03);  // Adjust text size
+                legend->SetBorderSize(0);   // Remove legend border for better appearance
+                for (size_t i = 0; i < xLabels.size(); ++i) {
+                    legend->AddEntry((TObject*)0, (xLabels[i] + " : " + cuts[i]).c_str(), "");
+                }
+                legend->Draw();
+
+                // Add trigger name label
                 TLatex latex;
                 latex.SetNDC();
                 latex.SetTextSize(0.04);
-                latex.DrawLatex(0.6, 0.85, ("Trigger: " + triggerName).c_str());
+                latex.DrawLatex(0.2, 0.95, ("Trigger: " + triggerName).c_str());
 
                 // Save plot
                 std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/";
@@ -876,9 +889,9 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
 
                 // Clean up
                 delete graphPi0;
+                delete legend;
             }
         }
-
         // Generate Mean η Mass vs. Cut Variation Plot
         {
             std::vector<double> xValues;
@@ -889,11 +902,14 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
 
             for (size_t i = 0; i < etaMeans.size(); ++i) {
                 if (std::isnan(etaMeans[i])) continue; // Skip invalid fits
-                xValues.push_back(i + 1);
+                xValues.push_back(i + 1);  // Use index values for x-axis
                 xErrors.push_back(0);
                 yValues.push_back(etaMeans[i]);
                 yErrors.push_back(etaErrors[i]);
-                xLabels.push_back(cuts[i]);
+
+                // Replace cut combination with a simple label like "A", "B", "C", ...
+                std::string label = std::string(1, 'A' + i);
+                xLabels.push_back(label);
             }
 
             if (!xValues.empty()) {
@@ -911,42 +927,50 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                     minY = std::min(minY, yVal - yErr);
                     maxY = std::max(maxY, yVal + yErr);
                 }
-                double yMargin = 0.1 * (maxY - minY);
+                double yMargin = 0.58 * (maxY - minY);
                 minY -= yMargin;
                 maxY += yMargin;
 
                 // Create canvas
                 TCanvas canvas;
-                canvas.SetGrid();
+                canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
 
                 // Draw graph
-                double xMin = 0;
-                double xMax = xValues.size() + 1;
+                double xMin = 0.5;  // Start at 0.5 to center points between ticks
+                double xMax = xValues.size() + 0.5;
                 TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, ";Cut Variation;Mean #eta Mass [GeV]");
                 graphEta->Draw("P SAME");
 
-                // Set x-axis labels
+                // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
                 TAxis* axis = hFrame->GetXaxis();
                 axis->SetNdivisions(xValues.size(), false);
-                axis->SetLabelSize(0.025);
-                axis->SetTickLength(0);
-                axis->SetLabelOffset(999); // Hide default labels
+                axis->SetLabelSize(0.03);
+                axis->SetTickLength(0.03); // Add visible ticks
+                axis->SetLabelOffset(999); // Hide default tick numbers
 
-                // Create custom labels
+                // Add simple alphabetical labels between ticks
                 for (size_t i = 0; i < xValues.size(); ++i) {
-                    double x = xValues[i];
+                    double x = xValues[i];  // Use xValues directly (centered between ticks)
                     TLatex label;
-                    label.SetTextAlign(33); // Center align
-                    label.SetTextSize(0.02);
-                    label.SetTextAngle(90); // Vertical text
-                    label.DrawLatex(x, minY - (maxY - minY)*0.02, xLabels[i].c_str());
+                    label.SetTextAlign(22); // Center align
+                    label.SetTextSize(0.03);
+                    label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
                 }
 
-                // Add labels
+                // Add legend to map cut combinations to labels
+                TLegend* legend = new TLegend(0.15, 0.73, 0.4, 0.9);  // Adjust size for clarity
+                legend->SetTextSize(0.03);  // Adjust text size
+                legend->SetBorderSize(0);   // Remove legend border for better appearance
+                for (size_t i = 0; i < xLabels.size(); ++i) {
+                    legend->AddEntry((TObject*)0, (xLabels[i] + " : " + cuts[i]).c_str(), "");
+                }
+                legend->Draw();
+
+                // Add trigger name label
                 TLatex latex;
                 latex.SetNDC();
                 latex.SetTextSize(0.04);
-                latex.DrawLatex(0.6, 0.85, ("Trigger: " + triggerName).c_str());
+                latex.DrawLatex(0.2, 0.95, ("Trigger: " + triggerName).c_str());
 
                 // Save plot
                 std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/";
@@ -957,6 +981,7 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
 
                 // Clean up
                 delete graphEta;
+                delete legend;
             }
         }
     }
