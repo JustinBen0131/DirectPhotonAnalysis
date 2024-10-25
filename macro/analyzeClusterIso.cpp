@@ -764,6 +764,7 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
             graphWithError->SetMarkerColor(color);
         }
 
+        multiGraph->Add(graphWithError);
         // Draw the graph
         multiGraph->SetTitle(("Ratio vs pT for " + cutKey).c_str());
         
@@ -830,10 +831,10 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
 }
 
 void analyzeClusterIso() {
-    isolationEnergies(inputFilePath, outputDir);
-
-    std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
-    outputHistogramLogs(csvFilePath);
+//    isolationEnergies(inputFilePath, outputDir);
+//
+//    std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
+//    outputHistogramLogs(csvFilePath);
 
     std::vector<std::pair<float, float>> exclusionRanges = {{-10, 0}, {0, 10}, {-5, 0}, {0, 2}, {5, 10}};
     plotRatioVsPt("/Users/patsfan753/Desktop/DirectPhotonInformation.csv", "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/IsolationEnergies/", exclusionRanges, false, true);
