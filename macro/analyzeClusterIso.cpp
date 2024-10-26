@@ -17,20 +17,9 @@
 #include <sys/stat.h>
 #include <TRandom3.h>
 
-std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/output/";
+std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/";
 std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
-std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber46735.root";
-
-struct CutValues {
-    float clusECore = -1;   // Default to -1 indicating no specific value
-    float chi = -1;         // Default to -1 indicating no specific value
-    float asymmetry = -1;   // Default to -1 indicating no specific value
-    float isoMin = -1;      // Default to -1 indicating no isoEt range
-    float isoMax = -1;      // Default to -1 indicating no isoEt range
-    float pTMin = -1;       // Default to -1 indicating no pT range
-    float pTMax = -1;       // Default to -1 indicating no pT range
-    int triggerIndex = -1;  // Default to -1 indicating no trigger index
-};
+std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber46623_runnumber47230.root";
 
 // Mapping trigger indices to names based on the provided trigger list
 std::map<int, std::string> triggerNameMap = {
@@ -73,14 +62,26 @@ std::string formatToThreeSigFigs(double value) {
     return stream.str();
 }
 
+struct CutValues {
+    float clusECore = -1;   // Default to -1 indicating no specific value
+    float chi = -1;         // Default to -1 indicating no specific value
+    float asymmetry = -1;   // Default to -1 indicating no specific value
+    float isoMin = -1;      // Default to -1 indicating no isoEt range
+    float isoMax = -1;      // Default to -1 indicating no isoEt range
+    float pTMin = -1;       // Default to -1 indicating no pT range
+    float pTMax = -1;       // Default to -1 indicating no pT range
+    int triggerIndex = -1;  // Default to -1 indicating no trigger index
+    std::string massWindowLabel;
+};
+
 CutValues parseIsolationQAHistName(const std::string& histName) {
     CutValues cuts;
     
     std::regex re("(?:_E([0-9]+(?:point[0-9]*)?)_Chi([0-9]+(?:point[0-9]*)?)_Asym([0-9]+(?:point[0-9]*)?)"
+                  "(?:_(inMassWindow|outsideMassWindow))?"
                   "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?)?_pT_([0-9]+(?:point[0-9]*)?)to([0-9]+(?:point[0-9]*)?)_(\\d+)|_(\\d+)");
 
     std::smatch match;
-
 
     // Lambda function to convert strings with 'point' to float values
     auto convert = [](const std::string& input) -> float {
@@ -94,31 +95,35 @@ CutValues parseIsolationQAHistName(const std::string& histName) {
 
     // Check if the regex matches the histogram name
     if (std::regex_search(histName, match, re)) {
-        if (match.size() >= 9) {
-            // Handle detailed histograms with cuts, pT range, and triggerIndex
+        if (match.size() >= 10) {
+            // Handle detailed histograms with cuts, mass window, pT range, and triggerIndex
             if (match[1].matched) {
                 cuts.clusECore = convert(match[1].str());
                 cuts.chi = convert(match[2].str());
                 cuts.asymmetry = convert(match[3].str());
 
-                if (match[4].matched && match[5].matched) {
-                    cuts.isoMin = convert(match[4].str());
-                    cuts.isoMax = convert(match[5].str());
+                if (match[4].matched) {
+                    cuts.massWindowLabel = match[4].str();  // Capture massWindowLabel if present
                 }
 
-                cuts.pTMin = convert(match[6].str());
-                cuts.pTMax = convert(match[7].str());
-                cuts.triggerIndex = std::stoi(match[8].str());
+                if (match[5].matched && match[6].matched) {
+                    cuts.isoMin = convert(match[5].str());
+                    cuts.isoMax = convert(match[6].str());
+                }
+
+                cuts.pTMin = convert(match[7].str());
+                cuts.pTMax = convert(match[8].str());
+                cuts.triggerIndex = std::stoi(match[9].str());
             }
             // Handle simple histograms with just pT range and triggerIndex
-            else if (match[6].matched && match[7].matched) {
-                cuts.pTMin = convert(match[6].str());
-                cuts.pTMax = convert(match[7].str());
-                cuts.triggerIndex = std::stoi(match[8].str());
+            else if (match[7].matched && match[8].matched) {
+                cuts.pTMin = convert(match[7].str());
+                cuts.pTMax = convert(match[8].str());
+                cuts.triggerIndex = std::stoi(match[9].str());
             }
             // Handle histograms with just triggerIndex
-            else if (match[9].matched) {
-                cuts.triggerIndex = std::stoi(match[9].str());
+            else if (match[10].matched) {
+                cuts.triggerIndex = std::stoi(match[10].str());
             }
 
             // Diagnostic prints
@@ -126,7 +131,8 @@ CutValues parseIsolationQAHistName(const std::string& histName) {
             std::cout << "  clusECore: " << cuts.clusECore << ", Chi: " << cuts.chi
                       << ", Asymmetry: " << cuts.asymmetry << ", isoMin: " << cuts.isoMin
                       << ", isoMax: " << cuts.isoMax << ", pTMin: " << cuts.pTMin
-                      << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex << std::endl;
+                      << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex
+                      << ", Mass Window Label: " << cuts.massWindowLabel << std::endl;
         }
     } else {
         std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
@@ -134,6 +140,7 @@ CutValues parseIsolationQAHistName(const std::string& histName) {
 
     return cuts;
 }
+
 
 // Helper function to get the trigger name based on index
 std::string getTriggerName(int triggerIndex) {
@@ -162,16 +169,16 @@ void saveHistogram(TObject* objHist, const std::string& outputFilePath, const st
         h2->Draw("COLZ");
 
         // Output Trigger Name
-        latex.DrawLatex(0.5, 0.8, ("Trigger: " + triggerName).c_str());
+        latex.DrawLatex(0.2, 0.8, ("Trigger: " + triggerName).c_str());
 
         // Output pT range if valid
         if (cuts.pTMin >= 0 && cuts.pTMax >= 0) {
-            latex.DrawLatex(0.5, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
+            latex.DrawLatex(0.2, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
         }
 
         // Output cut combination if valid
         if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
-            latex.DrawLatex(0.5, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
+            latex.DrawLatex(0.2, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
                                       ", Asym=" + formatToThreeSigFigs(cuts.asymmetry)).c_str());
         }
 
@@ -183,16 +190,16 @@ void saveHistogram(TObject* objHist, const std::string& outputFilePath, const st
         h1->Draw();
 
         // Output Trigger Name
-        latex.DrawLatex(0.65, 0.8, ("Trigger: " + triggerName).c_str());
+        latex.DrawLatex(0.18, 0.8, ("Trigger: " + triggerName).c_str());
 
         // Output pT range if valid
         if (cuts.pTMin >= 0 && cuts.pTMax >= 0) {
-            latex.DrawLatex(0.65, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
+            latex.DrawLatex(0.18, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
         }
 
         // Output cut combination if valid
         if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
-            latex.DrawLatex(0.65, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
+            latex.DrawLatex(0.18, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
                                       ", Asym=" + formatToThreeSigFigs(cuts.asymmetry)).c_str());
         }
     }
@@ -201,7 +208,6 @@ void saveHistogram(TObject* objHist, const std::string& outputFilePath, const st
     std::cout << "Saved histogram: " << outputFilePath << std::endl;
 }
 
-// New structures for each map
 struct IsolatedPhotonLog {
     int triggerIndex;
     float clusECore;
@@ -211,7 +217,8 @@ struct IsolatedPhotonLog {
     float pTMax;
     float isoMin;
     float isoMax;
-    int isolatedEntries;  // Entries in isolatedPhotonCount_E
+    int isolatedEntries;
+    std::string massWindowLabel;
 };
 
 struct TotalPhotonLog {
@@ -221,7 +228,8 @@ struct TotalPhotonLog {
     float asymmetry;
     float pTMin;
     float pTMax;
-    int totalEntries;     // Entries in allPhotonCount_E
+    int totalEntries;
+    std::string massWindowLabel;
 };
 
 struct PtWeightingLog {
@@ -231,13 +239,14 @@ struct PtWeightingLog {
     float asymmetry;
     float pTMin;
     float pTMax;
-    double weightedAveragePt;  // Weighted average pT value for ptPhoton_E histograms
+    double weightedAveragePt;
+    std::string massWindowLabel;
 };
 
-// Declare the new maps
-std::map<std::tuple<int, float, float, float, float, float, float, float>, IsolatedPhotonLog> isolatedPhotonMap;
-std::map<std::tuple<int, float, float, float, float, float>, TotalPhotonLog> totalPhotonMap;
-std::map<std::tuple<int, float, float, float, float, float>, PtWeightingLog> pTweightingMap;
+std::map<std::tuple<int, float, float, float, float, float, float, float, std::string>, IsolatedPhotonLog> isolatedPhotonMap;
+std::map<std::tuple<int, float, float, float, float, float, std::string>, TotalPhotonLog> totalPhotonMap;
+std::map<std::tuple<int, float, float, float, float, float, std::string>, PtWeightingLog> pTweightingMap;
+
 
 void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesDir) {
     std::string dirName = baseDir->GetName();
@@ -294,8 +303,8 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
                               << ", isoMax: " << cuts.isoMax << "\n";
 
 
-                    auto baseKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax);
-                    auto isoKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.isoMin, cuts.isoMax);
+                    auto baseKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.massWindowLabel);
+                    auto isoKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.isoMin, cuts.isoMax, cuts.massWindowLabel);
 
                     if (histName.find("isolatedPhotonCount_E") == 0) {
                         if (objHist->InheritsFrom(TH1::Class())) {
@@ -308,9 +317,11 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
                             log.pTMax = cuts.pTMax;
                             log.isoMin = cuts.isoMin;
                             log.isoMax = cuts.isoMax;
+                            log.massWindowLabel = cuts.massWindowLabel;
                             log.isolatedEntries = ((TH1*)objHist)->GetEntries();
 
                             std::cout << "  Isolated Photon Count: " << log.isolatedEntries << "\n";
+                            std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
                         }
                     }
 
@@ -323,9 +334,11 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
                             log.asymmetry = cuts.asymmetry;
                             log.pTMin = cuts.pTMin;
                             log.pTMax = cuts.pTMax;
+                            log.massWindowLabel = cuts.massWindowLabel;
                             log.totalEntries = ((TH1*)objHist)->GetEntries();
 
                             std::cout << "  Total Photon Count: " << log.totalEntries << "\n";
+                            std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
                         }
                     }
                     if (histName.find("ptPhoton_E") == 0) {
@@ -347,9 +360,11 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
                           log.asymmetry = cuts.asymmetry;
                           log.pTMin = cuts.pTMin;
                           log.pTMax = cuts.pTMax;
+                          log.massWindowLabel = cuts.massWindowLabel;
                           log.weightedAveragePt = (totalPhotonCounts > 0) ? weightedSumPt / totalPhotonCounts : 0;
 
                           std::cout << "  Weighted Average pT: " << log.weightedAveragePt << "\n";
+                          std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
                     }
                     // Check if we have a valid cut variation
                     if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
@@ -407,7 +422,7 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
 }
 void outputHistogramLogs(const std::string& outputFilePath) {
     std::cout << "\n================= Isolated Photon Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | isoMin | isoMax | IsolatedEntries\n";
+    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | isoMin | isoMax | IsolatedEntries | MassWindowLabel\n";
     std::cout << "----------------------------------------------------------------------------------------------\n";
     for (const auto& entry : isolatedPhotonMap) {
         auto key = entry.first;
@@ -420,12 +435,13 @@ void outputHistogramLogs(const std::string& outputFilePath) {
                   << std::get<5>(key) << " | "
                   << std::get<6>(key) << " | "
                   << std::get<7>(key) << " | "
-                  << log.isolatedEntries << "\n";
+                  << log.isolatedEntries << " | "
+                  << log.massWindowLabel << "\n";
     }
 
     std::cout << "\n================= Total Photon Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | TotalEntries\n";
-    std::cout << "--------------------------------------------------------------------\n";
+    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | TotalEntries | MassWindowLabel\n";
+    std::cout << "------------------------------------------------------------------------------------\n";
     for (const auto& entry : totalPhotonMap) {
         auto key = entry.first;
         const TotalPhotonLog& log = entry.second;
@@ -435,12 +451,13 @@ void outputHistogramLogs(const std::string& outputFilePath) {
                   << std::get<3>(key) << " | "
                   << std::get<4>(key) << " | "
                   << std::get<5>(key) << " | "
-                  << log.totalEntries << "\n";
+                  << log.totalEntries << " | "
+                  << log.massWindowLabel << "\n";
     }
 
     std::cout << "\n================= Weighted pT Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | WeightedAveragePt\n";
-    std::cout << "--------------------------------------------------------------------\n";
+    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | WeightedAveragePt | MassWindowLabel\n";
+    std::cout << "------------------------------------------------------------------------------------\n";
     for (const auto& entry : pTweightingMap) {
         auto key = entry.first;
         const PtWeightingLog& log = entry.second;
@@ -450,8 +467,10 @@ void outputHistogramLogs(const std::string& outputFilePath) {
                   << std::get<3>(key) << " | "
                   << std::get<4>(key) << " | "
                   << std::get<5>(key) << " | "
-                  << log.weightedAveragePt << "\n";
+                  << log.weightedAveragePt << " | "
+                  << log.massWindowLabel << "\n";
     }
+
     std::ofstream outFile(outputFilePath);
 
     if (!outFile.is_open()) {
@@ -460,22 +479,22 @@ void outputHistogramLogs(const std::string& outputFilePath) {
     }
 
     // Write CSV header
-    outFile << "Trigger,ECore,Chi,Asymmetry,pT Min,pT Max,isoMin,isoMax,Isolated Counts,Total Counts,Isolated/Total,Statistical Error,Weighted pT\n";
-
+    outFile << "Trigger,ECore,Chi,Asymmetry,pT Min,pT Max,isoMin,isoMax,Isolated Counts,Total Counts,Isolated/Total,Statistical Error,Weighted pT,MassWindowLabel\n";
 
     // Iterate through isolatedPhotonMap and correlate with totalPhotonMap and pTweightingMap
     for (const auto& isoEntry : isolatedPhotonMap) {
         auto isoKey = isoEntry.first;
         const IsolatedPhotonLog& isoLog = isoEntry.second;
 
-        // Extract the common key for totalPhotonMap and pTweightingMap (without isoMin/isoMax)
+        // Extract the common key for totalPhotonMap and pTweightingMap (including massWindowLabel)
         auto commonKey = std::make_tuple(
-            std::get<0>(isoKey), // triggerIndex
-            std::get<1>(isoKey), // clusECore
-            std::get<2>(isoKey), // chi
-            std::get<3>(isoKey), // asymmetry
-            std::get<4>(isoKey), // pTMin
-            std::get<5>(isoKey)  // pTMax
+            std::get<0>(isoKey),  // triggerIndex
+            std::get<1>(isoKey),  // clusECore
+            std::get<2>(isoKey),  // chi
+            std::get<3>(isoKey),  // asymmetry
+            std::get<4>(isoKey),  // pTMin
+            std::get<5>(isoKey),  // pTMax
+            isoLog.massWindowLabel // massWindowLabel
         );
 
         // Find corresponding entries in totalPhotonMap and pTweightingMap
@@ -500,6 +519,8 @@ void outputHistogramLogs(const std::string& outputFilePath) {
                     (totalError / totalLog.totalEntries) * (totalError / totalLog.totalEntries)
                 );
             }
+
+            // Write CSV row
             outFile << isoLog.triggerIndex << ","
                     << isoLog.clusECore << ","
                     << isoLog.chi << ","
@@ -511,8 +532,9 @@ void outputHistogramLogs(const std::string& outputFilePath) {
                     << isoLog.isolatedEntries << ","
                     << totalLog.totalEntries << ","
                     << ratio << ","
-                    << error << ","  // Write the calculated error
-                    << pTLog.weightedAveragePt << "\n";
+                    << error << ","
+                    << pTLog.weightedAveragePt << ","
+                    << isoLog.massWindowLabel << "\n";
         }
     }
 
@@ -562,29 +584,26 @@ std::string reFormatToSave(float value) {
     oss << std::fixed << value;
     return oss.str();
 }
+// Function to read CSV data into separate maps for inMassWindow and outsideMassWindow
+void readDataFromCSV(const std::string& filename,
+                     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_inMassWindow,
+                     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_outsideMassWindow) {
 
-// Function to plot Ratio vs pT with fixed isoEt ranges, with an option to exclude certain ranges
-void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
-                   const std::vector<std::pair<float, float>>& exclusionRanges = {},
-                   bool drawRefA = false, bool drawRefB = false) {
-    std::ifstream file(csvFilePath);
+    std::ifstream file(filename);
+    std::string line;
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open the CSV file." << std::endl;
+        std::cerr << "Error opening file: " << filename << std::endl;
         return;
     }
-
-    std::string line;
-    std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap;
-
 
     // Skip the header line
     std::getline(file, line);
     std::cout << "Skipping header: " << line << std::endl;
-    
+
     // Read CSV data
     while (std::getline(file, line)) {
         std::stringstream ss(line);
-        std::string token;
+        std::string token, massWindowLabel;
         int trigger;
         float eCore, chi, asym, ptMin, ptMax, isoMin, isoMax, ratio = 0, error = 0, weightedPt;
 
@@ -629,16 +648,29 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
         std::getline(ss, token, ',');
         weightedPt = std::stof(token);
 
+        // Parse the MassWindowLabel
+        std::getline(ss, massWindowLabel, ',');
+
         // Key for grouping: Trigger + Cut combination (ECore, Chi, Asymmetry)
         std::string key = "Trigger" + std::to_string(trigger) + "_E_" + reFormatToSave(eCore) + "_Chi" + reFormatToSave(chi) +
                           "_Asym" + reFormatToSave(asym);
 
-        // Add (pT Min, pT Max, isoMin, isoMax, ratio, error, weightedPt) to the map
-        dataMap[key].push_back(std::make_tuple(ptMin, ptMax, isoMin, isoMax, ratio, error, weightedPt));
+        // Add data to the appropriate map based on MassWindowLabel
+        if (massWindowLabel == "inMassWindow") {
+            dataMap_inMassWindow[key].emplace_back(ptMin, ptMax, isoMin, isoMax, ratio, error, weightedPt);
+        } else if (massWindowLabel == "outsideMassWindow") {
+            dataMap_outsideMassWindow[key].emplace_back(ptMin, ptMax, isoMin, isoMax, ratio, error, weightedPt);
+        }
     }
     file.close();
-    
+}
 
+
+// Function to plot Ratio vs pT with fixed isoEt ranges, with an option to exclude certain ranges
+void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap,
+                   const std::string& outputDir, const std::string& label,
+                   const std::vector<std::pair<float, float>>& exclusionRanges = {},
+                   bool drawRefA = false, bool drawRefB = false) {
     // Define isoEt ranges and assign colors
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-5, 0},
@@ -649,27 +681,49 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
         {0, 10}
     };
 
-    std::vector<int> colors = {kRed, kBlue, kGreen, kMagenta, kCyan, kOrange};
+//    std::vector<std::pair<float, float>> isoEtRanges = {
+//        {-5, 0},
+//        {0, 5},
+//        {-2, 0},
+//        {0, 2},
+//        {-2, -5},
+//        {2, 5},
+//        {-5, -10},
+//        {5, 10},
+//        {-10, 0},
+//        {0, 10}
+//    };
+    
+    
+    std::vector<int> colors = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
 
-     // Create a single dummy legend
-     TLegend* dummyLegend = new TLegend(0.16, 0.65, 0.4, 0.88); // Enlarged legend size
-     dummyLegend->SetBorderSize(0);  // Remove legend border
-     dummyLegend->SetTextSize(0.027); // Set text size for the legend
+    const std::string plotTitle = "Ratio of Isolated Photons from Meson Decays to All Clusters from Meson Decays Compared to PHENIX Data";
+
+    // Create a single dummy legend
+    TLegend* dummyLegend = new TLegend(0.18, 0.84, 0.38, 0.89); // Enlarged legend size
+    dummyLegend->SetBorderSize(0);  // Remove legend border
+    dummyLegend->SetTextSize(0.03); // Set text size for the legend
      
-     for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-         std::pair<float, float> currentRange = isoEtRanges[i];
+    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+        std::pair<float, float> currentRange = isoEtRanges[i];
+        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
+            continue;
+        }
 
-         // Skip adding the legend entry if the range is excluded
-         if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
-             continue;
-         }
+        // Format values to two decimal places
+        std::ostringstream formattedRange;
+        formattedRange << "#font[62]{sPHENIX, Isolation Criteria:}"
+                       << std::fixed << std::setprecision(2)
+                       << isoEtRanges[i].first << " #leq E_{T, iso} < " << isoEtRanges[i].second << " GeV, #Delta R_{cone} < 0.3";
 
-         std::string legendEntry = "isoMin: " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
-         TGraph* dummyGraph = new TGraph(); // Dummy graph to assign color to the legend
-         dummyGraph->SetMarkerStyle(20);
-         dummyGraph->SetMarkerColor(colors[i]);
-         dummyLegend->AddEntry(dummyGraph, legendEntry.c_str(), "p");
+
+        std::string legendEntry = formattedRange.str();
+        TGraph* dummyGraph = new TGraph();
+        dummyGraph->SetMarkerStyle(20);
+        dummyGraph->SetMarkerColor(colors[i]);
+        dummyLegend->AddEntry(dummyGraph, legendEntry.c_str(), "p");
     }
+
     
     std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
     std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
@@ -680,26 +734,24 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
     std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
     std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
 
-    TLegend* refLegend = new TLegend(0.6, 0.7, 0.85, 0.85);  // Adjust position for reference points
+    TLegend* refLegend = new TLegend(0.18, 0.77, 0.38, 0.81);  // Adjust position for reference points
     refLegend->SetBorderSize(0);  // Remove legend border
-    refLegend->SetTextSize(0.027); // Set text size for the legend
+    refLegend->SetTextSize(0.03); // Set text size for the legend
 
     // Add dummy markers and labels for reference data
     if (drawRefA) {
         TGraph* refGraphOneDummy = new TGraph();  // Dummy graph for Reference 1
         refGraphOneDummy->SetMarkerStyle(22);
         refGraphOneDummy->SetMarkerColor(kBlack);
-        refLegend->AddEntry(refGraphOneDummy, "PHENIX 2003, Ratio A", "p");
+        refLegend->AddEntry(refGraphOneDummy, "2003 pp Dataset, PHENIX Measurement", "p");
     }
 
     if (drawRefB) {
         TGraph* refGraphTwoDummy = new TGraph();  // Dummy graph for Reference 2
-        refGraphTwoDummy->SetMarkerStyle(21);
-        refGraphTwoDummy->SetMarkerColor(kGray + 2);
-        refLegend->AddEntry(refGraphTwoDummy, "PHENIX 2003, Ratio B", "p");
+        refGraphTwoDummy->SetMarkerStyle(20);
+        refGraphTwoDummy->SetMarkerColor(kBlue);
+        refLegend->AddEntry(refGraphTwoDummy, "#font[62]{PHENIX (2003 pp RHIC Run):} Ratio = #frac{Isolated Photons from #pi^{0} Decays}{All Photons from #pi^{0} Decays}", "p");
     }
-
-
 
     // Iterate over the map and create a plot for each unique combination
     for (const auto& entry : dataMap) {
@@ -708,77 +760,79 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
 
         std::cout << "Creating plot for cut combination: " << cutKey << std::endl;
 
-        // Extract trigger and cut folder name from the key
+        // Extract trigger and cut information from cutKey
         size_t pos = cutKey.find("_E_");
         std::string triggerStr = cutKey.substr(0, pos);
-        std::string cutFolder = cutKey.substr(pos + 1); // From E onwards
-        std::string savePath = outputDir + "/" + triggerStr + "/" + cutFolder;
+        int triggerIndex = std::stoi(triggerStr.substr(triggerStr.find("Trigger") + 7));
+        std::string cutFolder = cutKey.substr(pos + 1);
+
+        // Format trigger name and cut values
+        std::string triggerName = getTriggerName(triggerIndex);
+        std::string eCore = cutFolder.substr(cutFolder.find("E_") + 2, 5);
+        std::string chi = cutFolder.substr(cutFolder.find("Chi") + 3, 5);
+        std::string asymmetry = cutFolder.substr(cutFolder.find("Asym") + 4, 5);
+        
+        
+        std::string savePath = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/IsolationEnergies/" + triggerStr + "/" + cutFolder + "_" + label;
 
         std::cout << "Saving to folder: " << savePath << std::endl;
 
         // Create the canvas and graphs
-        TCanvas* canvas = new TCanvas("canvas", "Ratio vs pT", 800, 600);
+        TCanvas* canvas = new TCanvas(("canvas_" + label).c_str(), ("Ratio vs pT " + label).c_str(), 800, 600);
         TMultiGraph* multiGraph = new TMultiGraph();
         TLatex latex;
         latex.SetNDC();
         latex.SetTextSize(0.04);
-        
-        // Create a TGraphErrors to include statistical errors
-        TGraphErrors* graphWithError = new TGraphErrors();
+ 
+        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+            // Create a new TGraphErrors for each isoEt range
+            TGraphErrors* graphWithError = new TGraphErrors();
+            int color = colors[i];
+            std::pair<float, float> currentRange = isoEtRanges[i];
 
-        // Overlay multiple isoMin/isoMax ranges on the same plot
-        for (const auto& point : points) {
-            float ptMin = std::get<0>(point);
-            float ptMax = std::get<1>(point);
-            float isoMin = std::get<2>(point);
-            float isoMax = std::get<3>(point);
-            float ratio = std::get<4>(point);
-            float error = std::get<5>(point);  // Extract the error value
-            float weightedPt = std::get<6>(point);
+            // Add points to the graph for the current isoEt range
+            for (const auto& point : points) {
+                float ptMin = std::get<0>(point);
+                float ptMax = std::get<1>(point);
+                float isoMin = std::get<2>(point);
+                float isoMax = std::get<3>(point);
+                float ratio = std::get<4>(point);
+                float error = std::get<5>(point);
+                float weightedPt = std::get<6>(point);
 
-            // Skip plotting if weightedPt or ratio is zero
-            if (weightedPt == 0 || ratio == 0) {
-                continue;
+                // Check if the current isoEt range is in the exclusion list
+                std::pair<float, float> isoRange = {isoMin, isoMax};
+                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoRange) != exclusionRanges.end()) {
+                    std::cout << "Excluding isoEt range: isoMin = " << isoMin << ", isoMax = " << isoMax << std::endl;
+                    continue;  // Skip the points belonging to the excluded ranges
+                }
+
+                // Only add points that belong to the current isoEt range
+                if (isoMin == currentRange.first && isoMax == currentRange.second) {
+                    int index = graphWithError->GetN();
+                    graphWithError->SetPoint(index, weightedPt, ratio);
+                    graphWithError->SetPointError(index, 0, error);
+                    graphWithError->SetMarkerStyle(20);
+                    graphWithError->SetMarkerColor(color); // Set the correct color for this range
+                    graphWithError->SetLineColor(color);
+                }
             }
 
-            // Check if the current isoEt range is in the exclusion list
-            std::pair<float, float> isoRange = {isoMin, isoMax};
-            if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoRange) != exclusionRanges.end()) {
-                std::cout << "Skipping isoEt range: isoMin = " << isoMin << ", isoMax = " << isoMax << std::endl;
-                continue;
-            }
-
-            // Find the color corresponding to the isoEt range
-            auto it = std::find(isoEtRanges.begin(), isoEtRanges.end(), isoRange);
-            int color = colors[std::distance(isoEtRanges.begin(), it)];
-
-            std::cout << "Plotting point - pT Min: " << ptMin << ", pT Max: " << ptMax
-                      << ", isoMin: " << isoMin << ", isoMax: " << isoMax
-                      << ", Ratio: " << ratio << ", Weighted pT: " << weightedPt << std::endl;
-
-            TGraph* graph = new TGraph();
-            int index = graphWithError->GetN();
-            graphWithError->SetPoint(index, weightedPt, ratio);
-            graphWithError->SetPointError(index, 0, error);  // Set the error for the y-value
-            graphWithError->SetMarkerStyle(20);
-            graphWithError->SetMarkerColor(color);
+            // Add the graph for the current isoEt range to the multiGraph
+            multiGraph->Add(graphWithError);
         }
 
-        multiGraph->Add(graphWithError);
-        // Draw the graph
-        multiGraph->SetTitle(("Ratio vs pT for " + cutKey).c_str());
-        
-        // Set X-axis and Y-axis ranges
-        multiGraph->GetXaxis()->SetRangeUser(0, 10); // X-axis from 0 to 10
-        multiGraph->GetXaxis()->SetTitle("Weighted pT");
-
-        multiGraph->GetYaxis()->SetRangeUser(0, 1.5); // Y-axis from 0 to 1.5
-        multiGraph->GetYaxis()->SetTitle("Ratio (Isolated/Total)");
-        
+        //multiGraph->SetTitle(plotTitle.c_str());
+        multiGraph->GetXaxis()->SetRangeUser(0, 15);  // X-axis range
+        multiGraph->GetXaxis()->SetTitleSize(0.045);
+        multiGraph->GetXaxis()->SetTitle("Weighted Average p_{T} of all Photons from #pi^{0}/#eta Decay");
+        multiGraph->GetYaxis()->SetRangeUser(0, 1.5);  // Y-axis range
+        multiGraph->GetYaxis()->SetTitleSize(0.045);
+        multiGraph->GetYaxis()->SetTitle("#frac{Isolated Photons from #pi^{0}/#eta Decay}{All Photons from #pi^{0}/#eta Decay}");
         multiGraph->Draw("AP");
-
+        
         // Draw a dashed line at y = 1
-        TLine* line = new TLine(0, 1, 10, 1);
+        TLine* line = new TLine(2, 1, 15, 1);
         line->SetLineStyle(2); // Dashed line
         line->Draw();
         
@@ -802,9 +856,9 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
                 refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
                 refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
             }
-            refGraphTwo->SetMarkerStyle(21);
-            refGraphTwo->SetMarkerColor(kGray + 2);
-            refGraphTwo->SetLineColor(kGray + 2);
+            refGraphTwo->SetMarkerStyle(20);
+            refGraphTwo->SetMarkerColor(kBlue);
+            refGraphTwo->SetLineColor(kBlue);
             refGraphTwo->Draw("P SAME");
         }
 
@@ -813,13 +867,34 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
             refLegend->Draw();
         }
 
+        // Add trigger and cut information on the top right of the plot
+        TLatex labelText;
+        labelText.SetNDC();
+        labelText.SetTextSize(0.03);
 
+        TLatex valueText;
+        valueText.SetNDC();
+        valueText.SetTextSize(0.03);
+
+        labelText.DrawLatex(0.21, 0.65, "#font[62]{Trigger:}");
+        valueText.DrawLatex(0.31, 0.65, triggerName.c_str());
+
+        labelText.DrawLatex(0.21, 0.6, "#font[62]{ECore #geq}");
+        std::string eCoreWithUnit = eCore + " GeV";
+        valueText.DrawLatex(0.31, 0.6, eCoreWithUnit.c_str());
+
+        labelText.DrawLatex(0.21, 0.55, "#font[62]{#chi^{2} <}");
+        valueText.DrawLatex(0.26, 0.55, chi.c_str());
+
+        labelText.DrawLatex(0.21, 0.5, "#font[62]{Asymmetry <}");
+        valueText.DrawLatex(0.34, 0.5, asymmetry.c_str());
+        
         // Add the dummy legend and latex for labels
         dummyLegend->Draw();  // Paste the fixed dummy legend
 
         // Save the plot to the appropriate directory
         gSystem->mkdir(savePath.c_str(), true);
-        canvas->SaveAs((savePath + "/RatioVsPt.png").c_str());
+        canvas->SaveAs((savePath + "/RatioVsPt_" + label + ".png").c_str());
 
         // Cleanup
         delete multiGraph;
@@ -830,13 +905,233 @@ void plotRatioVsPt(const std::string& csvFilePath, const std::string& outputDir,
     delete dummyLegend;
 }
 
+// Function to overlay Ratio vs pT plots for both inMassWindow and outsideMassWindow with exclusion range
+void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_inMassWindow,
+                                 const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_outsideMassWindow,
+                                 const std::string& outputDir,
+                                 const std::vector<std::pair<float, float>>& exclusionRanges = {},
+                                 bool drawRefA = false, bool drawRefB = false) {
+    // Define isoEt ranges and assign colors
+    std::vector<std::pair<float, float>> isoEtRanges = {
+        {-5, 0},
+        {0, 2},
+        {2, 5},
+        {5, 10},
+        {-10, 0},
+        {0, 10}
+    };
+
+    // Colors for inMassWindow and outsideMassWindow datasets
+    std::vector<int> colors_inMassWindow = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
+    std::vector<int> colors_outsideMassWindow = {kRed - 3, kGreen - 6, kBlue - 7, kMagenta - 6, kRed - 2, kOrange - 5};
+
+    // Create a single legend for isoEt ranges, adding labels for inMassWindow and outsideMassWindow
+    TLegend* legend = new TLegend(0.16, 0.72, 0.45, 0.88);
+    legend->SetBorderSize(0);
+    legend->SetTextSize(0.03);
+
+    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+        std::pair<float, float> currentRange = isoEtRanges[i];
+
+        // Skip adding the legend entry if the range is excluded
+        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
+            continue;
+        }
+
+        std::string legendEntry_inMassWindow = "Clusters in Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
+        TGraph* dummyGraph_inMassWindow = new TGraph();
+        dummyGraph_inMassWindow->SetMarkerStyle(20);
+        dummyGraph_inMassWindow->SetMarkerColor(colors_inMassWindow[i]);
+        legend->AddEntry(dummyGraph_inMassWindow, legendEntry_inMassWindow.c_str(), "p");
+
+        std::string legendEntry_outsideMassWindow = "Clusters outside Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
+        TGraph* dummyGraph_outsideMassWindow = new TGraph();
+        dummyGraph_outsideMassWindow->SetMarkerStyle(24);
+        dummyGraph_outsideMassWindow->SetMarkerColor(colors_outsideMassWindow[i]);
+        legend->AddEntry(dummyGraph_outsideMassWindow, legendEntry_outsideMassWindow.c_str(), "p");
+    }
+
+    // Reference data setup
+    std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
+    std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
+    std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
+
+    std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
+    std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
+    std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
+
+    TLegend* refLegend = new TLegend(0.14, 0.69, 0.45, 0.7);
+    refLegend->SetBorderSize(0);
+    refLegend->SetTextSize(0.027);
+
+    if (drawRefA) {
+        TGraph* refGraphOneDummy = new TGraph();
+        refGraphOneDummy->SetMarkerStyle(22);
+        refGraphOneDummy->SetMarkerColor(kBlack);
+        refLegend->AddEntry(refGraphOneDummy, "2003 pp Dataset, PHENIX Measurement", "p");
+    }
+
+    if (drawRefB) {
+        TGraph* refGraphTwoDummy = new TGraph();
+        refGraphTwoDummy->SetMarkerStyle(21);
+        refGraphTwoDummy->SetMarkerColor(kGray + 2);
+        refLegend->AddEntry(refGraphTwoDummy, "2003 pp Dataset, PHENIX Measurement", "p");
+    }
+
+    for (const auto& entry : dataMap_inMassWindow) {
+        const std::string& cutKey = entry.first;
+        const auto& points_inMassWindow = entry.second;
+
+        // Check if the corresponding key exists in the outsideMassWindow data
+        auto outsideIter = dataMap_outsideMassWindow.find(cutKey);
+        if (outsideIter == dataMap_outsideMassWindow.end()) continue;
+        const auto& points_outsideMassWindow = outsideIter->second;
+        
+        // Extract trigger and cut details from cutKey
+        size_t pos = cutKey.find("_E_");
+        std::string triggerStr = cutKey.substr(0, pos);
+        std::string cutFolder = cutKey.substr(pos + 1);
+
+
+        std::string savePath = outputDir + "IsolationEnergies/" + triggerStr + "/" + cutFolder;
+        gSystem->mkdir(savePath.c_str(), true);
+
+
+        TCanvas* canvas = new TCanvas(("canvas_" + cutKey).c_str(), ("Overlay Ratio vs pT for " + cutKey).c_str(), 800, 600);
+        TMultiGraph* multiGraph = new TMultiGraph();
+
+        // Plot points for both inMassWindow and outsideMassWindow
+        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+            int color_inMassWindow = colors_inMassWindow[i];
+            int color_outsideMassWindow = colors_outsideMassWindow[i];
+            std::pair<float, float> currentRange = isoEtRanges[i];
+
+            // Graphs for inMassWindow and outsideMassWindow
+            TGraphErrors* graph_inMassWindow = new TGraphErrors();
+            TGraphErrors* graph_outsideMassWindow = new TGraphErrors();
+
+            for (const auto& point : points_inMassWindow) {
+                float isoMin = std::get<2>(point);
+                float isoMax = std::get<3>(point);
+                float ratio = std::get<4>(point);
+                float error = std::get<5>(point);
+                float weightedPt = std::get<6>(point);
+
+                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) != exclusionRanges.end()) {
+                    continue;
+                }
+
+                if (isoMin == currentRange.first && isoMax == currentRange.second) {
+                    int index = graph_inMassWindow->GetN();
+                    graph_inMassWindow->SetPoint(index, weightedPt, ratio);
+                    graph_inMassWindow->SetPointError(index, 0, error);
+                    graph_inMassWindow->SetMarkerStyle(20);
+                    graph_inMassWindow->SetMarkerColor(color_inMassWindow);
+                }
+            }
+
+            for (const auto& point : points_outsideMassWindow) {
+                float isoMin = std::get<2>(point);
+                float isoMax = std::get<3>(point);
+                float ratio = std::get<4>(point);
+                float error = std::get<5>(point);
+                float weightedPt = std::get<6>(point);
+
+                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) != exclusionRanges.end()) {
+                    continue;
+                }
+
+                if (isoMin == currentRange.first && isoMax == currentRange.second) {
+                    int index = graph_outsideMassWindow->GetN();
+                    graph_outsideMassWindow->SetPoint(index, weightedPt, ratio);
+                    graph_outsideMassWindow->SetPointError(index, 0, error);
+                    graph_outsideMassWindow->SetMarkerStyle(24);
+                    graph_outsideMassWindow->SetMarkerColor(color_outsideMassWindow);
+                }
+            }
+
+            multiGraph->Add(graph_inMassWindow);
+            multiGraph->Add(graph_outsideMassWindow);
+        }
+
+        // Draw the multiGraph
+        multiGraph->SetTitle(("Overlay Ratio vs pT for " + cutKey).c_str());
+        multiGraph->GetXaxis()->SetRangeUser(0, 15);
+        multiGraph->GetXaxis()->SetTitle("Weighted p_{T} of all Photons from Meson Decay");
+        multiGraph->GetYaxis()->SetRangeUser(0, 1.5);
+        multiGraph->GetYaxis()->SetTitle("Ratio (Isolated/Total)");
+        multiGraph->Draw("AP");
+
+        // Draw a dashed line at y = 1
+        TLine* line = new TLine(2, 1, 15, 1);
+        line->SetLineStyle(2);
+        line->Draw();
+
+        if (drawRefA) {
+            TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
+            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
+                refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
+                refGraphOne->SetPointError(i, 0, referenceStatError[i]);
+            }
+            refGraphOne->SetMarkerStyle(22);
+            refGraphOne->SetMarkerColor(kBlack);
+            refGraphOne->SetLineColor(kBlack);
+            refGraphOne->Draw("P SAME");
+        }
+
+        if (drawRefB) {
+            TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
+            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
+                refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
+                refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
+            }
+            refGraphTwo->SetMarkerStyle(21);
+            refGraphTwo->SetMarkerColor(kGray + 2);
+            refGraphTwo->SetLineColor(kGray + 2);
+            refGraphTwo->Draw("P SAME");
+        }
+
+        if (drawRefA || drawRefB) {
+            refLegend->Draw();
+        }
+
+        legend->Draw();
+
+        gSystem->mkdir(savePath.c_str(), true);
+        canvas->SaveAs((savePath + "/Overlay_RatioVsPt_InsideOutsideMassWindow.png").c_str());
+
+        delete multiGraph;
+        delete canvas;
+    }
+
+    delete legend;
+}
+
+
+
 void analyzeClusterIso() {
+    gROOT->LoadMacro("sPhenixStyle.C");
+    SetsPhenixStyle();
+    std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
 //    isolationEnergies(inputFilePath, outputDir);
 //
-//    std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
-//    outputHistogramLogs(csvFilePath);
 
-    std::vector<std::pair<float, float>> exclusionRanges = {{-10, 0}, {0, 10}, {-5, 0}, {0, 2}, {5, 10}};
-    plotRatioVsPt("/Users/patsfan753/Desktop/DirectPhotonInformation.csv", "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/IsolationEnergies/", exclusionRanges, false, true);
+//    outputHistogramLogs(csvFilePath);
+    
+    std::vector<std::pair<float, float>> exclusionRanges = {{-5, 0}, {0, 2}, {2, 5}, {5, 10}, {0, 10}};
+    // Maps to store data for inMassWindow and outsideMassWindow
+    std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_inMassWindow;
+    std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_outsideMassWindow;
+
+    // Read the data from CSV into maps
+    readDataFromCSV(csvFilePath, dataMap_inMassWindow, dataMap_outsideMassWindow);
+
+    // Plot for inMassWindow data
+    plotRatioVsPt(dataMap_inMassWindow, outputDir, "inMassWindow", exclusionRanges, false, true);
+
+    // Plot for outsideMassWindow data
+    plotRatioVsPt(dataMap_outsideMassWindow, outputDir, "outsideMassWindow", exclusionRanges, false, true);
+    
+    overlayRatioInOutMassWindow(dataMap_inMassWindow, dataMap_outsideMassWindow, outputDir, exclusionRanges, false, false);
 }
 
