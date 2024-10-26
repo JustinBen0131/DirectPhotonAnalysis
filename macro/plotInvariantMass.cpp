@@ -18,9 +18,9 @@
 #include <TRandom3.h>
 
 
-std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/output/";
+std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/";
 std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
-std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber46735.root";
+std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber46623_runnumber47230.root";
 
 
 // Mapping trigger indices to names based on the provided trigger list
@@ -525,15 +525,24 @@ std::vector<HistogramData> saveAnnotatedInvariantMassHistograms(const std::strin
 }
 
 void printHistogramData(const std::vector<HistogramData>& histogramDataVector) {
-    // Organize the data by trigger index, then cut combinations, then pT bins
-    // For that, best use nested maps
-    // map<TriggerIndex, map<CutCombinationString, vector<HistogramData>>>
-    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
+    // Open a CSV file for writing to the specified path
+    std::ofstream csvFile("/Users/patsfan753/Desktop/InvariantMassInformation_runnumber46623_runnumber47230.csv");
     
+    // Check if the file opened successfully
+    if (!csvFile.is_open()) {
+        std::cerr << "Error: Could not open the file for writing at /Users/patsfan753/Desktop/InvariantMassInformation_runnumber46623_runnumber47230.csv" << std::endl;
+        return;
+    }
+
+    // Write the CSV headers with separate columns for Ecore, Chi2, and Asym
+    csvFile << "Trigger Index,Ecore,Chi2,Asym,pTMin,pTMax,meanPi0,sigmaPi0,meanEta,sigmaEta\n";
+    
+    // Organize the data by trigger index, then cut combinations, then pT bins
+    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
+
     // First, organize the data
     for (const auto& data : histogramDataVector) {
         int triggerIndex = data.cuts.triggerIndex;
-        // Create a string representing the cut combination
         std::ostringstream cutCombinationStream;
         cutCombinationStream << "E" << data.cuts.clusECore
                              << "_Chi" << data.cuts.chi
@@ -542,41 +551,56 @@ void printHistogramData(const std::vector<HistogramData>& histogramDataVector) {
         
         dataMap[triggerIndex][cutCombination].push_back(data);
     }
-    
-    // Now, print the data
+
+    // Print the organized data to console and write it to CSV
     for (const auto& triggerPair : dataMap) {
         int triggerIndex = triggerPair.first;
         std::string triggerName = getTriggerName(triggerIndex);
         std::cout << "Trigger Index: " << triggerIndex << " (" << triggerName << ")\n";
         
         for (const auto& cutPair : triggerPair.second) {
-            std::string cutCombination = cutPair.first;
-            std::cout << "  Cut Combination: " << cutCombination << "\n";
+            // Decompose the cut combination
+            float Ecore = cutPair.second[0].cuts.clusECore;
+            float Chi2 = cutPair.second[0].cuts.chi;
+            float Asym = cutPair.second[0].cuts.asymmetry;
+
+            std::cout << "  Cut Combination: E" << Ecore << "_Chi" << Chi2 << "_Asym" << Asym << "\n";
             
-            // Now print the data for each pT bin
-            // We'll create a table header
-            std::cout << "    pTMin - pTMax | meanPi0 ± error | sigmaPi0 ± error | meanEta ± error | sigmaEta ± error | massRatio ± error\n";
+            // Print table header to console
+            std::cout << "    pTMin - pTMax | meanPi0 ± error | sigmaPi0 ± error | meanEta ± error | sigmaEta ± error\n";
             std::cout << "    ----------------------------------------------------------------------------------------------------------\n";
+            
             for (const auto& data : cutPair.second) {
-                // If pTMin is -1, it means no pT bin, so we can indicate that
-                std::string pTBin;
-                if (data.cuts.pTMin == -1) {
-                    pTBin = "No pT bin";
-                } else {
-                    pTBin = formatToThreeSigFigs(data.cuts.pTMin) + " - " + formatToThreeSigFigs(data.cuts.pTMax);
-                }
+                std::string pTBin = (data.cuts.pTMin == -1) ? "No pT bin" : formatToThreeSigFigs(data.cuts.pTMin) + " - " + formatToThreeSigFigs(data.cuts.pTMax);
+                
+                // Print to console
                 std::cout << "    " << std::setw(14) << pTBin << " | "
                           << formatToThreeSigFigs(data.meanPi0) << " ± " << formatToThreeSigFigs(data.meanPi0Error) << " | "
                           << formatToThreeSigFigs(data.sigmaPi0) << " ± " << formatToThreeSigFigs(data.sigmaPi0Error) << " | "
                           << formatToThreeSigFigs(data.meanEta) << " ± " << formatToThreeSigFigs(data.meanEtaError) << " | "
-                          << formatToThreeSigFigs(data.sigmaEta) << " ± " << formatToThreeSigFigs(data.sigmaEtaError) << " | "
-                          << formatToThreeSigFigs(data.massRatio) << " ± " << formatToThreeSigFigs(data.massRatioError) << "\n";
+                          << formatToThreeSigFigs(data.sigmaEta) << " ± " << formatToThreeSigFigs(data.sigmaEtaError) << "\n";
+
+                // Write to CSV file
+                csvFile << triggerIndex << ","
+                        << Ecore << ","
+                        << Chi2 << ","
+                        << Asym << ","
+                        << data.cuts.pTMin << ","
+                        << data.cuts.pTMax << ","
+                        << data.meanPi0 << ","
+                        << data.sigmaPi0 << ","
+                        << data.meanEta << ","
+                        << data.sigmaEta << "\n";
             }
-            std::cout << "\n"; // Add an empty line between cut combinations
+            std::cout << "\n"; // Empty line between cut combinations
         }
-        std::cout << "\n"; // Add an empty line between triggers
+        std::cout << "\n"; // Empty line between triggers
     }
+
+    // Close the CSV file
+    csvFile.close();
 }
+
 
 void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
     // Organize data by trigger index and cut combination
@@ -707,7 +731,7 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                   TCanvas canvas;
 
                   // Draw graph for π⁰
-                  TH1F* hFrame = canvas.DrawFrame(0, minY, 12, maxY, ";p_{T} [GeV];Mean #pi^{0} Mass [GeV]");  // Multiply maxPt by 1.1 for margin
+                  TH1F* hFrame = canvas.DrawFrame(0, 0.14, 12, 0.18, ";p_{T} [GeV];Mean #pi^{0} Mass [GeV]");  // Multiply maxPt by 1.1 for margin
                   graphPi0->Draw("P SAME");
 
                   // Add labels
