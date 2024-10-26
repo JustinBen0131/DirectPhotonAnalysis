@@ -84,6 +84,23 @@ class caloTreeGen : public SubsysReco{
     static const std::string IN_MASS_WINDOW_LABEL;
     static const std::string OUTSIDE_MASS_WINDOW_LABEL;
     
+    struct MesonMassWindow {
+        int triggerIndex;
+        float Ecore;
+        float Chi2;
+        float Asym;
+        float pTMin;
+        float pTMax;
+        float meanPi0;
+        float sigmaPi0;
+        float meanEta;
+        float sigmaEta;
+    };
+
+    // Define the map to store mass windows by trigger, Ecore, Chi2, Asym, pTMin, and pTMax
+    std::map<std::tuple<int, float, float, float, float, float>, MesonMassWindow> mesonMassWindowsMap;
+
+    
     bool verbose = true;
     bool m_limitEvents = true;   // Enable event limiting by default
     int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
@@ -91,15 +108,19 @@ class caloTreeGen : public SubsysReco{
     std::vector<int> triggerIndices = {10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
     std::vector<float> clus_chi_values = {4};
-    std::vector<float> clus_Ecore_values = {1.0, 1.5};
+    std::vector<float> clus_Ecore_values = {1.0, 1.2};
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}
     };
     
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-5, 0},
+        {0, 5},
+        {-2, 0},
         {0, 2},
+        {-2, -5},
         {2, 5},
+        {-5, -10},
         {5, 10},
         {-10, 0},
         {0, 10}
@@ -169,6 +190,8 @@ class caloTreeGen : public SubsysReco{
         short good;
         bool isAcceptable;
     };
+    bool loadMesonMassWindows(const std::string& csvFilePath);
+
 
     struct EnergyMaps {
         float max_8by8energy_emcal;
@@ -190,6 +213,47 @@ class caloTreeGen : public SubsysReco{
         const std::vector<float>* m_ohcTowE, const std::vector<float>* m_ohciTowEta, const std::vector<float>* m_ohciTowPhi,
         const std::vector<float>* m_ihcTowE, const std::vector<float>* m_ihciTowEta, const std::vector<float>* m_ihciTowPhi,
         std::vector<short>* m_emcal_good, std::vector<short>* m_ohc_good, std::vector<short>* m_ihc_good, std::vector<int> activeTriggerBits);
+    
+    void processClusterIsolationHistograms(
+        int clusterID,
+        float mesonMass,
+        float minClusEcore,
+        float maxChi2,
+        float maxAsym,
+        const std::string& massWindowLabel,
+        float pT_min,
+        float pT_max,
+        int triggerIndex,
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
+        std::map<std::pair<float, float>, std::map<std::string, TObject*>>& cutHistMap,
+        size_t& filledHistogramCount,
+        bool& filledHistogram,
+        bool verbose,
+        float pionMass,
+        float pionMassWindow,
+        float etaMass,
+        float etaMassWindow,
+        const std::pair<float, float>& pT_bin
+    );
+    
+    void processIsolationRanges(
+        const std::vector<std::pair<float, float>>& isoEtRanges,
+        const std::vector<int>& clusterIDs,
+        size_t clus1,
+        size_t clus2,
+        float minClusEcore,
+        float maxChi2,
+        float maxAsym,
+        const std::string& massWindowLabel,
+        float pT_min,
+        float pT_max,
+        int triggerIndex,
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
+        std::map<std::pair<float, float>, std::map<std::string, TObject*>>& cutHistMap,
+        bool& filledHistogram,
+        bool verbose,
+        const std::pair<float, float>& pT_bin
+    );
     
     void fillHistogramsForTriggers(
         float mesonMass,
