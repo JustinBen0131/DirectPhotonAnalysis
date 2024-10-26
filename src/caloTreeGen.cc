@@ -949,14 +949,14 @@ void caloTreeGen::fillHistogramsForTriggers(
                     }
                 }
                 
-                // Initialize mass values with defaults
+                // Initialize mass values with defaults, adjusting windows to ±3σ
                 float pionMass = defaultPionMass;
-                float pionMassWindow = defaultPionMassWindow;
+                float pionMassWindow = defaultPionMassWindow * 3;
                 float etaMass = defaultEtaMass;
-                float etaMassWindow = defaultEtaMassWindow;
+                float etaMassWindow = defaultEtaMassWindow * 3;
 
                 if (verbose) {
-                    std::cout << "Initialized with default mass values:" << std::endl;
+                    std::cout << "Initialized with default mass values (using ±3σ range):" << std::endl;
                     std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
                     std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
                 }
@@ -972,31 +972,33 @@ void caloTreeGen::fillHistogramsForTriggers(
                         std::cout << " - Mean Eta: " << massWindow.meanEta << ", Sigma Eta: " << massWindow.sigmaEta << std::endl;
                     }
 
+                    // Apply custom values if within valid range
                     if ((massWindow.meanPi0 >= 0.12 && massWindow.meanPi0 <= 0.3) &&
                         (massWindow.meanEta >= 0.4 && massWindow.meanEta <= 0.7)) {
                         pionMass = massWindow.meanPi0;
-                        pionMassWindow = massWindow.sigmaPi0;
+                        pionMassWindow = massWindow.sigmaPi0 * 3;  // Use ±3σ for custom values
                         etaMass = massWindow.meanEta;
-                        etaMassWindow = massWindow.sigmaEta;
+                        etaMassWindow = massWindow.sigmaEta * 3;
 
                         if (verbose) {
-                            std::cout << "Custom mass window within valid range; updated mass values:" << std::endl;
+                            std::cout << "Custom mass window within valid range; updated mass values to ±3σ:" << std::endl;
                             std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
                             std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
                         }
                     } else if (verbose) {
-                        std::cout << "Mass window outside valid range; using default values." << std::endl;
+                        std::cout << "Mass window outside valid range; retaining default ±3σ values." << std::endl;
                     }
                 } else if (verbose) {
-                    std::cout << "No valid mass window found in map; using default values." << std::endl;
+                    std::cout << "No valid mass window found in map; using default ±3σ values." << std::endl;
                 }
 
-                // Determine if meson mass is within the pion or eta mass window
+                // Determine if meson mass is within the ±3σ mass window
                 bool isInMassWindow = (fabs(mesonMass - pionMass) <= pionMassWindow) ||
                                       (fabs(mesonMass - etaMass) <= etaMassWindow);
 
                 if (verbose) {
-                    std::cout << "Meson mass: " << mesonMass << (isInMassWindow ? " is" : " is not") << " within mass window." << std::endl;
+                    std::cout << "Meson mass " << mesonMass << (isInMassWindow ? " is " : " is not ")
+                              << "within the ±3σ mass window." << std::endl;
                 }
                 
                 std::string massWindowLabel = isInMassWindow ? "_inMassWindow" : "_outsideMassWindow";
