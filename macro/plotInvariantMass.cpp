@@ -189,7 +189,7 @@ std::string formatToThreeSigFigs(double value) {
 }
 
 struct HistogramData {
-    CutValues cuts;  // Holds triggerIndex, clusECore, chi, asymmetry, pTMin, pTMax
+    CutValues cuts;
     std::string histName;  // Name of the histogram
 
     // Fitted parameters and their errors
@@ -221,6 +221,12 @@ struct HistogramData {
     double backgroundEtaError;
     double signalToBackgroundEtaRatio;
     double signalToBackgroundEtaError;
+    
+    // Resolution parameters
+    double pi0FitResolution;
+    double pi0FitResolutionError;
+    double etaFitResolution;
+    double etaFitResolutionError;
 };
 
 std::vector<HistogramData> saveAnnotatedInvariantMassHistograms(const std::string& inputFilePath) {
@@ -334,6 +340,42 @@ std::vector<HistogramData> saveAnnotatedInvariantMassHistograms(const std::strin
                     double meanEtaError = totalFit->GetParError(4);
                     double sigmaEta = totalFit->GetParameter(5);
                     double sigmaEtaError = totalFit->GetParError(5);
+                    
+                    // Calculate fit resolution with safeguards
+                    double pi0FitResolution = std::numeric_limits<double>::quiet_NaN();
+                    double pi0FitResolutionError = std::numeric_limits<double>::quiet_NaN();
+
+                    // Debugging output for pi0 values
+                    std::cout << "Calculating pi0FitResolution:" << std::endl;
+                    std::cout << "  meanPi0: " << meanPi0 << ", meanPi0Error: " << meanPi0error << std::endl;
+                    std::cout << "  sigmaPi0: " << sigmaPi0 << ", sigmaPi0Error: " << sigmaPi0error << std::endl;
+
+                    if (meanPi0 > 1e-6 && sigmaPi0 > 1e-6) {  // Avoid near-zero values
+                        pi0FitResolution = sigmaPi0 / meanPi0;
+                        pi0FitResolutionError = pi0FitResolution * sqrt(pow(sigmaPi0error / sigmaPi0, 2) + pow(meanPi0error / meanPi0, 2));
+                        std::cout << "  Calculated pi0FitResolution: " << pi0FitResolution << std::endl;
+                        std::cout << "  Calculated pi0FitResolutionError: " << pi0FitResolutionError << std::endl;
+                    } else {
+                        std::cout << "  Skipping pi0FitResolution calculation due to small or zero values." << std::endl;
+                    }
+
+                    // Calculate eta fit resolution with safeguards
+                    double etaFitResolution = std::numeric_limits<double>::quiet_NaN();
+                    double etaFitResolutionError = std::numeric_limits<double>::quiet_NaN();
+
+                    // Debugging output for eta values
+                    std::cout << "Calculating etaFitResolution:" << std::endl;
+                    std::cout << "  meanEta: " << meanEta << ", meanEtaError: " << meanEtaError << std::endl;
+                    std::cout << "  sigmaEta: " << sigmaEta << ", sigmaEtaError: " << sigmaEtaError << std::endl;
+
+                    if (meanEta > 1e-6 && sigmaEta > 1e-6) {  // Avoid near-zero values
+                        etaFitResolution = sigmaEta / meanEta;
+                        etaFitResolutionError = etaFitResolution * sqrt(pow(sigmaEtaError / sigmaEta, 2) + pow(meanEtaError / meanEta, 2));
+                        std::cout << "  Calculated etaFitResolution: " << etaFitResolution << std::endl;
+                        std::cout << "  Calculated etaFitResolutionError: " << etaFitResolutionError << std::endl;
+                    } else {
+                        std::cout << "  Skipping etaFitResolution calculation due to small or zero values." << std::endl;
+                    }
 
                     double massRatio = meanEta / meanPi0;
                     
@@ -444,6 +486,10 @@ std::vector<HistogramData> saveAnnotatedInvariantMassHistograms(const std::strin
                     data.backgroundEtaError = backgroundEtaError;
                     data.signalToBackgroundEtaRatio = signalToBackgroundEtaRatio;
                     data.signalToBackgroundEtaError = signalToBackgroundEtaError;
+                    data.pi0FitResolution = pi0FitResolution;
+                    data.pi0FitResolutionError = pi0FitResolutionError;
+                    data.etaFitResolution = etaFitResolution;
+                    data.etaFitResolutionError = etaFitResolutionError;
 
                     // Add the data to the vector
                     histogramDataVector.push_back(data);
@@ -601,59 +647,333 @@ void printHistogramData(const std::vector<HistogramData>& histogramDataVector) {
     csvFile.close();
 }
 
+std::tuple<double, double, double> processDataForTrigger(
+    const HistogramData& data,
+    std::map<int, std::map<std::string, std::vector<HistogramData>>>& dataMap,
+    std::map<int, std::vector<std::string>>& cutVariations,
+    std::map<int, std::vector<double>>& meanPi0sPerTrigger,
+    std::map<int, std::vector<double>>& meanPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& sigmaPi0sPerTrigger,
+    std::map<int, std::vector<double>>& sigmaPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundPi0RatiosPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& meanEtasPerTrigger,
+    std::map<int, std::vector<double>>& meanEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& sigmaEtasPerTrigger,
+    std::map<int, std::vector<double>>& sigmaEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundEtaRatiosPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalPi0YieldsPerTrigger,
+    std::map<int, std::vector<double>>& signalPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalEtaYieldsPerTrigger,
+    std::map<int, std::vector<double>>& signalEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& pi0FitResolutionsPerTrigger,
+    std::map<int, std::vector<double>>& pi0FitResolutionErrorsPerTrigger,
+    std::map<int, std::vector<double>>& etaFitResolutionsPerTrigger,
+    std::map<int, std::vector<double>>& etaFitResolutionErrorsPerTrigger) {
 
-void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
-    // Organize data by trigger index and cut combination
-    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
+    int triggerIndex = data.cuts.triggerIndex;
+    double clusECore = data.cuts.clusECore;
+    double chi = data.cuts.chi;
+    double asymmetry = data.cuts.asymmetry;
 
-    std::map<int, std::vector<std::string>> cutVariations;
-    std::map<int, std::vector<double>> meanPi0sPerTrigger;
-    std::map<int, std::vector<double>> meanPi0ErrorsPerTrigger;
-    std::map<int, std::vector<double>> meanEtasPerTrigger;
-    std::map<int, std::vector<double>> meanEtaErrorsPerTrigger;
-    
-    
-    for (const auto& data : histogramDataVector) {
-        int triggerIndex = data.cuts.triggerIndex;
-        // Create a string representing the cut combination with formatted values
-        std::ostringstream cutCombinationStream;
-        cutCombinationStream << "E" << formatToThreeSigFigs(data.cuts.clusECore)
-                             << "_Chi" << formatToThreeSigFigs(data.cuts.chi)
-                             << "_Asym" << formatToThreeSigFigs(data.cuts.asymmetry);
-        std::string cutCombination = cutCombinationStream.str();
+    std::ostringstream cutCombinationStream;
+    cutCombinationStream << "E" << formatToThreeSigFigs(clusECore)
+                         << "_Chi" << formatToThreeSigFigs(chi)
+                         << "_Asym" << formatToThreeSigFigs(asymmetry);
+    std::string cutCombination = cutCombinationStream.str();
 
-        dataMap[triggerIndex][cutCombination].push_back(data);
-        
-        if (data.cuts.pTMin == -1) {
-            // Initialize per-trigger data if not already done
-            if (std::find(cutVariations[triggerIndex].begin(), cutVariations[triggerIndex].end(), cutCombination) == cutVariations[triggerIndex].end()) {
-                cutVariations[triggerIndex].push_back(cutCombination);
+    dataMap[triggerIndex][cutCombination].push_back(data);
 
-                // Initialize with NaN or invalid value
-                meanPi0sPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
-                meanPi0ErrorsPerTrigger[triggerIndex].push_back(0);
-                meanEtasPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
-                meanEtaErrorsPerTrigger[triggerIndex].push_back(0);
-            }
-            size_t index = cutVariations[triggerIndex].size() - 1;
+    if (data.cuts.pTMin == -1) {
+        if (std::find(cutVariations[triggerIndex].begin(), cutVariations[triggerIndex].end(), cutCombination) == cutVariations[triggerIndex].end()) {
+            cutVariations[triggerIndex].push_back(cutCombination);
 
-            // Check for invalid fits
-            bool invalidPi0Fit = (data.meanPi0Error > 1.0) || (data.meanPi0Error == 0);
-            bool invalidEtaFit = (data.meanEtaError > 1.0) || (data.meanEtaError == 0);
+            // Initialize with NaN or default values
+            meanPi0sPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            meanPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            sigmaPi0sPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            sigmaPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            signalToBackgroundPi0RatiosPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalToBackgroundPi0ErrorsPerTrigger[triggerIndex].push_back(0);
 
-            if (!invalidPi0Fit) {
-                meanPi0sPerTrigger[triggerIndex][index] = data.meanPi0;
-                meanPi0ErrorsPerTrigger[triggerIndex][index] = data.meanPi0Error;
-            }
+            meanEtasPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            meanEtaErrorsPerTrigger[triggerIndex].push_back(0);
+            sigmaEtasPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            sigmaEtaErrorsPerTrigger[triggerIndex].push_back(0);
+            signalToBackgroundEtaRatiosPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalToBackgroundEtaErrorsPerTrigger[triggerIndex].push_back(0);
 
-            if (!invalidEtaFit) {
-                meanEtasPerTrigger[triggerIndex][index] = data.meanEta;
-                meanEtaErrorsPerTrigger[triggerIndex][index] = data.meanEtaError;
-            }
+            signalPi0YieldsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            signalEtaYieldsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalEtaErrorsPerTrigger[triggerIndex].push_back(0);
+
+            // Initialize resolution maps
+            pi0FitResolutionsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            pi0FitResolutionErrorsPerTrigger[triggerIndex].push_back(0);
+            etaFitResolutionsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            etaFitResolutionErrorsPerTrigger[triggerIndex].push_back(0);
+        }
+
+        size_t index = cutVariations[triggerIndex].size() - 1;
+
+        bool invalidPi0Fit = (data.meanPi0Error > 1.0) || (data.meanPi0Error == 0);
+        bool invalidEtaFit = (data.meanEtaError > 1.0) || (data.meanEtaError == 0);
+
+        if (!invalidPi0Fit) {
+            meanPi0sPerTrigger[triggerIndex][index] = data.meanPi0;
+            meanPi0ErrorsPerTrigger[triggerIndex][index] = data.meanPi0Error;
+            sigmaPi0sPerTrigger[triggerIndex][index] = data.sigmaPi0;
+            sigmaPi0ErrorsPerTrigger[triggerIndex][index] = data.sigmaPi0Error;
+            signalToBackgroundPi0RatiosPerTrigger[triggerIndex][index] = data.signalToBackgroundPi0Ratio;
+            signalToBackgroundPi0ErrorsPerTrigger[triggerIndex][index] = data.signalToBackgroundPi0Error;
+            signalPi0YieldsPerTrigger[triggerIndex][index] = data.signalPi0Yield;
+            signalPi0ErrorsPerTrigger[triggerIndex][index] = data.signalPi0Error;
+            pi0FitResolutionsPerTrigger[triggerIndex][index] = data.pi0FitResolution;
+            pi0FitResolutionErrorsPerTrigger[triggerIndex][index] = data.pi0FitResolutionError;
+        }
+
+        if (!invalidEtaFit) {
+            meanEtasPerTrigger[triggerIndex][index] = data.meanEta;
+            meanEtaErrorsPerTrigger[triggerIndex][index] = data.meanEtaError;
+            sigmaEtasPerTrigger[triggerIndex][index] = data.sigmaEta;
+            sigmaEtaErrorsPerTrigger[triggerIndex][index] = data.sigmaEtaError;
+            signalToBackgroundEtaRatiosPerTrigger[triggerIndex][index] = data.signalToBackgroundEtaRatio;
+            signalToBackgroundEtaErrorsPerTrigger[triggerIndex][index] = data.signalToBackgroundEtaError;
+            signalEtaYieldsPerTrigger[triggerIndex][index] = data.signalEtaYield;
+            signalEtaErrorsPerTrigger[triggerIndex][index] = data.signalEtaError;
+            etaFitResolutionsPerTrigger[triggerIndex][index] = data.etaFitResolution;
+            etaFitResolutionErrorsPerTrigger[triggerIndex][index] = data.etaFitResolutionError;
         }
     }
 
-    // Iterate over triggers and cut combinations
+    return std::make_tuple(clusECore, chi, asymmetry);
+}
+
+
+void generateMesonPlotVsPt(
+    const std::vector<double>& pTCenters,
+    const std::vector<double>& meanValues,
+    const std::vector<double>& meanErrors,
+    const std::string& yAxisLabel,
+    const std::string& outputFilePath,
+    const std::string& triggerName,
+    const std::string& cutCombination,
+    int markerStyle,
+    int markerColor,
+    double clusECore,
+    double chi,
+    double asymmetry,
+    double yMin = std::numeric_limits<double>::quiet_NaN(),
+    double yMax = std::numeric_limits<double>::quiet_NaN(),
+    double xMin = std::numeric_limits<double>::quiet_NaN(),
+    double xMax = std::numeric_limits<double>::quiet_NaN()) {
+    if (pTCenters.empty()) {
+        return; // Nothing to plot if pTCenters is empty
+    }
+
+    TGraphErrors* graph = new TGraphErrors(pTCenters.size());
+    for (size_t i = 0; i < pTCenters.size(); ++i) {
+        graph->SetPoint(i, pTCenters[i], meanValues[i]);
+        graph->SetPointError(i, 0, meanErrors[i]);
+    }
+    graph->SetMarkerStyle(markerStyle);
+    graph->SetMarkerSize(1);
+    graph->SetLineWidth(2);
+    graph->SetMarkerColor(markerColor);
+    graph->SetLineColor(markerColor);
+
+    // Automatically calculate y-axis range if yMin or yMax is not provided
+    if (std::isnan(yMin) || std::isnan(yMax)) {
+        yMin = std::numeric_limits<double>::max();
+        yMax = std::numeric_limits<double>::lowest();
+        for (size_t i = 0; i < meanValues.size(); ++i) {
+            double xVal = pTCenters[i];
+            if (xVal >= xMin && xVal <= xMax) {
+                double yVal = meanValues[i];
+                double yErr = meanErrors[i];
+                yMin = std::min(yMin, yVal - yErr);
+                yMax = std::max(yMax, yVal + yErr);
+            }
+        }
+        // Add a 5% margin around yMin and yMax
+        double yMargin = 0.05 * (yMax - yMin);
+        yMin -= yMargin;
+        yMax += yMargin;
+    }
+
+    // Automatically calculate x-axis range if xMin or xMax is NaN
+    if (std::isnan(xMin) || std::isnan(xMax)) {
+        xMin = 2;  // Default starting point for x-axis
+        xMax = *std::max_element(pTCenters.begin(), pTCenters.end()) * 1.1;  // Adding 10% margin
+    }
+
+    // Create canvas
+    TCanvas canvas;
+
+    // Draw graph
+    TH1F* hFrame = canvas.DrawFrame(xMin, yMin, xMax, yMax, (";p_{T} [GeV];" + yAxisLabel).c_str());
+    hFrame->GetXaxis()->SetNdivisions(5);
+    hFrame->GetXaxis()->SetLimits(xMin, xMax);
+    hFrame->GetXaxis()->CenterLabels(false);
+
+    graph->Draw("P SAME");
+
+    // Add trigger and cut information on the top right of the plot
+    TLatex labelText;
+    labelText.SetNDC();
+    labelText.SetTextSize(0.042);
+
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.042);
+
+    labelText.DrawLatex(0.47, 0.87, "#font[62]{Trigger:}");
+    valueText.DrawLatex(0.57, 0.87, triggerName.c_str());
+
+    labelText.DrawLatex(0.47, 0.8, "#font[62]{ECore #geq}");
+    std::ostringstream eCoreWithUnit;
+    eCoreWithUnit << clusECore << "   GeV";
+    valueText.DrawLatex(0.62, 0.8, eCoreWithUnit.str().c_str());
+
+    labelText.DrawLatex(0.47, 0.73, "#font[62]{#chi^{2} <}");
+    std::ostringstream chiStr;
+    chiStr << chi;
+    valueText.DrawLatex(0.62, 0.73, chiStr.str().c_str());
+
+    labelText.DrawLatex(0.47, 0.66, "#font[62]{Asymmetry <}");
+    std::ostringstream asymmetryStr;
+    asymmetryStr << asymmetry;
+    valueText.DrawLatex(0.64, 0.66, asymmetryStr.str().c_str());
+
+    // Ensure the directory exists
+    std::string outputDirPath = outputFilePath.substr(0, outputFilePath.find_last_of("/"));
+    gSystem->mkdir(outputDirPath.c_str(), true);
+
+    // Save plot
+    canvas.SaveAs(outputFilePath.c_str());
+    std::cout << "Saved plot: " << outputFilePath << std::endl;
+
+    // Clean up
+    delete graph;
+}
+
+void generateCutVariationPlot(
+    const std::vector<double>& xValues,
+    const std::vector<double>& xErrors,
+    const std::vector<double>& yValues,
+    const std::vector<double>& yErrors,
+    const std::vector<std::string>& xLabels,
+    const std::string& yAxisLabel,
+    const std::string& outputFilePath,
+    const std::string& triggerName,
+    const std::vector<double>& eCoreValues,
+    const std::vector<double>& chiValues,
+    const std::vector<double>& asymmetryValues,
+    int color) {
+    if (xValues.empty()) {
+        return; // Nothing to plot if xValues is empty
+    }
+
+    TGraphErrors* graph = new TGraphErrors(xValues.size(), &xValues[0], &yValues[0], &xErrors[0], &yErrors[0]);
+    graph->SetMarkerStyle(20);
+    graph->SetMarkerColor(color);
+    graph->SetMarkerSize(1);
+    graph->SetLineWidth(2);
+    graph->SetLineColor(color);
+
+    double minY = std::numeric_limits<double>::max();
+    double maxY = std::numeric_limits<double>::lowest();
+    for (size_t i = 0; i < yValues.size(); ++i) {
+        double yVal = yValues[i];
+        double yErr = yErrors[i];
+        minY = std::min(minY, yVal - yErr);
+        maxY = std::max(maxY, yVal + yErr);
+    }
+
+    // Add a margin to ensure error bars fit within the range
+    double yRange = maxY - minY;
+    double yMargin = 0.15 * yRange; // 15% margin
+    minY -= yMargin;
+    maxY += yMargin;
+
+    // Create canvas
+    TCanvas canvas;
+    canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
+
+    // Draw graph
+    double xMin = 0.5;  // Start at 0.5 to center points between ticks
+    double xMax = xValues.size() + 0.5;
+    TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, (";Cut Variation;" + yAxisLabel).c_str());
+    graph->Draw("P SAME");
+
+    // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
+    TAxis* axis = hFrame->GetXaxis();
+    axis->SetNdivisions(xValues.size(), false);
+    axis->SetLabelSize(0.03);
+    axis->SetTickLength(0.03); // Add visible ticks
+    axis->SetLabelOffset(999); // Hide default tick numbers
+
+    // Add simple alphabetical labels between ticks
+    for (size_t i = 0; i < xValues.size(); ++i) {
+        double x = xValues[i];  // Use xValues directly (centered between ticks)
+        TLatex label;
+        label.SetTextAlign(22); // Center align
+        label.SetTextSize(0.03);
+        label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
+    }
+
+    // Add a formatted legend with individual cut values in bold
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.035);
+    double yStart = 0.5; // Starting y-position for the legend
+
+    for (size_t i = 0; i < xLabels.size(); ++i) {
+        std::ostringstream entry;
+        entry << "#font[62]{" << xLabels[i] << "} : #font[62]{ECore} #geq " << eCoreValues[i]
+              << " GeV, #font[62]{#chi^{2}} < " << chiValues[i] << ", #font[62]{Asymmetry} < " << asymmetryValues[i];
+        valueText.DrawLatex(0.4, yStart, entry.str().c_str());
+        yStart -= 0.05;  // Adjust spacing between legend entries
+    }
+
+    // Add trigger name label in bold
+    TLatex latex;
+    latex.SetNDC();
+    latex.SetTextSize(0.04);
+    latex.DrawLatex(0.4, 0.56, ("#font[62]{Trigger:} " + triggerName).c_str());
+
+    // Save plot
+    gSystem->mkdir(outputFilePath.substr(0, outputFilePath.find_last_of("/")).c_str(), true);
+    canvas.SaveAs(outputFilePath.c_str());
+    std::cout << "Saved plot: " << outputFilePath << std::endl;
+
+    // Clean up
+    delete graph;
+}
+
+
+
+
+void plotMesonInformation(const std::vector<HistogramData>& histogramDataVector) {
+    // Organize data by trigger index and cut combination
+    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
+    std::map<int, std::vector<std::string>> cutVariations;
+    std::map<int, std::vector<double>> meanPi0sPerTrigger, meanPi0ErrorsPerTrigger, sigmaPi0sPerTrigger, sigmaPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalToBackgroundPi0RatiosPerTrigger, signalToBackgroundPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> meanEtasPerTrigger, meanEtaErrorsPerTrigger, sigmaEtasPerTrigger, sigmaEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalToBackgroundEtaRatiosPerTrigger, signalToBackgroundEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalPi0YieldsPerTrigger, signalPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalEtaYieldsPerTrigger, signalEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> pi0FitResolutionsPerTrigger, pi0FitResolutionErrorsPerTrigger;
+    std::map<int, std::vector<double>> etaFitResolutionsPerTrigger, etaFitResolutionErrorsPerTrigger;
+
+
+    
+    for (const auto& data : histogramDataVector) {
+        processDataForTrigger(data, dataMap, cutVariations, meanPi0sPerTrigger, meanPi0ErrorsPerTrigger, sigmaPi0sPerTrigger, sigmaPi0ErrorsPerTrigger, signalToBackgroundPi0RatiosPerTrigger, signalToBackgroundPi0ErrorsPerTrigger, meanEtasPerTrigger, meanEtaErrorsPerTrigger, sigmaEtasPerTrigger, sigmaEtaErrorsPerTrigger, signalToBackgroundEtaRatiosPerTrigger, signalToBackgroundEtaErrorsPerTrigger, signalPi0YieldsPerTrigger, signalPi0ErrorsPerTrigger, signalEtaYieldsPerTrigger, signalEtaErrorsPerTrigger, pi0FitResolutionsPerTrigger, pi0FitResolutionErrorsPerTrigger, etaFitResolutionsPerTrigger, etaFitResolutionErrorsPerTrigger);
+    }
     for (const auto& triggerPair : dataMap) {
         int triggerIndex = triggerPair.first;
         std::string triggerName = getTriggerName(triggerIndex);
@@ -662,25 +982,26 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
             std::string cutCombination = cutPair.first;
             const auto& dataList = cutPair.second;
 
-            // Prepare vectors for plotting π⁰
-            std::vector<double> pTCentersPi0;
-            std::vector<double> meanPi0s;
-            std::vector<double> meanPi0Errors;
+            // Retrieve cut variables from the first entry in dataList
+            double clusECore = dataList[0].cuts.clusECore;
+            double chi = dataList[0].cuts.chi;
+            double asymmetry = dataList[0].cuts.asymmetry;
 
-            // Prepare vectors for plotting η
-            std::vector<double> pTCentersEta;
-            std::vector<double> meanEtas;
-            std::vector<double> meanEtaErrors;
+            std::vector<double> pTCentersPi0, meanPi0s, meanPi0Errors, sigmaPi0s, sigmaPi0Errors, signalPi0Yields, signalPi0Errors;
+            std::vector<double> pTCentersEta, meanEtas, meanEtaErrors, sigmaEtas, sigmaEtaErrors, signalEtaYields, signalEtaErrors;
+            std::vector<double> signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors;
+            std::vector<double> signalToBackgroundEtaRatios, signalToBackgroundEtaErrors;
+            std::vector<double> pi0FitResolutions, pi0FitResolutionErrors;
+            std::vector<double> etaFitResolutions, etaFitResolutionErrors;
 
-            // Handle pT bins and mean values
+
             for (const auto& data : dataList) {
                 if (data.cuts.pTMin == -1) {
-                    continue;  // Skip entries without pT bins
+                    continue;
                 }
 
                 double pTCenter = (data.cuts.pTMin + data.cuts.pTMax) / 2.0;
 
-                // Criteria for invalid fits (adjust as needed)
                 bool invalidPi0Fit = (data.meanPi0Error > 1.0) || (data.meanPi0Error == 0);
                 bool invalidEtaFit = (data.meanEtaError > 1.0) || (data.meanEtaError == 0);
 
@@ -688,329 +1009,149 @@ void plotMesonMeanVsPt(const std::vector<HistogramData>& histogramDataVector) {
                     pTCentersPi0.push_back(pTCenter);
                     meanPi0s.push_back(data.meanPi0);
                     meanPi0Errors.push_back(data.meanPi0Error);
+                    sigmaPi0s.push_back(data.sigmaPi0);
+                    sigmaPi0Errors.push_back(data.sigmaPi0Error);
+                    signalToBackgroundPi0Ratios.push_back(data.signalToBackgroundPi0Ratio);
+                    signalToBackgroundPi0Errors.push_back(data.signalToBackgroundPi0Error);
+                    signalPi0Yields.push_back(data.signalPi0Yield);
+                    signalPi0Errors.push_back(data.signalPi0Error);
+                    pi0FitResolutions.push_back(data.pi0FitResolution);
+                    pi0FitResolutionErrors.push_back(data.pi0FitResolutionError);
                 }
 
                 if (!invalidEtaFit) {
                     pTCentersEta.push_back(pTCenter);
                     meanEtas.push_back(data.meanEta);
                     meanEtaErrors.push_back(data.meanEtaError);
+                    sigmaEtas.push_back(data.sigmaEta);
+                    sigmaEtaErrors.push_back(data.sigmaEtaError);
+                    signalToBackgroundEtaRatios.push_back(data.signalToBackgroundEtaRatio);
+                    signalToBackgroundEtaErrors.push_back(data.signalToBackgroundEtaError);
+                    signalEtaYields.push_back(data.signalEtaYield);
+                    signalEtaErrors.push_back(data.signalEtaError);
+                    etaFitResolutions.push_back(data.etaFitResolution);
+                    etaFitResolutionErrors.push_back(data.etaFitResolutionError);
                 }
             }
+            std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
+            generateMesonPlotVsPt(pTCentersPi0, meanPi0s, meanPi0Errors, "#mu_{#pi0} [GeV]",
+                                 outputDirPath + "MeanPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue,
+                                 clusECore, chi, asymmetry, 0.14, 0.17, 2.0, 7.0);
+            generateMesonPlotVsPt(pTCentersEta, meanEtas, meanEtaErrors, "#mu_{#eta} [GeV]", outputDirPath + "MeanEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.55, 0.62, 2.0, 7.0);
+            
+            
+            generateMesonPlotVsPt(pTCentersPi0, sigmaPi0s, sigmaPi0Errors, "#sigma_{#pi0} [GeV]",
+                                  outputDirPath + "SigmaPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue,
+                                  clusECore, chi, asymmetry, 0.015, 0.025, 2.0, 7.0);
 
-            // Generate Mean π⁰ Mass vs. pT Plot
-            if (!pTCentersPi0.empty()) {
-                // Create TGraphErrors for π⁰
-                TGraphErrors* graphPi0 = new TGraphErrors(pTCentersPi0.size());
-                for (size_t i = 0; i < pTCentersPi0.size(); ++i) {
-                    graphPi0->SetPoint(i, pTCentersPi0[i], meanPi0s[i]);
-                    graphPi0->SetPointError(i, 0, meanPi0Errors[i]);
-                }
-                graphPi0->SetMarkerStyle(21);
-                graphPi0->SetMarkerSize(1);
-                graphPi0->SetLineWidth(2);
-                graphPi0->SetMarkerColor(kBlue);
-                graphPi0->SetLineColor(kBlue);
+            generateMesonPlotVsPt(pTCentersEta, sigmaEtas, sigmaEtaErrors, "#sigma_{#eta} [GeV]",
+                                  outputDirPath + "SigmaEta_vs_pT.png", triggerName, cutCombination, 20, kRed,
+                                  clusECore, chi, asymmetry, 0.045, 0.055, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersPi0, signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors, "Signal-to-Background Ratio (#pi^{0})", outputDirPath + "SignalToBackgroundPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, 0.0, 20.0, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersEta, signalToBackgroundEtaRatios, signalToBackgroundEtaErrors, "Signal-to-Background Ratio (#eta)", outputDirPath + "SignalToBackgroundEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.0, 2.0, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersPi0, signalPi0Yields, signalPi0Errors, "Signal Yield (#pi^{0})", outputDirPath + "SignalYieldPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2, 7);
+            generateMesonPlotVsPt(pTCentersEta, signalEtaYields, signalEtaErrors, "Signal Yield (#eta)", outputDirPath + "SignalYieldEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2, 7);
+            generateMesonPlotVsPt(pTCentersPi0, pi0FitResolutions, pi0FitResolutionErrors, "#pi^{0} Fit Resolution", outputDirPath + "Pi0Resolution_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2.0, 7.0);
+            generateMesonPlotVsPt(pTCentersEta, etaFitResolutions, etaFitResolutionErrors, "#eta Fit Resolution", outputDirPath + "EtaResolution_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2.0, 7.0);
 
-                // Determine y-axis range automatically for π⁰, including error bars
-                double minY = std::numeric_limits<double>::max();
-                double maxY = std::numeric_limits<double>::lowest();
-                for (size_t i = 0; i < meanPi0s.size(); ++i) {
-                    double yVal = meanPi0s[i];
-                    double yErr = meanPi0Errors[i];
-                    minY = std::min(minY, yVal - yErr);
-                    maxY = std::max(maxY, yVal + yErr);
-                }
-                double yMargin = 0.05 * (maxY - minY);  // Add 5% margin
-                minY -= yMargin;
-                maxY += yMargin;
-
-                // Automatically determine the x-axis range based on the farthest pT bin
-                  double maxPt = *std::max_element(pTCentersPi0.begin(), pTCentersPi0.end());
-
-                  // Create canvas
-                  TCanvas canvas;
-
-                  // Draw graph for π⁰
-                  TH1F* hFrame = canvas.DrawFrame(0, 0.14, 12, 0.18, ";p_{T} [GeV];Mean #pi^{0} Mass [GeV]");  // Multiply maxPt by 1.1 for margin
-                  graphPi0->Draw("P SAME");
-
-                  // Add labels
-                  TLatex latex;
-                  latex.SetNDC();
-                  latex.SetTextSize(0.038);
-                  latex.DrawLatex(0.2, 0.85, ("Trigger: " + triggerName).c_str());
-                  latex.DrawLatex(0.2, 0.80, ("Cut: " + cutCombination).c_str());
-
-                  // Save plot to the corresponding folder
-                  std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
-                  std::string outputFilePath = outputDirPath + "MeanPi0_vs_pT.png";
-
-                  // Ensure the directory exists
-                  gSystem->mkdir(outputDirPath.c_str(), true);
-
-                  canvas.SaveAs(outputFilePath.c_str());
-                  std::cout << "Saved plot: " << outputFilePath << std::endl;
-
-                  // Clean up
-                  delete graphPi0;
-            }
-
-            // Generate Mean η Mass vs. pT Plot
-            if (!pTCentersEta.empty()) {
-                // Create TGraphErrors for η
-                TGraphErrors* graphEta = new TGraphErrors(pTCentersEta.size());
-                for (size_t i = 0; i < pTCentersEta.size(); ++i) {
-                    graphEta->SetPoint(i, pTCentersEta[i], meanEtas[i]);
-                    graphEta->SetPointError(i, 0, meanEtaErrors[i]);
-                }
-                graphEta->SetMarkerStyle(20);
-                graphEta->SetMarkerSize(1);
-                graphEta->SetLineWidth(2);
-                graphEta->SetMarkerColor(kRed);
-                graphEta->SetLineColor(kRed);
-
-                // Determine y-axis range automatically for η, including error bars
-                double minY = std::numeric_limits<double>::max();
-                double maxY = std::numeric_limits<double>::lowest();
-                for (size_t i = 0; i < meanEtas.size(); ++i) {
-                    double yVal = meanEtas[i];
-                    double yErr = meanEtaErrors[i];
-                    minY = std::min(minY, yVal - yErr);
-                    maxY = std::max(maxY, yVal + yErr);
-                }
-                double yMargin = 0.2 * (maxY - minY);  // Add 5% margin
-                minY -= yMargin;
-                maxY += yMargin;
-
-                // Automatically determine the x-axis range based on the farthest pT bin
-                double maxPt = *std::max_element(pTCentersEta.begin(), pTCentersEta.end());
-
-                // Create canvas
-                TCanvas canvas;
-
-                // Draw graph for η
-                TH1F* hFrame = canvas.DrawFrame(0, minY, 12, maxY, ";p_{T} [GeV];Mean #eta Mass [GeV]");
-                graphEta->Draw("P SAME");
-
-                // Add labels
-                TLatex latex;
-                latex.SetNDC();
-                latex.SetTextSize(0.038);
-                latex.DrawLatex(0.2, 0.85, ("Trigger: " + triggerName).c_str());
-                latex.DrawLatex(0.2, 0.80, ("Cut: " + cutCombination).c_str());
-
-                // Save plot to the corresponding folder
-                std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
-                std::string outputFilePath = outputDirPath + "MeanEta_vs_pT.png";
-
-                // Ensure the directory exists
-                gSystem->mkdir(outputDirPath.c_str(), true);
-
-                canvas.SaveAs(outputFilePath.c_str());
-                std::cout << "Saved plot: " << outputFilePath << std::endl;
-
-                // Clean up
-                delete graphEta;
-            }
         }
     }
     for (const auto& triggerPair : dataMap) {
         int triggerIndex = triggerPair.first;
         std::string triggerName = getTriggerName(triggerIndex);
-        // Retrieve collected data for this trigger
+
         const auto& cuts = cutVariations[triggerIndex];
-        const auto& pi0Means = meanPi0sPerTrigger[triggerIndex];
-        const auto& pi0Errors = meanPi0ErrorsPerTrigger[triggerIndex];
-        const auto& etaMeans = meanEtasPerTrigger[triggerIndex];
-        const auto& etaErrors = meanEtaErrorsPerTrigger[triggerIndex];
+        const auto& meanPi0s = meanPi0sPerTrigger[triggerIndex];
+        const auto& meanPi0Errors = meanPi0ErrorsPerTrigger[triggerIndex];
+        const auto& sigmaPi0s = sigmaPi0sPerTrigger[triggerIndex];
+        const auto& sigmaPi0Errors = sigmaPi0ErrorsPerTrigger[triggerIndex];
+        const auto& signalToBackgroundPi0Ratios = signalToBackgroundPi0RatiosPerTrigger[triggerIndex];
+        const auto& signalToBackgroundPi0Errors = signalToBackgroundPi0ErrorsPerTrigger[triggerIndex];
+        const auto& signalPi0Yields = signalPi0YieldsPerTrigger[triggerIndex];
+        const auto& signalPi0Errors = signalPi0ErrorsPerTrigger[triggerIndex];
+        const auto& pi0FitResolutions = pi0FitResolutionsPerTrigger[triggerIndex];
+        const auto& pi0FitResolutionErrors = pi0FitResolutionErrorsPerTrigger[triggerIndex];
 
-        // Generate Mean π⁰ Mass vs. Cut Variation Plot
-        {
-            std::vector<double> xValues;
-            std::vector<double> xErrors;
-            std::vector<double> yValues;
-            std::vector<double> yErrors;
-            std::vector<std::string> xLabels;
+        const auto& meanEtas = meanEtasPerTrigger[triggerIndex];
+        const auto& meanEtaErrors = meanEtaErrorsPerTrigger[triggerIndex];
+        const auto& sigmaEtas = sigmaEtasPerTrigger[triggerIndex];
+        const auto& sigmaEtaErrors = sigmaEtaErrorsPerTrigger[triggerIndex];
+        const auto& signalToBackgroundEtaRatios = signalToBackgroundEtaRatiosPerTrigger[triggerIndex];
+        const auto& signalToBackgroundEtaErrors = signalToBackgroundEtaErrorsPerTrigger[triggerIndex];
+        const auto& signalEtaYields = signalEtaYieldsPerTrigger[triggerIndex];
+        const auto& signalEtaErrors = signalEtaErrorsPerTrigger[triggerIndex];
+        const auto& etaFitResolutions = etaFitResolutionsPerTrigger[triggerIndex];
+        const auto& etaFitResolutionErrors = etaFitResolutionErrorsPerTrigger[triggerIndex];
 
-            for (size_t i = 0; i < pi0Means.size(); ++i) {
-                if (std::isnan(pi0Means[i])) continue; // Skip invalid fits
-                xValues.push_back(i + 1);  // Use index values for x-axis
-                xErrors.push_back(0);
-                yValues.push_back(pi0Means[i]);
-                yErrors.push_back(pi0Errors[i]);
+        // Prepare vectors for cut variation plots
+        std::vector<double> xValues, xErrors, eCoreValues, chiValues, asymmetryValues;
+        std::vector<std::string> xLabels;
+        xErrors.assign(cuts.size(), 0); // Set all xErrors to 0
 
-                // Replace cut combination with a simple label like "A", "B", "C", ...
-                std::string label = std::string(1, 'A' + i);
-                xLabels.push_back(label);
-            }
+        for (size_t i = 0; i < cuts.size(); ++i) {
+            xValues.push_back(i + 1); // Numerical x-values
+            xLabels.push_back(std::string(1, 'A' + i)); // Labels as "A", "B", "C", ...
 
-            if (!xValues.empty()) {
-                TGraphErrors* graphPi0 = new TGraphErrors(xValues.size(), &xValues[0], &yValues[0], &xErrors[0], &yErrors[0]);
-                graphPi0->SetMarkerStyle(21);
-                graphPi0->SetMarkerSize(1);
-                graphPi0->SetLineWidth(2);
+            // Retrieve cut variables from the first entry in each cut combination
+            double clusECore = dataMap[triggerIndex][cuts[i]][0].cuts.clusECore;
+            double chi = dataMap[triggerIndex][cuts[i]][0].cuts.chi;
+            double asymmetry = dataMap[triggerIndex][cuts[i]][0].cuts.asymmetry;
 
-                // Determine y-axis range including error bars
-                double minY = std::numeric_limits<double>::max();
-                double maxY = std::numeric_limits<double>::lowest();
-                for (size_t i = 0; i < yValues.size(); ++i) {
-                    double yVal = yValues[i];
-                    double yErr = yErrors[i];
-                    minY = std::min(minY, yVal - yErr);
-                    maxY = std::max(maxY, yVal + yErr);
-                }
-                double yMargin = 0.2 * (maxY - minY);
-                minY -= yMargin;
-                maxY += yMargin;
-
-                // Create canvas
-                TCanvas canvas;
-                canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
-
-                // Draw graph
-                double xMin = 0.5;  // Start at 0.5 to center points between ticks
-                double xMax = xValues.size() + 0.5;
-                TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, ";Cut Variation;Mean #pi^{0} Mass [GeV]");
-                graphPi0->Draw("P SAME");
-
-                // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
-                TAxis* axis = hFrame->GetXaxis();
-                axis->SetNdivisions(xValues.size(), false);
-                axis->SetLabelSize(0.03);
-                axis->SetTickLength(0.03); // Add visible ticks
-                axis->SetLabelOffset(999); // Hide default tick numbers
-
-                // Add simple alphabetical labels between ticks
-                for (size_t i = 0; i < xValues.size(); ++i) {
-                    double x = xValues[i];  // Use xValues directly (centered between ticks)
-                    TLatex label;
-                    label.SetTextAlign(22); // Center align
-                    label.SetTextSize(0.03);
-                    label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
-                }
-
-                // Add legend to map cut combinations to labels
-                TLegend* legend = new TLegend(0.55, 0.25, 0.8, 0.45);  // Adjust size for clarity
-                legend->SetTextSize(0.03);  // Adjust text size
-                legend->SetBorderSize(0);   // Remove legend border for better appearance
-                for (size_t i = 0; i < xLabels.size(); ++i) {
-                    legend->AddEntry((TObject*)0, (xLabels[i] + " : " + cuts[i]).c_str(), "");
-                }
-                legend->Draw();
-
-                // Add trigger name label
-                TLatex latex;
-                latex.SetNDC();
-                latex.SetTextSize(0.04);
-                latex.DrawLatex(0.2, 0.95, ("Trigger: " + triggerName).c_str());
-
-                // Save plot
-                std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/";
-                std::string outputFilePath = outputDirPath + "MeanPi0_vs_CutVariation.png";
-                gSystem->mkdir(outputDirPath.c_str(), true);
-                canvas.SaveAs(outputFilePath.c_str());
-                std::cout << "Saved plot: " << outputFilePath << std::endl;
-
-                // Clean up
-                delete graphPi0;
-                delete legend;
-            }
+            eCoreValues.push_back(clusECore);
+            chiValues.push_back(chi);
+            asymmetryValues.push_back(asymmetry);
         }
-        // Generate Mean η Mass vs. Cut Variation Plot
-        {
-            std::vector<double> xValues;
-            std::vector<double> xErrors;
-            std::vector<double> yValues;
-            std::vector<double> yErrors;
-            std::vector<std::string> xLabels;
 
-            for (size_t i = 0; i < etaMeans.size(); ++i) {
-                if (std::isnan(etaMeans[i])) continue; // Skip invalid fits
-                xValues.push_back(i + 1);  // Use index values for x-axis
-                xErrors.push_back(0);
-                yValues.push_back(etaMeans[i]);
-                yErrors.push_back(etaErrors[i]);
+        generateCutVariationPlot(xValues, xErrors, meanPi0s, meanPi0Errors, xLabels, "#mu_{#pi^{0}} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/MeanPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
 
-                // Replace cut combination with a simple label like "A", "B", "C", ...
-                std::string label = std::string(1, 'A' + i);
-                xLabels.push_back(label);
-            }
+        generateCutVariationPlot(xValues, xErrors, meanEtas, meanEtaErrors, xLabels, "#mu_{#eta} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/MeanEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
 
-            if (!xValues.empty()) {
-                TGraphErrors* graphEta = new TGraphErrors(xValues.size(), &xValues[0], &yValues[0], &xErrors[0], &yErrors[0]);
-                graphEta->SetMarkerStyle(21);
-                graphEta->SetMarkerSize(1);
-                graphEta->SetLineWidth(2);
+        generateCutVariationPlot(xValues, xErrors, sigmaPi0s, sigmaPi0Errors, xLabels, "#sigma_{#pi^{0}} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SigmaPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
 
-                // Determine y-axis range including error bars
-                double minY = std::numeric_limits<double>::max();
-                double maxY = std::numeric_limits<double>::lowest();
-                for (size_t i = 0; i < yValues.size(); ++i) {
-                    double yVal = yValues[i];
-                    double yErr = yErrors[i];
-                    minY = std::min(minY, yVal - yErr);
-                    maxY = std::max(maxY, yVal + yErr);
-                }
-                double yMargin = 0.58 * (maxY - minY);
-                minY -= yMargin;
-                maxY += yMargin;
+        generateCutVariationPlot(xValues, xErrors, sigmaEtas, sigmaEtaErrors, xLabels, "#sigma_{#eta} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SigmaEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
 
-                // Create canvas
-                TCanvas canvas;
-                canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
+        generateCutVariationPlot(xValues, xErrors, signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors, xLabels,
+                                 "Signal-to-Background Ratio (#pi^{0})",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalToBackgroundPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
 
-                // Draw graph
-                double xMin = 0.5;  // Start at 0.5 to center points between ticks
-                double xMax = xValues.size() + 0.5;
-                TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, ";Cut Variation;Mean #eta Mass [GeV]");
-                graphEta->Draw("P SAME");
+        generateCutVariationPlot(xValues, xErrors, signalToBackgroundEtaRatios, signalToBackgroundEtaErrors, xLabels,
+                                 "Signal-to-Background Ratio (#eta)",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalToBackgroundEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
 
-                // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
-                TAxis* axis = hFrame->GetXaxis();
-                axis->SetNdivisions(xValues.size(), false);
-                axis->SetLabelSize(0.03);
-                axis->SetTickLength(0.03); // Add visible ticks
-                axis->SetLabelOffset(999); // Hide default tick numbers
+        generateCutVariationPlot(xValues, xErrors, signalPi0Yields, signalPi0Errors, xLabels,
+                                 "Signal Yield (#pi^{0})",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalYieldPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
 
-                // Add simple alphabetical labels between ticks
-                for (size_t i = 0; i < xValues.size(); ++i) {
-                    double x = xValues[i];  // Use xValues directly (centered between ticks)
-                    TLatex label;
-                    label.SetTextAlign(22); // Center align
-                    label.SetTextSize(0.03);
-                    label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
-                }
+        generateCutVariationPlot(xValues, xErrors, signalEtaYields, signalEtaErrors, xLabels,
+                                 "Signal Yield (#eta)",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalYieldEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
 
-                // Add legend to map cut combinations to labels
-                TLegend* legend = new TLegend(0.15, 0.73, 0.4, 0.9);  // Adjust size for clarity
-                legend->SetTextSize(0.03);  // Adjust text size
-                legend->SetBorderSize(0);   // Remove legend border for better appearance
-                for (size_t i = 0; i < xLabels.size(); ++i) {
-                    legend->AddEntry((TObject*)0, (xLabels[i] + " : " + cuts[i]).c_str(), "");
-                }
-                legend->Draw();
+        generateCutVariationPlot(xValues, xErrors, pi0FitResolutions, pi0FitResolutionErrors, xLabels,
+                                 "#pi^{0} Fit Resolution",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/Pi0Resolution_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
 
-                // Add trigger name label
-                TLatex latex;
-                latex.SetNDC();
-                latex.SetTextSize(0.04);
-                latex.DrawLatex(0.2, 0.95, ("Trigger: " + triggerName).c_str());
-
-                // Save plot
-                std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/";
-                std::string outputFilePath = outputDirPath + "MeanEta_vs_CutVariation.png";
-                gSystem->mkdir(outputDirPath.c_str(), true);
-                canvas.SaveAs(outputFilePath.c_str());
-                std::cout << "Saved plot: " << outputFilePath << std::endl;
-
-                // Clean up
-                delete graphEta;
-                delete legend;
-            }
-        }
+        generateCutVariationPlot(xValues, xErrors, etaFitResolutions, etaFitResolutionErrors, xLabels,
+                                 "#eta Fit Resolution",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/EtaResolution_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
     }
 }
-
 
 // Main function to run both processes
 void plotInvariantMass() {
@@ -1019,5 +1160,5 @@ void plotInvariantMass() {
     saveAnnotatedInvariantMassHistograms(inputFilePath);
     std::vector<HistogramData> histogramDataVector = saveAnnotatedInvariantMassHistograms(inputFilePath);
     printHistogramData(histogramDataVector);
-    plotMesonMeanVsPt(histogramDataVector);
+    plotMesonInformation(histogramDataVector);
 }
