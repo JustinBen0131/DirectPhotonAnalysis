@@ -17,9 +17,11 @@
 #include <sys/stat.h>
 #include <TRandom3.h>
 
+
 std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/";
 std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
 std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber46623_runnumber47230.root";
+
 
 // Mapping trigger indices to names based on the provided trigger list
 std::map<int, std::string> triggerNameMap = {
@@ -56,92 +58,6 @@ std::map<int, std::string> triggerNameMap = {
 };
 
 
-std::string formatToThreeSigFigs(double value) {
-    std::ostringstream stream;
-    stream << std::fixed << std::setprecision(3) << value; // Use fixed notation with three decimal places
-    return stream.str();
-}
-
-struct CutValues {
-    float clusECore = -1;   // Default to -1 indicating no specific value
-    float chi = -1;         // Default to -1 indicating no specific value
-    float asymmetry = -1;   // Default to -1 indicating no specific value
-    float isoMin = -1;      // Default to -1 indicating no isoEt range
-    float isoMax = -1;      // Default to -1 indicating no isoEt range
-    float pTMin = -1;       // Default to -1 indicating no pT range
-    float pTMax = -1;       // Default to -1 indicating no pT range
-    int triggerIndex = -1;  // Default to -1 indicating no trigger index
-    std::string massWindowLabel;
-};
-
-CutValues parseIsolationQAHistName(const std::string& histName) {
-    CutValues cuts;
-    
-    std::regex re("(?:_E([0-9]+(?:point[0-9]*)?)_Chi([0-9]+(?:point[0-9]*)?)_Asym([0-9]+(?:point[0-9]*)?)"
-                  "(?:_(inMassWindow|outsideMassWindow))?"
-                  "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?)?_pT_([0-9]+(?:point[0-9]*)?)to([0-9]+(?:point[0-9]*)?)_(\\d+)|_(\\d+)");
-
-    std::smatch match;
-
-    // Lambda function to convert strings with 'point' to float values
-    auto convert = [](const std::string& input) -> float {
-        std::string temp = input;
-        size_t pointPos = temp.find("point");
-        if (pointPos != std::string::npos) {
-            temp.replace(pointPos, 5, ".");
-        }
-        return std::stof(temp);
-    };
-
-    // Check if the regex matches the histogram name
-    if (std::regex_search(histName, match, re)) {
-        if (match.size() >= 10) {
-            // Handle detailed histograms with cuts, mass window, pT range, and triggerIndex
-            if (match[1].matched) {
-                cuts.clusECore = convert(match[1].str());
-                cuts.chi = convert(match[2].str());
-                cuts.asymmetry = convert(match[3].str());
-
-                if (match[4].matched) {
-                    cuts.massWindowLabel = match[4].str();  // Capture massWindowLabel if present
-                }
-
-                if (match[5].matched && match[6].matched) {
-                    cuts.isoMin = convert(match[5].str());
-                    cuts.isoMax = convert(match[6].str());
-                }
-
-                cuts.pTMin = convert(match[7].str());
-                cuts.pTMax = convert(match[8].str());
-                cuts.triggerIndex = std::stoi(match[9].str());
-            }
-            // Handle simple histograms with just pT range and triggerIndex
-            else if (match[7].matched && match[8].matched) {
-                cuts.pTMin = convert(match[7].str());
-                cuts.pTMax = convert(match[8].str());
-                cuts.triggerIndex = std::stoi(match[9].str());
-            }
-            // Handle histograms with just triggerIndex
-            else if (match[10].matched) {
-                cuts.triggerIndex = std::stoi(match[10].str());
-            }
-
-            // Diagnostic prints
-            std::cout << "Parsed histogram: " << histName << std::endl;
-            std::cout << "  clusECore: " << cuts.clusECore << ", Chi: " << cuts.chi
-                      << ", Asymmetry: " << cuts.asymmetry << ", isoMin: " << cuts.isoMin
-                      << ", isoMax: " << cuts.isoMax << ", pTMin: " << cuts.pTMin
-                      << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex
-                      << ", Mass Window Label: " << cuts.massWindowLabel << std::endl;
-        }
-    } else {
-        std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
-    }
-
-    return cuts;
-}
-
-
 // Helper function to get the trigger name based on index
 std::string getTriggerName(int triggerIndex) {
     if (triggerNameMap.find(triggerIndex) != triggerNameMap.end()) {
@@ -151,987 +67,1098 @@ std::string getTriggerName(int triggerIndex) {
 }
 
 
+// Structure to hold the parsed cut values
+struct CutValues {
+    float clusECore = 0;
+    float asymmetry = 0;
+    float chi = 0;
+    int triggerIndex = 0;
+    float pTMin = -1;  // Default to -1 indicating no pT bin
+    float pTMax = -1;  // Default to -1 indicating no pT bin
+};
 
-void saveHistogram(TObject* objHist, const std::string& outputFilePath, const std::string& triggerName, const CutValues& cuts) {
-    TCanvas canvas;
-    TLatex latex;
-    latex.SetNDC();
-    latex.SetTextSize(0.04);
+// Function to parse histogram names and extract cut values, trigger index, and optional pT range
+CutValues parseHistName(const std::string& histName) {
+    CutValues cuts;
 
-    if (objHist->InheritsFrom(TH2::Class())) {
-        TH2* h2 = (TH2*)objHist;
-        h2->SetTitle(("Isolation Energy vs Ecore for " + triggerName).c_str());
-        gStyle->SetOptStat(0);
-        h2->GetZaxis()->SetRangeUser(0, 10000);
-        h2->GetZaxis()->SetTitle("Counts");
-        canvas.SetRightMargin(0.18);
-        canvas.SetLogz();
-        h2->Draw("COLZ");
+    // Regex pattern that handles both cases: with and without pT bins
+    std::regex re("invMass(?:_noPtBins)?_E([0-9]+(?:point[0-9]*)?)_Chi([0-9]+(?:point[0-9]*)?)_Asym([0-9]+(?:point[0-9]*)?)(?:_pT_([0-9]+(?:point[0-9]*)?)to([0-9]+(?:point[0-9]*)?))?_(\\d+)");
+    std::smatch match;
 
-        // Output Trigger Name
-        latex.DrawLatex(0.2, 0.8, ("Trigger: " + triggerName).c_str());
-
-        // Output pT range if valid
-        if (cuts.pTMin >= 0 && cuts.pTMax >= 0) {
-            latex.DrawLatex(0.2, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
+    // Lambda function to convert strings with 'point' to float values
+    auto convert = [](const std::string& input) -> float {
+        std::string temp = input;
+        size_t pointPos = temp.find("point");
+        if (pointPos != std::string::npos) {
+            temp.replace(pointPos, 5, ".");
         }
-
-        // Output cut combination if valid
-        if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
-            latex.DrawLatex(0.2, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
-                                      ", Asym=" + formatToThreeSigFigs(cuts.asymmetry)).c_str());
+        try {
+            return std::stof(temp);
+        } catch (const std::exception&) {
+            return 0.0f;
         }
+    };
 
-    } else if (objHist->InheritsFrom(TH1::Class())) {
-        TH1* h1 = (TH1*)objHist;
-        h1->SetTitle(("Isolation Energy for " + triggerName).c_str());
-        h1->GetXaxis()->SetRangeUser(-10, 10);
-        gStyle->SetOptStat(1);
-        h1->Draw();
+    // Check if the regex matches the histogram name
+    if (std::regex_search(histName, match, re)) {
+        if (match.size() >= 5) {
+            cuts.clusECore = convert(match[1].str());
+            cuts.chi = convert(match[2].str());
+            cuts.asymmetry = convert(match[3].str());
 
-        // Output Trigger Name
-        latex.DrawLatex(0.18, 0.8, ("Trigger: " + triggerName).c_str());
+            // Optional pT bin range (check if it was captured)
+            if (match[4].matched && match[5].matched) {
+                cuts.pTMin = convert(match[4].str());
+                cuts.pTMax = convert(match[5].str());
+            }
 
-        // Output pT range if valid
-        if (cuts.pTMin >= 0 && cuts.pTMax >= 0) {
-            latex.DrawLatex(0.18, 0.75, ("pT: " + formatToThreeSigFigs(cuts.pTMin) + " to " + formatToThreeSigFigs(cuts.pTMax)).c_str());
+            cuts.triggerIndex = std::stoi(match[6].str());
+
+            // Diagnostic prints
+            std::cout << "Parsed histogram: " << histName << std::endl;
+            std::cout << "  clusECore: " << cuts.clusECore << ", Chi: " << cuts.chi << ", Asymmetry: " << cuts.asymmetry
+                      << ", pTMin: " << cuts.pTMin << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex << std::endl;
         }
-
-        // Output cut combination if valid
-        if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
-            latex.DrawLatex(0.18, 0.7, ("Cuts: ECore=" + formatToThreeSigFigs(cuts.clusECore) + ", Chi=" + formatToThreeSigFigs(cuts.chi) +
-                                      ", Asym=" + formatToThreeSigFigs(cuts.asymmetry)).c_str());
-        }
+    } else {
+        std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
     }
 
-    canvas.SaveAs(outputFilePath.c_str());
-    std::cout << "Saved histogram: " << outputFilePath << std::endl;
+    return cuts;
 }
 
-struct IsolatedPhotonLog {
-    int triggerIndex;
-    float clusECore;
-    float chi;
-    float asymmetry;
-    float pTMin;
-    float pTMax;
-    float isoMin;
-    float isoMax;
-    int isolatedEntries;
-    std::string massWindowLabel;
+
+TFitResultPtr PerformFitting(TH1* hPi0Mass, TF1*& totalFit, TF1*& gaussPi0Fit, TF1*& gaussEtaFit, TF1*& polyFit, double& fitStart, double& fitEnd) {
+    ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
+    ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(10000);
+
+    fitStart = 0.04;
+    fitEnd = 0.9;
+
+    // Pi0 estimates
+    double sigmaPi0Estimate = 0.021;  // Estimate for pi0 sigma
+    double meanPi0Estimate = 0.135;   // Estimate for pi0 mean
+    double amplitudePi0Estimate = hPi0Mass->GetBinContent(hPi0Mass->GetXaxis()->FindBin(meanPi0Estimate));
+
+    // Eta estimates
+    double sigmaEtaEstimate = 0.04;   // Eta sigma estimate
+    double meanEtaEstimate = 0.62;    // Eta mean estimate
+    double amplitudeEtaEstimate = 0.1 * amplitudePi0Estimate; // Eta amplitude much smaller than pi0
+
+    // Define the totalFit function as two Gaussians (pi0 and eta) plus a fourth-order polynomial (pol4)
+    totalFit = new TF1("totalFit", "gaus(0) + gaus(3) + pol4(6)", fitStart, fitEnd);
+    totalFit->SetLineColor(kRed);
+
+    // Set initial parameters for pi0 and eta Gaussian components
+    totalFit->SetParameters(amplitudePi0Estimate, meanPi0Estimate, sigmaPi0Estimate, amplitudeEtaEstimate, meanEtaEstimate, sigmaEtaEstimate);
+
+    // Set limits on eta mean and sigma to help fit convergence
+    totalFit->SetParLimits(4, 0.55, 0.65);   // Eta mean constrained between 550 and 650 MeV
+    totalFit->SetParLimits(5, 0.03, 0.05);   // Eta sigma constrained between 30 and 50 MeV
+
+    // Perform the fit
+    TFitResultPtr fitResult = hPi0Mass->Fit("totalFit", "SR+");
+
+    // Separate Gaussian fits for pi0 and eta
+    gaussPi0Fit = new TF1("gaussPi0Fit", "gaus", fitStart, fitEnd);
+    gaussPi0Fit->SetParameters(totalFit->GetParameter(0), totalFit->GetParameter(1), totalFit->GetParameter(2));
+    gaussPi0Fit->SetLineColor(kBlue);
+    gaussPi0Fit->SetLineStyle(2);  // Dashed line for pi0
+
+    gaussEtaFit = new TF1("gaussEtaFit", "gaus", fitStart, fitEnd);
+    gaussEtaFit->SetParameters(totalFit->GetParameter(3), totalFit->GetParameter(4), totalFit->GetParameter(5));
+    gaussEtaFit->SetLineColor(kGreen);
+    gaussEtaFit->SetLineStyle(2);  // Dotted line for eta
+
+    // Polynomial for the background (pol4 has 5 parameters)
+    polyFit = new TF1("polyFit", "pol4", fitStart, fitEnd);
+    for (int i = 6; i < 11; i++) {  // Parameters 6 to 10 correspond to the pol4 background
+        polyFit->SetParameter(i - 6, totalFit->GetParameter(i));
+    }
+    polyFit->SetLineColor(kOrange + 7);
+    polyFit->SetLineStyle(2);
+
+    return fitResult;
+}
+
+
+// Function to format numbers to three significant figures without scientific notation
+std::string formatToThreeSigFigs(double value) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(3) << value; // Use fixed notation with three decimal places
+    return stream.str();
+}
+
+struct HistogramData {
+    CutValues cuts;
+    std::string histName;  // Name of the histogram
+
+    // Fitted parameters and their errors
+    double meanPi0;
+    double meanPi0Error;
+    double sigmaPi0;
+    double sigmaPi0Error;
+    double meanEta;
+    double meanEtaError;
+    double sigmaEta;
+    double sigmaEtaError;
+
+    // Mass ratio and its error
+    double massRatio;
+    double massRatioError;
+
+    // Signal and background yields for pi0
+    double signalPi0Yield;
+    double signalPi0Error;
+    double backgroundPi0Yield;
+    double backgroundPi0Error;
+    double signalToBackgroundPi0Ratio;
+    double signalToBackgroundPi0Error;
+
+    // Signal and background yields for eta
+    double signalEtaYield;
+    double signalEtaError;
+    double backgroundEtaYield;
+    double backgroundEtaError;
+    double signalToBackgroundEtaRatio;
+    double signalToBackgroundEtaError;
+    
+    // Resolution parameters
+    double pi0FitResolution;
+    double pi0FitResolutionError;
+    double etaFitResolution;
+    double etaFitResolutionError;
 };
 
-struct TotalPhotonLog {
-    int triggerIndex;
-    float clusECore;
-    float chi;
-    float asymmetry;
-    float pTMin;
-    float pTMax;
-    int totalEntries;
-    std::string massWindowLabel;
-};
+std::vector<HistogramData> saveAnnotatedInvariantMassHistograms(const std::string& inputFilePath) {
+    std::vector<HistogramData> histogramDataVector;
+    
+    TFile* inputFile = TFile::Open(inputFilePath.c_str(), "READ");
+    if (!inputFile || inputFile->IsZombie()) {
+        std::cerr << "Error: Could not open the file " << inputFilePath << std::endl;
+        return histogramDataVector;
+    }
 
-struct PtWeightingLog {
-    int triggerIndex;
-    float clusECore;
-    float chi;
-    float asymmetry;
-    float pTMin;
-    float pTMax;
-    double weightedAveragePt;
-    std::string massWindowLabel;
-};
+    // Get the 'PhotonAnalysis' directory
+    TDirectory* invMassDir = (TDirectory*)inputFile->Get("PhotonAnalysis");
+    if (!invMassDir) {
+        std::cerr << "Error: 'PhotonAnalysis' directory not found." << std::endl;
+        inputFile->Close();
+        return histogramDataVector;
+    }
 
-std::map<std::tuple<int, float, float, float, float, float, float, float, std::string>, IsolatedPhotonLog> isolatedPhotonMap;
-std::map<std::tuple<int, float, float, float, float, float, std::string>, TotalPhotonLog> totalPhotonMap;
-std::map<std::tuple<int, float, float, float, float, float, std::string>, PtWeightingLog> pTweightingMap;
-
-
-void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesDir) {
-    std::string dirName = baseDir->GetName();
-    std::cout << "Processing directory: " << dirName << "\n";
-
-    // Iterate through trigger subdirectories in the base directory
-    TIter nextTriggerDir(baseDir->GetListOfKeys());
+    // Iterate through trigger directories
+    TIter nextTriggerDir(invMassDir->GetListOfKeys());
     TKey* keyTriggerDir;
     while ((keyTriggerDir = (TKey*)nextTriggerDir())) {
         TObject* objTriggerDir = keyTriggerDir->ReadObj();
-        // Check if the object is a directory
         if (objTriggerDir->InheritsFrom(TDirectory::Class())) {
             TDirectory* triggerDir = (TDirectory*)objTriggerDir;
-            std::string triggerDirName = triggerDir->GetName();
+            std::string triggerName = triggerDir->GetName();
+            std::string outputTriggerDir = outputDir + "InvMass/" + triggerName;
+            gSystem->mkdir(outputTriggerDir.c_str(), true);
 
-            // Extract the trigger index from the directory name (e.g., "Trigger3")
-            if (triggerDirName.find("Trigger") != 0) {
-                std::cout << "Skipping non-trigger directory: " << triggerDirName << std::endl;
-                delete objTriggerDir;
-                continue;
-            }
-            int triggerIndex = std::stoi(triggerDirName.substr(7));
-            std::string triggerName = getTriggerName(triggerIndex);
-
-            std::cout << "Processing directory: " << triggerDirName << " for trigger " << triggerIndex << " (" << triggerName << ")\n";
-
-            // Create the output directory for this trigger index
-            std::string triggerOutputDir = isolationEnergiesDir + "/" + triggerDirName;
-            gSystem->mkdir(triggerOutputDir.c_str(), true);
-
-            // Iterate through histograms in the trigger directory
+            // Iterate through histograms in the trigger subdirectory
             TIter nextHist(triggerDir->GetListOfKeys());
             TKey* keyHist;
             while ((keyHist = (TKey*)nextHist())) {
                 TObject* objHist = keyHist->ReadObj();
+                if (objHist->InheritsFrom(TH1::Class())) {
+                    TH1* hist = (TH1*)objHist;
+                    std::string histName = hist->GetName();
 
-                // Get the histogram name
-                std::string histName = objHist->GetName();
-
-                // Only process histograms that follow the naming scheme
-                if (histName.find("h2_cluster_iso_Ecore_") == 0 || histName.find("h1_isoEt_") == 0 || histName.find("isolatedPhotonCount_E") == 0 || histName.find("allPhotonCount_E") == 0 || histName.find("ptPhoton_E") == 0) {
-                    std::cout << "Processing histogram: " << histName << std::endl;
-
-                    // Parse the histogram name for the cuts, pT range, and isoEt range (for isolatedPhotonCount_E)
-                    CutValues cuts = parseIsolationQAHistName(histName);
-                    // Print debug information about the parsed cut values
-                    std::cout << "Parsed Cut Values: "
-                              << "clusECore: " << cuts.clusECore
-                              << ", chi: " << cuts.chi
-                              << ", asymmetry: " << cuts.asymmetry
-                              << ", pTMin: " << cuts.pTMin
-                              << ", pTMax: " << cuts.pTMax
-                              << ", isoMin: " << cuts.isoMin
-                              << ", isoMax: " << cuts.isoMax << "\n";
-
-
-                    auto baseKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.massWindowLabel);
-                    auto isoKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.isoMin, cuts.isoMax, cuts.massWindowLabel);
-
-                    if (histName.find("isolatedPhotonCount_E") == 0) {
-                        if (objHist->InheritsFrom(TH1::Class())) {
-                            IsolatedPhotonLog& log = isolatedPhotonMap[isoKey];
-                            log.triggerIndex = triggerIndex;
-                            log.clusECore = cuts.clusECore;
-                            log.chi = cuts.chi;
-                            log.asymmetry = cuts.asymmetry;
-                            log.pTMin = cuts.pTMin;
-                            log.pTMax = cuts.pTMax;
-                            log.isoMin = cuts.isoMin;
-                            log.isoMax = cuts.isoMax;
-                            log.massWindowLabel = cuts.massWindowLabel;
-                            log.isolatedEntries = ((TH1*)objHist)->GetEntries();
-
-                            std::cout << "  Isolated Photon Count: " << log.isolatedEntries << "\n";
-                            std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
-                        }
+                    // Check if the histogram has any entries
+                    if (hist->GetEntries() == 0) {
+                        std::cerr << "Skipping empty histogram: " << histName << std::endl;
+                        delete objHist;
+                        continue;  // Skip this histogram
                     }
 
-                    if (histName.find("allPhotonCount_E") == 0) {
-                        if (objHist->InheritsFrom(TH1::Class())) {
-                            TotalPhotonLog& log = totalPhotonMap[baseKey];
-                            log.triggerIndex = triggerIndex;
-                            log.clusECore = cuts.clusECore;
-                            log.chi = cuts.chi;
-                            log.asymmetry = cuts.asymmetry;
-                            log.pTMin = cuts.pTMin;
-                            log.pTMax = cuts.pTMax;
-                            log.massWindowLabel = cuts.massWindowLabel;
-                            log.totalEntries = ((TH1*)objHist)->GetEntries();
-
-                            std::cout << "  Total Photon Count: " << log.totalEntries << "\n";
-                            std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
-                        }
+                    // Filter histograms: only process those with 'invMass' in the name
+                    if (histName.find("invMass_E") != 0 && histName.find("invMass_noPtBins_E") != 0) {
+                        std::cerr << "Skipping histogram: " << histName << " (does not match invMass naming pattern)" << std::endl;
+                        delete objHist;
+                        continue;
                     }
-                    if (histName.find("ptPhoton_E") == 0) {
-                          double weightedSumPt = 0;
-                          double totalPhotonCounts = 0;
-                          int nBins = ((TH1*)objHist)->GetNbinsX();
 
-                          for (int bin = 1; bin <= nBins; ++bin) {
-                              double photonCount = ((TH1*)objHist)->GetBinContent(bin);
-                              double pt = ((TH1*)objHist)->GetBinCenter(bin);
-                              weightedSumPt += pt * photonCount;
-                              totalPhotonCounts += photonCount;
-                          }
+                    // Parse the histogram name to get cut values and trigger index
+                    CutValues cuts = parseHistName(histName);
 
-                          PtWeightingLog& log = pTweightingMap[baseKey];
-                          log.triggerIndex = triggerIndex;
-                          log.clusECore = cuts.clusECore;
-                          log.chi = cuts.chi;
-                          log.asymmetry = cuts.asymmetry;
-                          log.pTMin = cuts.pTMin;
-                          log.pTMax = cuts.pTMax;
-                          log.massWindowLabel = cuts.massWindowLabel;
-                          log.weightedAveragePt = (totalPhotonCounts > 0) ? weightedSumPt / totalPhotonCounts : 0;
+                    // Construct the correct output directory based on parsed triggerIndex
+                    std::string outputTriggerDir = outputDir + "InvMass/Trigger" + std::to_string(cuts.triggerIndex);
+                    gSystem->mkdir(outputTriggerDir.c_str(), true);  // Create trigger-specific directory
 
-                          std::cout << "  Weighted Average pT: " << log.weightedAveragePt << "\n";
-                          std::cout << "  Mass Window Label: " << log.massWindowLabel << "\n";
+                    // Construct the directory for the specific cut
+                    std::ostringstream cutDirStream;
+                    cutDirStream << outputTriggerDir << "/E" << formatToThreeSigFigs(cuts.clusECore)
+                                 << "_Chi" << formatToThreeSigFigs(cuts.chi)
+                                 << "_Asym" << formatToThreeSigFigs(cuts.asymmetry);
+                    std::string cutDirPath = cutDirStream.str();
+                    gSystem->mkdir(cutDirPath.c_str(), true);  // Create cut directory
+
+                    // If there's a pT range, create the pT folder inside the cut-specific directory
+                    std::string outputDirPath = cutDirPath;
+                    if (cuts.pTMin != -1 && cuts.pTMax != -1) {
+                        std::ostringstream ptDirStream;
+                        ptDirStream << cutDirPath << "/pT_" << formatToThreeSigFigs(cuts.pTMin)
+                                    << "_to_" << formatToThreeSigFigs(cuts.pTMax);
+                        outputDirPath = ptDirStream.str();
+                        gSystem->mkdir(outputDirPath.c_str(), true);  // Create pT directory
                     }
-                    // Check if we have a valid cut variation
-                    if (cuts.clusECore >= 0 && cuts.chi >= 0 && cuts.asymmetry >= 0) {
-                        // Folder structure for the cut variation
-                        std::string cutDir = triggerOutputDir + "/E_" + formatToThreeSigFigs(cuts.clusECore) +
-                                             "_Chi" + formatToThreeSigFigs(cuts.chi) +
-                                             "_Asym" + formatToThreeSigFigs(cuts.asymmetry);
-                        gSystem->mkdir(cutDir.c_str(), true);
 
-                        // Check if we have a valid pT range
-                        if (cuts.pTMin >= 0 && cuts.pTMax >= 0) {
-                            // Subdirectory for the pT range under the cut variation folder
-                            std::string pTBinDir = cutDir + "/pT_" + formatToThreeSigFigs(cuts.pTMin) + "to" + formatToThreeSigFigs(cuts.pTMax);
-                            gSystem->mkdir(pTBinDir.c_str(), true);
+                    // Construct the output file path for the histogram PNG
+                    std::string outputFilePath = outputDirPath + "/" + histName + ".png";
 
-                            // Handle isolatedPhotonCount_E histograms with isoEt-specific subfolder
-                            if (histName.find("isolatedPhotonCount_E") == 0 && cuts.isoMin != -1 && cuts.isoMax != -1) {
-                                std::string isoDir = pTBinDir + "/isoEt_" + formatToThreeSigFigs(cuts.isoMin) + "to" + formatToThreeSigFigs(cuts.isoMax);
-                                gSystem->mkdir(isoDir.c_str(), true);
 
-                                // Save the isolated photon histogram in the isoEt subfolder
-                                std::string outputFilePath = isoDir + "/" + histName + ".png";
-                                saveHistogram(objHist, outputFilePath, triggerName, cuts);
+                    // Set axis labels
+                    hist->GetXaxis()->SetTitle("M_{#gamma#gamma} [GeV]");
+                    hist->GetYaxis()->SetTitle("Counts");
 
-                            } else if (histName.find("allPhotonCount_E") == 0 || histName.find("ptPhoton_E") == 0) {
-                                // Handle allPhotonCount_E and ptPhoton_E histograms (no isoEt)
-                                std::string outputFilePath = pTBinDir + "/" + histName + ".png";
-                                saveHistogram(objHist, outputFilePath, triggerName, cuts);
+                    // Create a canvas and draw the histogram
+                    TCanvas canvas;
+                    TF1* totalFit = nullptr;
+                    TF1* gaussPi0Fit = nullptr;
+                    TF1* gaussEtaFit = nullptr;
+                    TF1* polyFit = nullptr;
+                    double fitStart, fitEnd;
 
-                            } else {
-                                // Save other histograms (non-isoEt) in the pT range folder
-                                std::string outputFilePath = pTBinDir + "/" + histName + ".png";
-                                saveHistogram(objHist, outputFilePath, triggerName, cuts);
-                            }
-                        } else {
-                            // Save the cut variation histogram directly if no pT range is provided
-                            std::string outputFilePath = cutDir + "/" + histName + ".png";
-                            saveHistogram(objHist, outputFilePath, triggerName, cuts);
-                        }
+                    // Perform the fit
+                    TFitResultPtr fitResult = PerformFitting(hist, totalFit, gaussPi0Fit, gaussEtaFit, polyFit, fitStart, fitEnd);
+
+                    // Draw the histogram and the fits
+                    hist->Draw();
+                    gaussPi0Fit->Draw("SAME");
+                    gaussEtaFit->Draw("SAME");
+                    polyFit->Draw("SAME");
+                    totalFit->Draw("SAME");
+
+                    // Annotate the results
+                    double meanPi0 = totalFit->GetParameter(1);
+                    double meanPi0error = totalFit->GetParError(1);
+                    double sigmaPi0 = totalFit->GetParameter(2);
+                    double sigmaPi0error = totalFit->GetParError(2);
+                    double meanEta = totalFit->GetParameter(4);
+                    double meanEtaError = totalFit->GetParError(4);
+                    double sigmaEta = totalFit->GetParameter(5);
+                    double sigmaEtaError = totalFit->GetParError(5);
+                    
+                    // Calculate fit resolution with safeguards
+                    double pi0FitResolution = std::numeric_limits<double>::quiet_NaN();
+                    double pi0FitResolutionError = std::numeric_limits<double>::quiet_NaN();
+
+                    // Debugging output for pi0 values
+                    std::cout << "Calculating pi0FitResolution:" << std::endl;
+                    std::cout << "  meanPi0: " << meanPi0 << ", meanPi0Error: " << meanPi0error << std::endl;
+                    std::cout << "  sigmaPi0: " << sigmaPi0 << ", sigmaPi0Error: " << sigmaPi0error << std::endl;
+
+                    if (meanPi0 > 1e-6 && sigmaPi0 > 1e-6) {  // Avoid near-zero values
+                        pi0FitResolution = sigmaPi0 / meanPi0;
+                        pi0FitResolutionError = pi0FitResolution * sqrt(pow(sigmaPi0error / sigmaPi0, 2) + pow(meanPi0error / meanPi0, 2));
+                        std::cout << "  Calculated pi0FitResolution: " << pi0FitResolution << std::endl;
+                        std::cout << "  Calculated pi0FitResolutionError: " << pi0FitResolutionError << std::endl;
                     } else {
-                        std::string outputFilePath = triggerOutputDir + "/" + histName + ".png";
-                        saveHistogram(objHist, outputFilePath, triggerName, cuts);
+                        std::cout << "  Skipping pi0FitResolution calculation due to small or zero values." << std::endl;
                     }
-                } else {
-                    std::cout << "Skipping histogram: " << histName << " (does not match required naming pattern)" << std::endl;
+
+                    // Calculate eta fit resolution with safeguards
+                    double etaFitResolution = std::numeric_limits<double>::quiet_NaN();
+                    double etaFitResolutionError = std::numeric_limits<double>::quiet_NaN();
+
+                    // Debugging output for eta values
+                    std::cout << "Calculating etaFitResolution:" << std::endl;
+                    std::cout << "  meanEta: " << meanEta << ", meanEtaError: " << meanEtaError << std::endl;
+                    std::cout << "  sigmaEta: " << sigmaEta << ", sigmaEtaError: " << sigmaEtaError << std::endl;
+
+                    if (meanEta > 1e-6 && sigmaEta > 1e-6) {  // Avoid near-zero values
+                        etaFitResolution = sigmaEta / meanEta;
+                        etaFitResolutionError = etaFitResolution * sqrt(pow(sigmaEtaError / sigmaEta, 2) + pow(meanEtaError / meanEta, 2));
+                        std::cout << "  Calculated etaFitResolution: " << etaFitResolution << std::endl;
+                        std::cout << "  Calculated etaFitResolutionError: " << etaFitResolutionError << std::endl;
+                    } else {
+                        std::cout << "  Skipping etaFitResolution calculation due to small or zero values." << std::endl;
+                    }
+
+                    double massRatio = meanEta / meanPi0;
+                    
+                    // Calculate the relative errors
+                    double relativeErrorMeanEta = meanEtaError / meanEta;
+                    double relativeErrorMeanPi0 = meanPi0error / meanPi0;
+
+                    // Calculate the relative error of massRatio
+                    double relativeErrorMassRatio = sqrt(
+                        pow(relativeErrorMeanEta, 2) +
+                        pow(relativeErrorMeanPi0, 2)
+                    );
+
+                    // Compute the absolute error of massRatio
+                    double massRatioError = massRatio * relativeErrorMassRatio;
+                    
+                    // Clone histograms for signal and background extraction (for pi0)
+                    TH1F* hSignalPi0 = (TH1F*)hist->Clone("hSignalPi0");
+                    TH1F* hBackgroundPi0 = (TH1F*)hist->Clone("hBackgroundPi0");
+
+                    // Clone histograms for signal and background extraction (for eta)
+                    TH1F* hSignalEta = (TH1F*)hist->Clone("hSignalEta");
+                    TH1F* hBackgroundEta = (TH1F*)hist->Clone("hBackgroundEta");
+
+                    // Define signal and background bins for both pi0 and eta
+                    int firstBinPi0 = hist->FindBin(std::max(meanPi0 - 2 * sigmaPi0, fitStart));
+                    int lastBinPi0 = hist->FindBin(std::min(meanPi0 + 2 * sigmaPi0, fitEnd));
+
+                    int firstBinEta = hist->FindBin(std::max(meanEta - 2 * sigmaEta, fitStart));
+                    int lastBinEta = hist->FindBin(std::min(meanEta + 2 * sigmaEta, fitEnd));
+
+                    // Extract signal and background for pi0
+                    double binCenter, binContent, bgContent, binError;
+                    for (int i = firstBinPi0; i <= lastBinPi0; ++i) {
+                        binCenter = hist->GetBinCenter(i);
+                        binContent = hist->GetBinContent(i);
+                        binError = hist->GetBinError(i);
+                        bgContent = totalFit->Eval(binCenter) - gaussPi0Fit->Eval(binCenter); // background model for pi0
+
+                        bgContent = std::max(bgContent, 0.0);  // Ensure background is non-negative
+                        hSignalPi0->SetBinContent(i, binContent - bgContent);
+                        hBackgroundPi0->SetBinContent(i, bgContent);
+                        hSignalPi0->SetBinError(i, binError);  // Error for signal
+                        hBackgroundPi0->SetBinError(i, sqrt(bgContent));  // Error for background (Poisson statistics)
+                    }
+
+                    // Extract signal and background for eta
+                    for (int i = firstBinEta; i <= lastBinEta; ++i) {
+                        binCenter = hist->GetBinCenter(i);
+                        binContent = hist->GetBinContent(i);
+                        binError = hist->GetBinError(i);
+                        bgContent = totalFit->Eval(binCenter) - gaussEtaFit->Eval(binCenter); // background model for eta
+
+                        bgContent = std::max(bgContent, 0.0);  // Ensure background is non-negative
+                        hSignalEta->SetBinContent(i, binContent - bgContent);
+                        hBackgroundEta->SetBinContent(i, bgContent);
+                        hSignalEta->SetBinError(i, binError);  // Error for signal
+                        hBackgroundEta->SetBinError(i, sqrt(bgContent));  // Error for background (Poisson statistics)
+                    }
+                    std::ostringstream ptRangeLabel;
+                    if (cuts.pTMin != -1 && cuts.pTMax != -1) {
+                        ptRangeLabel << "pT: " << formatToThreeSigFigs(cuts.pTMin) << " - " << formatToThreeSigFigs(cuts.pTMax) << " GeV";
+                    }
+                    // Calculate signal and background yields and their errors (for pi0)
+                    double signalPi0Yield, signalPi0Error, backgroundPi0Yield, backgroundPi0Error;
+                    signalPi0Yield = hSignalPi0->IntegralAndError(firstBinPi0, lastBinPi0, signalPi0Error, "");
+                    backgroundPi0Yield = hBackgroundPi0->IntegralAndError(firstBinPi0, lastBinPi0, backgroundPi0Error, "");
+
+                    // Calculate signal and background yields and their errors (for eta)
+                    double signalEtaYield, signalEtaError, backgroundEtaYield, backgroundEtaError;
+                    signalEtaYield = hSignalEta->IntegralAndError(firstBinEta, lastBinEta, signalEtaError, "");
+                    backgroundEtaYield = hBackgroundEta->IntegralAndError(firstBinEta, lastBinEta, backgroundEtaError, "");
+
+                    // Calculate signal-to-background ratio for pi0
+                    double signalToBackgroundPi0Ratio = backgroundPi0Yield > 0 ? signalPi0Yield / backgroundPi0Yield : 0;
+                    double signalToBackgroundPi0Error = signalToBackgroundPi0Ratio > 0 ? signalToBackgroundPi0Ratio * sqrt(pow(signalPi0Error / signalPi0Yield, 2) + pow(backgroundPi0Error / backgroundPi0Yield, 2)) : 0;
+
+                    // Calculate signal-to-background ratio for eta
+                    double signalToBackgroundEtaRatio = backgroundEtaYield > 0 ? signalEtaYield / backgroundEtaYield : 0;
+                    double signalToBackgroundEtaError = signalToBackgroundEtaRatio > 0 ? signalToBackgroundEtaRatio * sqrt(pow(signalEtaError / signalEtaYield, 2) + pow(backgroundEtaError / backgroundEtaYield, 2)) : 0;
+
+                    // Get the corresponding trigger name using the helper function
+                    std::string triggerNameLabel = getTriggerName(cuts.triggerIndex);
+                    
+                    // Store the data in the HistogramData structure
+                    HistogramData data;
+                    data.cuts = cuts;
+                    data.histName = histName;
+                    data.meanPi0 = meanPi0;
+                    data.meanPi0Error = meanPi0error;
+                    data.sigmaPi0 = sigmaPi0;
+                    data.sigmaPi0Error = sigmaPi0error;
+                    data.meanEta = meanEta;
+                    data.meanEtaError = meanEtaError;
+                    data.sigmaEta = sigmaEta;
+                    data.sigmaEtaError = sigmaEtaError;
+                    data.massRatio = massRatio;
+                    data.massRatioError = massRatioError;
+                    data.signalPi0Yield = signalPi0Yield;
+                    data.signalPi0Error = signalPi0Error;
+                    data.backgroundPi0Yield = backgroundPi0Yield;
+                    data.backgroundPi0Error = backgroundPi0Error;
+                    data.signalToBackgroundPi0Ratio = signalToBackgroundPi0Ratio;
+                    data.signalToBackgroundPi0Error = signalToBackgroundPi0Error;
+                    data.signalEtaYield = signalEtaYield;
+                    data.signalEtaError = signalEtaError;
+                    data.backgroundEtaYield = backgroundEtaYield;
+                    data.backgroundEtaError = backgroundEtaError;
+                    data.signalToBackgroundEtaRatio = signalToBackgroundEtaRatio;
+                    data.signalToBackgroundEtaError = signalToBackgroundEtaError;
+                    data.pi0FitResolution = pi0FitResolution;
+                    data.pi0FitResolutionError = pi0FitResolutionError;
+                    data.etaFitResolution = etaFitResolution;
+                    data.etaFitResolutionError = etaFitResolutionError;
+
+                    // Add the data to the vector
+                    histogramDataVector.push_back(data);
+                    
+                    // Create two TLatex objects for the formatted output
+                    TLatex labelText, valueText;
+                    labelText.SetNDC();
+                    labelText.SetTextSize(0.03);
+                    labelText.SetTextColor(kRed);       // Set text color to red
+                    labelText.SetTextFont(62);          // Bold font for labels
+
+                    valueText.SetNDC();
+                    valueText.SetTextSize(0.03);
+                    valueText.SetTextColor(kBlack);     // Default color for values
+                    valueText.SetTextFont(42);          // Normal font for values
+
+                    // Format in three columns: Trigger, pi0, and eta
+
+                    // First column: Trigger information
+                    labelText.DrawLatex(0.5, 0.90, "Trigger:");
+                    valueText.DrawLatex(0.62, 0.90, triggerNameLabel.c_str());
+
+                    labelText.DrawLatex(0.5, 0.85, "clusECore:");
+                    valueText.DrawLatex(0.62, 0.85, formatToThreeSigFigs(cuts.clusECore).c_str());
+
+                    labelText.DrawLatex(0.5, 0.80, "Chi2:");
+                    valueText.DrawLatex(0.62, 0.80, formatToThreeSigFigs(cuts.chi).c_str());
+
+                    labelText.DrawLatex(0.5, 0.75, "Asymmetry:");
+                    valueText.DrawLatex(0.62, 0.75, formatToThreeSigFigs(cuts.asymmetry).c_str());
+
+                    // If pT range is available, add it to the legend
+                    if (!ptRangeLabel.str().empty()) {
+                        labelText.DrawLatex(0.5, 0.70, "pT Range:");
+                        valueText.DrawLatex(0.62, 0.70, ptRangeLabel.str().c_str());
+                    }
+
+                    // Second column: Pi0 information
+                    labelText.DrawLatex(0.6, 0.55, "#pi^{0}:");
+                    labelText.DrawLatex(0.8, 0.55, "#eta:");
+
+                    labelText.DrawLatex(0.50, 0.5, "Mass:");
+                    valueText.DrawLatex(0.60, 0.5, formatToThreeSigFigs(meanPi0).c_str());
+                    valueText.DrawLatex(0.80, 0.5, formatToThreeSigFigs(meanEta).c_str());
+
+                    labelText.DrawLatex(0.50, 0.45, "Sigma:");
+                    valueText.DrawLatex(0.60, 0.45, formatToThreeSigFigs(sigmaPi0).c_str());
+                    valueText.DrawLatex(0.80, 0.45, formatToThreeSigFigs(sigmaEta).c_str());
+
+                    labelText.DrawLatex(0.50, 0.4, "S/B Ratio:");
+                    valueText.DrawLatex(0.60, 0.4, formatToThreeSigFigs(signalToBackgroundPi0Ratio).c_str());
+                    valueText.DrawLatex(0.80, 0.4, formatToThreeSigFigs(signalToBackgroundEtaRatio).c_str());
+
+                    // Third row: Mass ratio
+                    labelText.DrawLatex(0.5, 0.35, "Mass Ratio (#eta/#pi^{0}):");
+                    valueText.DrawLatex(0.68, 0.35, formatToThreeSigFigs(massRatio).c_str());
+
+                    // Save the canvas as a PNG file
+                    canvas.SaveAs(outputFilePath.c_str());
+                    std::cout << "Saved: " << outputFilePath << std::endl;
+
+                    // Clean up
+                    delete totalFit;
+                    delete hSignalPi0;
+                    delete hBackgroundPi0;
+                    delete hSignalEta;
+                    delete hBackgroundEta;
                 }
-                delete objHist;  // Clean up after processing
+                delete objHist;
             }
-        } else {
-            std::cout << "Skipping non-directory object: " << objTriggerDir->GetName() << std::endl;
         }
-
         delete objTriggerDir;
-    }
-}
-void outputHistogramLogs(const std::string& outputFilePath) {
-    std::cout << "\n================= Isolated Photon Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | isoMin | isoMax | IsolatedEntries | MassWindowLabel\n";
-    std::cout << "----------------------------------------------------------------------------------------------\n";
-    for (const auto& entry : isolatedPhotonMap) {
-        auto key = entry.first;
-        const IsolatedPhotonLog& log = entry.second;
-        std::cout << std::get<0>(key) << " | "
-                  << std::get<1>(key) << " | "
-                  << std::get<2>(key) << " | "
-                  << std::get<3>(key) << " | "
-                  << std::get<4>(key) << " | "
-                  << std::get<5>(key) << " | "
-                  << std::get<6>(key) << " | "
-                  << std::get<7>(key) << " | "
-                  << log.isolatedEntries << " | "
-                  << log.massWindowLabel << "\n";
-    }
-
-    std::cout << "\n================= Total Photon Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | TotalEntries | MassWindowLabel\n";
-    std::cout << "------------------------------------------------------------------------------------\n";
-    for (const auto& entry : totalPhotonMap) {
-        auto key = entry.first;
-        const TotalPhotonLog& log = entry.second;
-        std::cout << std::get<0>(key) << " | "
-                  << std::get<1>(key) << " | "
-                  << std::get<2>(key) << " | "
-                  << std::get<3>(key) << " | "
-                  << std::get<4>(key) << " | "
-                  << std::get<5>(key) << " | "
-                  << log.totalEntries << " | "
-                  << log.massWindowLabel << "\n";
-    }
-
-    std::cout << "\n================= Weighted pT Map =================\n";
-    std::cout << "TriggerIndex | clusECore | Chi | Asymmetry | pTMin | pTMax | WeightedAveragePt | MassWindowLabel\n";
-    std::cout << "------------------------------------------------------------------------------------\n";
-    for (const auto& entry : pTweightingMap) {
-        auto key = entry.first;
-        const PtWeightingLog& log = entry.second;
-        std::cout << std::get<0>(key) << " | "
-                  << std::get<1>(key) << " | "
-                  << std::get<2>(key) << " | "
-                  << std::get<3>(key) << " | "
-                  << std::get<4>(key) << " | "
-                  << std::get<5>(key) << " | "
-                  << log.weightedAveragePt << " | "
-                  << log.massWindowLabel << "\n";
-    }
-
-    std::ofstream outFile(outputFilePath);
-
-    if (!outFile.is_open()) {
-        std::cerr << "Error: Could not open the file " << outputFilePath << " for writing.\n";
-        return;
-    }
-
-    // Write CSV header
-    outFile << "Trigger,ECore,Chi,Asymmetry,pT Min,pT Max,isoMin,isoMax,Isolated Counts,Total Counts,Isolated/Total,Statistical Error,Weighted pT,MassWindowLabel\n";
-
-    // Iterate through isolatedPhotonMap and correlate with totalPhotonMap and pTweightingMap
-    for (const auto& isoEntry : isolatedPhotonMap) {
-        auto isoKey = isoEntry.first;
-        const IsolatedPhotonLog& isoLog = isoEntry.second;
-
-        // Extract the common key for totalPhotonMap and pTweightingMap (including massWindowLabel)
-        auto commonKey = std::make_tuple(
-            std::get<0>(isoKey),  // triggerIndex
-            std::get<1>(isoKey),  // clusECore
-            std::get<2>(isoKey),  // chi
-            std::get<3>(isoKey),  // asymmetry
-            std::get<4>(isoKey),  // pTMin
-            std::get<5>(isoKey),  // pTMax
-            isoLog.massWindowLabel // massWindowLabel
-        );
-
-        // Find corresponding entries in totalPhotonMap and pTweightingMap
-        auto totalEntry = totalPhotonMap.find(commonKey);
-        auto pTweightingEntry = pTweightingMap.find(commonKey);
-
-        // Ensure corresponding entries exist in both maps
-        if (totalEntry != totalPhotonMap.end() && pTweightingEntry != pTweightingMap.end()) {
-            const TotalPhotonLog& totalLog = totalEntry->second;
-            const PtWeightingLog& pTLog = pTweightingEntry->second;
-
-            // Calculate the ratio (isolated / total)
-            double ratio = (totalLog.totalEntries > 0) ? static_cast<double>(isoLog.isolatedEntries) / totalLog.totalEntries : 0.0;
-
-            // Calculate the statistical error
-            double error = 0.0;
-            if (totalLog.totalEntries > 0 && isoLog.isolatedEntries > 0) {
-                double isolatedError = std::sqrt(isoLog.isolatedEntries);
-                double totalError = std::sqrt(totalLog.totalEntries);
-                error = ratio * std::sqrt(
-                    (isolatedError / isoLog.isolatedEntries) * (isolatedError / isoLog.isolatedEntries) +
-                    (totalError / totalLog.totalEntries) * (totalError / totalLog.totalEntries)
-                );
-            }
-
-            // Write CSV row
-            outFile << isoLog.triggerIndex << ","
-                    << isoLog.clusECore << ","
-                    << isoLog.chi << ","
-                    << isoLog.asymmetry << ","
-                    << isoLog.pTMin << ","
-                    << isoLog.pTMax << ","
-                    << isoLog.isoMin << ","
-                    << isoLog.isoMax << ","
-                    << isoLog.isolatedEntries << ","
-                    << totalLog.totalEntries << ","
-                    << ratio << ","
-                    << error << ","
-                    << pTLog.weightedAveragePt << ","
-                    << isoLog.massWindowLabel << "\n";
-        }
-    }
-
-    outFile.close();
-    std::cout << "CSV file successfully written to " << outputFilePath << "\n";
-}
-
-
-
-void isolationEnergies(const std::string& inputFilePath, const std::string& outputDir) {
-    // Open the input file
-    TFile* inputFile = TFile::Open(inputFilePath.c_str(), "READ");
-    if (!inputFile || inputFile->IsZombie()) {
-        std::cerr << "Error: Could not open the file " << inputFilePath << std::endl;
-        return;
-    }
-
-    // Get both 'QA' and 'PhotonAnalysis' directories
-    TDirectory* qaDir = (TDirectory*)inputFile->Get("QA");
-    TDirectory* photonDir = (TDirectory*)inputFile->Get("PhotonAnalysis");
-
-    if (!qaDir && !photonDir) {
-        std::cerr << "Error: Neither 'QA' nor 'PhotonAnalysis' directories found in file " << inputFilePath << std::endl;
-        inputFile->Close();
-        return;
-    }
-
-    // Create the base output directory 'IsolationEnergies'
-    std::string isolationEnergiesDir = outputDir + "/IsolationEnergies";
-    gSystem->mkdir(isolationEnergiesDir.c_str(), true);
-
-    // Process both directories if they exist
-    if (qaDir) {
-        processDirectory(qaDir, isolationEnergiesDir);
-    }
-    if (photonDir) {
-        processDirectory(photonDir, isolationEnergiesDir);
     }
 
     inputFile->Close();
     delete inputFile;
+    
+    return histogramDataVector; // Return the collected data
 }
-// Function to format floating point values to three significant figures
-std::string reFormatToSave(float value) {
-    std::ostringstream oss;
-    oss.precision(3);
-    oss << std::fixed << value;
-    return oss.str();
-}
-// Function to read CSV data into separate maps for inMassWindow and outsideMassWindow
-void readDataFromCSV(const std::string& filename,
-                     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_inMassWindow,
-                     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_outsideMassWindow) {
 
-    std::ifstream file(filename);
-    std::string line;
-    if (!file.is_open()) {
-        std::cerr << "Error opening file: " << filename << std::endl;
+void printHistogramData(const std::vector<HistogramData>& histogramDataVector) {
+    // Open a CSV file for writing to the specified path
+    std::ofstream csvFile("/Users/patsfan753/Desktop/InvariantMassInformation_runnumber46623_runnumber47230.csv");
+    
+    // Check if the file opened successfully
+    if (!csvFile.is_open()) {
+        std::cerr << "Error: Could not open the file for writing at /Users/patsfan753/Desktop/InvariantMassInformation_runnumber46623_runnumber47230.csv" << std::endl;
         return;
     }
 
-    // Skip the header line
-    std::getline(file, line);
-    std::cout << "Skipping header: " << line << std::endl;
-
-    // Read CSV data
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string token, massWindowLabel;
-        int trigger;
-        float eCore, chi, asym, ptMin, ptMax, isoMin, isoMax, ratio = 0, error = 0, weightedPt;
-
-        // Parse values from CSV
-        std::getline(ss, token, ',');
-        trigger = std::stoi(token);
-
-        std::getline(ss, token, ',');
-        eCore = std::stof(token);
-
-        std::getline(ss, token, ',');
-        chi = std::stof(token);
-
-        std::getline(ss, token, ',');
-        asym = std::stof(token);
-
-        std::getline(ss, token, ',');
-        ptMin = std::stof(token);
-
-        std::getline(ss, token, ',');
-        ptMax = std::stof(token);
-
-        std::getline(ss, token, ',');
-        isoMin = std::stof(token);
-
-        std::getline(ss, token, ',');
-        isoMax = std::stof(token);
-
-        // Skip the "Isolated Counts" and "Total Counts" columns
-        std::getline(ss, token, ',');
-        std::getline(ss, token, ',');
-
-        // Parse the ratio (Isolated/Total)
-        std::getline(ss, token, ',');
-        ratio = std::stof(token);
-
-        // Parse the statistical error
-        std::getline(ss, token, ',');
-        error = std::stof(token);
-
-        // Parse the weighted pT value
-        std::getline(ss, token, ',');
-        weightedPt = std::stof(token);
-
-        // Parse the MassWindowLabel
-        std::getline(ss, massWindowLabel, ',');
-
-        // Key for grouping: Trigger + Cut combination (ECore, Chi, Asymmetry)
-        std::string key = "Trigger" + std::to_string(trigger) + "_E_" + reFormatToSave(eCore) + "_Chi" + reFormatToSave(chi) +
-                          "_Asym" + reFormatToSave(asym);
-
-        // Add data to the appropriate map based on MassWindowLabel
-        if (massWindowLabel == "inMassWindow") {
-            dataMap_inMassWindow[key].emplace_back(ptMin, ptMax, isoMin, isoMax, ratio, error, weightedPt);
-        } else if (massWindowLabel == "outsideMassWindow") {
-            dataMap_outsideMassWindow[key].emplace_back(ptMin, ptMax, isoMin, isoMax, ratio, error, weightedPt);
-        }
-    }
-    file.close();
-}
-
-
-// Function to plot Ratio vs pT with fixed isoEt ranges, with an option to exclude certain ranges
-void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap,
-                   const std::string& outputDir, const std::string& label,
-                   const std::vector<std::pair<float, float>>& exclusionRanges = {},
-                   bool drawRefA = false, bool drawRefB = false) {
-    // Define isoEt ranges and assign colors
-    std::vector<std::pair<float, float>> isoEtRanges = {
-        {-5, 0},
-        {0, 2},
-        {2, 5},
-        {5, 10},
-        {-10, 0},
-        {0, 10}
-    };
-
-//    std::vector<std::pair<float, float>> isoEtRanges = {
-//        {-5, 0},
-//        {0, 5},
-//        {-2, 0},
-//        {0, 2},
-//        {-2, -5},
-//        {2, 5},
-//        {-5, -10},
-//        {5, 10},
-//        {-10, 0},
-//        {0, 10}
-//    };
+    // Write the CSV headers with separate columns for Ecore, Chi2, and Asym
+    csvFile << "Trigger Index,Ecore,Chi2,Asym,pTMin,pTMax,meanPi0,sigmaPi0,meanEta,sigmaEta\n";
     
-    
-    std::vector<int> colors = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
+    // Organize the data by trigger index, then cut combinations, then pT bins
+    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
 
-    const std::string plotTitle = "Ratio of Isolated Photons from Meson Decays to All Clusters from Meson Decays Compared to PHENIX Data";
-
-    // Create a single dummy legend
-    TLegend* dummyLegend = new TLegend(0.18, 0.84, 0.38, 0.89); // Enlarged legend size
-    dummyLegend->SetBorderSize(0);  // Remove legend border
-    dummyLegend->SetTextSize(0.03); // Set text size for the legend
-     
-    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-        std::pair<float, float> currentRange = isoEtRanges[i];
-        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
-            continue;
-        }
-
-        // Format values to two decimal places
-        std::ostringstream formattedRange;
-        formattedRange << "#font[62]{sPHENIX, Isolation Criteria:}"
-                       << std::fixed << std::setprecision(2)
-                       << isoEtRanges[i].first << " #leq E_{T, iso} < " << isoEtRanges[i].second << " GeV, #Delta R_{cone} < 0.3";
-
-
-        std::string legendEntry = formattedRange.str();
-        TGraph* dummyGraph = new TGraph();
-        dummyGraph->SetMarkerStyle(20);
-        dummyGraph->SetMarkerColor(colors[i]);
-        dummyLegend->AddEntry(dummyGraph, legendEntry.c_str(), "p");
+    // First, organize the data
+    for (const auto& data : histogramDataVector) {
+        int triggerIndex = data.cuts.triggerIndex;
+        std::ostringstream cutCombinationStream;
+        cutCombinationStream << "E" << data.cuts.clusECore
+                             << "_Chi" << data.cuts.chi
+                             << "_Asym" << data.cuts.asymmetry;
+        std::string cutCombination = cutCombinationStream.str();
+        
+        dataMap[triggerIndex][cutCombination].push_back(data);
     }
 
-    
-    std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
-    std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
-    std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
-
-    // Define second reference data (from the second table - Reference Two)
-    std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
-    std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
-    std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
-
-    TLegend* refLegend = new TLegend(0.18, 0.77, 0.38, 0.81);  // Adjust position for reference points
-    refLegend->SetBorderSize(0);  // Remove legend border
-    refLegend->SetTextSize(0.03); // Set text size for the legend
-
-    // Add dummy markers and labels for reference data
-    if (drawRefA) {
-        TGraph* refGraphOneDummy = new TGraph();  // Dummy graph for Reference 1
-        refGraphOneDummy->SetMarkerStyle(22);
-        refGraphOneDummy->SetMarkerColor(kBlack);
-        refLegend->AddEntry(refGraphOneDummy, "2003 pp Dataset, PHENIX Measurement", "p");
-    }
-
-    if (drawRefB) {
-        TGraph* refGraphTwoDummy = new TGraph();  // Dummy graph for Reference 2
-        refGraphTwoDummy->SetMarkerStyle(20);
-        refGraphTwoDummy->SetMarkerColor(kBlue);
-        refLegend->AddEntry(refGraphTwoDummy, "#font[62]{PHENIX (2003 pp RHIC Run):} Ratio = #frac{Isolated Photons from #pi^{0} Decays}{All Photons from #pi^{0} Decays}", "p");
-    }
-
-    // Iterate over the map and create a plot for each unique combination
-    for (const auto& entry : dataMap) {
-        const std::string& cutKey = entry.first;
-        const auto& points = entry.second;
-
-        std::cout << "Creating plot for cut combination: " << cutKey << std::endl;
-
-        // Extract trigger and cut information from cutKey
-        size_t pos = cutKey.find("_E_");
-        std::string triggerStr = cutKey.substr(0, pos);
-        int triggerIndex = std::stoi(triggerStr.substr(triggerStr.find("Trigger") + 7));
-        std::string cutFolder = cutKey.substr(pos + 1);
-
-        // Format trigger name and cut values
+    // Print the organized data to console and write it to CSV
+    for (const auto& triggerPair : dataMap) {
+        int triggerIndex = triggerPair.first;
         std::string triggerName = getTriggerName(triggerIndex);
-        std::string eCore = cutFolder.substr(cutFolder.find("E_") + 2, 5);
-        std::string chi = cutFolder.substr(cutFolder.find("Chi") + 3, 5);
-        std::string asymmetry = cutFolder.substr(cutFolder.find("Asym") + 4, 5);
+        std::cout << "Trigger Index: " << triggerIndex << " (" << triggerName << ")\n";
         
-        
-        std::string savePath = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/IsolationEnergies/" + triggerStr + "/" + cutFolder + "_" + label;
+        for (const auto& cutPair : triggerPair.second) {
+            // Decompose the cut combination
+            float Ecore = cutPair.second[0].cuts.clusECore;
+            float Chi2 = cutPair.second[0].cuts.chi;
+            float Asym = cutPair.second[0].cuts.asymmetry;
 
-        std::cout << "Saving to folder: " << savePath << std::endl;
+            std::cout << "  Cut Combination: E" << Ecore << "_Chi" << Chi2 << "_Asym" << Asym << "\n";
+            
+            // Print table header to console
+            std::cout << "    pTMin - pTMax | meanPi0 ± error | sigmaPi0 ± error | meanEta ± error | sigmaEta ± error\n";
+            std::cout << "    ----------------------------------------------------------------------------------------------------------\n";
+            
+            for (const auto& data : cutPair.second) {
+                std::string pTBin = (data.cuts.pTMin == -1) ? "No pT bin" : formatToThreeSigFigs(data.cuts.pTMin) + " - " + formatToThreeSigFigs(data.cuts.pTMax);
+                
+                // Print to console
+                std::cout << "    " << std::setw(14) << pTBin << " | "
+                          << formatToThreeSigFigs(data.meanPi0) << " ± " << formatToThreeSigFigs(data.meanPi0Error) << " | "
+                          << formatToThreeSigFigs(data.sigmaPi0) << " ± " << formatToThreeSigFigs(data.sigmaPi0Error) << " | "
+                          << formatToThreeSigFigs(data.meanEta) << " ± " << formatToThreeSigFigs(data.meanEtaError) << " | "
+                          << formatToThreeSigFigs(data.sigmaEta) << " ± " << formatToThreeSigFigs(data.sigmaEtaError) << "\n";
 
-        // Create the canvas and graphs
-        TCanvas* canvas = new TCanvas(("canvas_" + label).c_str(), ("Ratio vs pT " + label).c_str(), 800, 600);
-        TMultiGraph* multiGraph = new TMultiGraph();
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextSize(0.04);
- 
-        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-            // Create a new TGraphErrors for each isoEt range
-            TGraphErrors* graphWithError = new TGraphErrors();
-            int color = colors[i];
-            std::pair<float, float> currentRange = isoEtRanges[i];
-
-            // Add points to the graph for the current isoEt range
-            for (const auto& point : points) {
-                float ptMin = std::get<0>(point);
-                float ptMax = std::get<1>(point);
-                float isoMin = std::get<2>(point);
-                float isoMax = std::get<3>(point);
-                float ratio = std::get<4>(point);
-                float error = std::get<5>(point);
-                float weightedPt = std::get<6>(point);
-
-                // Check if the current isoEt range is in the exclusion list
-                std::pair<float, float> isoRange = {isoMin, isoMax};
-                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoRange) != exclusionRanges.end()) {
-                    std::cout << "Excluding isoEt range: isoMin = " << isoMin << ", isoMax = " << isoMax << std::endl;
-                    continue;  // Skip the points belonging to the excluded ranges
-                }
-
-                // Only add points that belong to the current isoEt range
-                if (isoMin == currentRange.first && isoMax == currentRange.second) {
-                    int index = graphWithError->GetN();
-                    graphWithError->SetPoint(index, weightedPt, ratio);
-                    graphWithError->SetPointError(index, 0, error);
-                    graphWithError->SetMarkerStyle(20);
-                    graphWithError->SetMarkerColor(color); // Set the correct color for this range
-                    graphWithError->SetLineColor(color);
-                }
+                // Write to CSV file
+                csvFile << triggerIndex << ","
+                        << Ecore << ","
+                        << Chi2 << ","
+                        << Asym << ","
+                        << data.cuts.pTMin << ","
+                        << data.cuts.pTMax << ","
+                        << data.meanPi0 << ","
+                        << data.sigmaPi0 << ","
+                        << data.meanEta << ","
+                        << data.sigmaEta << "\n";
             }
-
-            // Add the graph for the current isoEt range to the multiGraph
-            multiGraph->Add(graphWithError);
+            std::cout << "\n"; // Empty line between cut combinations
         }
-
-        //multiGraph->SetTitle(plotTitle.c_str());
-        multiGraph->GetXaxis()->SetRangeUser(0, 15);  // X-axis range
-        multiGraph->GetXaxis()->SetTitleSize(0.045);
-        multiGraph->GetXaxis()->SetTitle("Weighted Average p_{T} of all Photons from #pi^{0}/#eta Decay");
-        multiGraph->GetYaxis()->SetRangeUser(0, 1.5);  // Y-axis range
-        multiGraph->GetYaxis()->SetTitleSize(0.045);
-        multiGraph->GetYaxis()->SetTitle("#frac{Isolated Photons from #pi^{0}/#eta Decay}{All Photons from #pi^{0}/#eta Decay}");
-        multiGraph->Draw("AP");
-        
-        // Draw a dashed line at y = 1
-        TLine* line = new TLine(2, 1, 15, 1);
-        line->SetLineStyle(2); // Dashed line
-        line->Draw();
-        
-        if (drawRefA) {
-            // Create reference TGraphErrors for the first set of reference points
-            TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
-            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
-                refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
-                refGraphOne->SetPointError(i, 0, referenceStatError[i]);
-            }
-            refGraphOne->SetMarkerStyle(22);
-            refGraphOne->SetMarkerColor(kBlack);
-            refGraphOne->SetLineColor(kBlack);
-            refGraphOne->Draw("P SAME");
-        }
-
-        if (drawRefB) {
-            // Create reference TGraphErrors for the second set of reference points
-            TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
-            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
-                refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
-                refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
-            }
-            refGraphTwo->SetMarkerStyle(20);
-            refGraphTwo->SetMarkerColor(kBlue);
-            refGraphTwo->SetLineColor(kBlue);
-            refGraphTwo->Draw("P SAME");
-        }
-
-        // Draw reference legend if either refA or refB is drawn
-        if (drawRefA || drawRefB) {
-            refLegend->Draw();
-        }
-
-        // Add trigger and cut information on the top right of the plot
-        TLatex labelText;
-        labelText.SetNDC();
-        labelText.SetTextSize(0.03);
-
-        TLatex valueText;
-        valueText.SetNDC();
-        valueText.SetTextSize(0.03);
-
-        labelText.DrawLatex(0.21, 0.65, "#font[62]{Trigger:}");
-        valueText.DrawLatex(0.31, 0.65, triggerName.c_str());
-
-        labelText.DrawLatex(0.21, 0.6, "#font[62]{ECore #geq}");
-        std::string eCoreWithUnit = eCore + " GeV";
-        valueText.DrawLatex(0.31, 0.6, eCoreWithUnit.c_str());
-
-        labelText.DrawLatex(0.21, 0.55, "#font[62]{#chi^{2} <}");
-        valueText.DrawLatex(0.26, 0.55, chi.c_str());
-
-        labelText.DrawLatex(0.21, 0.5, "#font[62]{Asymmetry <}");
-        valueText.DrawLatex(0.34, 0.5, asymmetry.c_str());
-        
-        // Add the dummy legend and latex for labels
-        dummyLegend->Draw();  // Paste the fixed dummy legend
-
-        // Save the plot to the appropriate directory
-        gSystem->mkdir(savePath.c_str(), true);
-        canvas->SaveAs((savePath + "/RatioVsPt_" + label + ".png").c_str());
-
-        // Cleanup
-        delete multiGraph;
-        delete canvas;
+        std::cout << "\n"; // Empty line between triggers
     }
 
-    // Cleanup the dummy legend
-    delete dummyLegend;
+    // Close the CSV file
+    csvFile.close();
 }
 
-// Function to overlay Ratio vs pT plots for both inMassWindow and outsideMassWindow with exclusion range
-void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_inMassWindow,
-                                 const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_outsideMassWindow,
-                                 const std::string& outputDir,
-                                 const std::vector<std::pair<float, float>>& exclusionRanges = {},
-                                 bool drawRefA = false, bool drawRefB = false) {
-    // Define isoEt ranges and assign colors
-    std::vector<std::pair<float, float>> isoEtRanges = {
-        {-5, 0},
-        {0, 2},
-        {2, 5},
-        {5, 10},
-        {-10, 0},
-        {0, 10}
-    };
+std::tuple<double, double, double> processDataForTrigger(
+    const HistogramData& data,
+    std::map<int, std::map<std::string, std::vector<HistogramData>>>& dataMap,
+    std::map<int, std::vector<std::string>>& cutVariations,
+    std::map<int, std::vector<double>>& meanPi0sPerTrigger,
+    std::map<int, std::vector<double>>& meanPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& sigmaPi0sPerTrigger,
+    std::map<int, std::vector<double>>& sigmaPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundPi0RatiosPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& meanEtasPerTrigger,
+    std::map<int, std::vector<double>>& meanEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& sigmaEtasPerTrigger,
+    std::map<int, std::vector<double>>& sigmaEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundEtaRatiosPerTrigger,
+    std::map<int, std::vector<double>>& signalToBackgroundEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalPi0YieldsPerTrigger,
+    std::map<int, std::vector<double>>& signalPi0ErrorsPerTrigger,
+    std::map<int, std::vector<double>>& signalEtaYieldsPerTrigger,
+    std::map<int, std::vector<double>>& signalEtaErrorsPerTrigger,
+    std::map<int, std::vector<double>>& pi0FitResolutionsPerTrigger,
+    std::map<int, std::vector<double>>& pi0FitResolutionErrorsPerTrigger,
+    std::map<int, std::vector<double>>& etaFitResolutionsPerTrigger,
+    std::map<int, std::vector<double>>& etaFitResolutionErrorsPerTrigger) {
 
-    // Colors for inMassWindow and outsideMassWindow datasets
-    std::vector<int> colors_inMassWindow = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
-    std::vector<int> colors_outsideMassWindow = {kRed - 3, kGreen - 6, kBlue - 7, kMagenta - 6, kRed - 2, kOrange - 5};
+    int triggerIndex = data.cuts.triggerIndex;
+    double clusECore = data.cuts.clusECore;
+    double chi = data.cuts.chi;
+    double asymmetry = data.cuts.asymmetry;
 
-    // Create a single legend for isoEt ranges, adding labels for inMassWindow and outsideMassWindow
-    TLegend* legend = new TLegend(0.16, 0.72, 0.45, 0.88);
-    legend->SetBorderSize(0);
-    legend->SetTextSize(0.03);
+    std::ostringstream cutCombinationStream;
+    cutCombinationStream << "E" << formatToThreeSigFigs(clusECore)
+                         << "_Chi" << formatToThreeSigFigs(chi)
+                         << "_Asym" << formatToThreeSigFigs(asymmetry);
+    std::string cutCombination = cutCombinationStream.str();
 
-    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-        std::pair<float, float> currentRange = isoEtRanges[i];
+    dataMap[triggerIndex][cutCombination].push_back(data);
 
-        // Skip adding the legend entry if the range is excluded
-        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
-            continue;
+    if (data.cuts.pTMin == -1) {
+        if (std::find(cutVariations[triggerIndex].begin(), cutVariations[triggerIndex].end(), cutCombination) == cutVariations[triggerIndex].end()) {
+            cutVariations[triggerIndex].push_back(cutCombination);
+
+            // Initialize with NaN or default values
+            meanPi0sPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            meanPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            sigmaPi0sPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            sigmaPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            signalToBackgroundPi0RatiosPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalToBackgroundPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+
+            meanEtasPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            meanEtaErrorsPerTrigger[triggerIndex].push_back(0);
+            sigmaEtasPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            sigmaEtaErrorsPerTrigger[triggerIndex].push_back(0);
+            signalToBackgroundEtaRatiosPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalToBackgroundEtaErrorsPerTrigger[triggerIndex].push_back(0);
+
+            signalPi0YieldsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalPi0ErrorsPerTrigger[triggerIndex].push_back(0);
+            signalEtaYieldsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            signalEtaErrorsPerTrigger[triggerIndex].push_back(0);
+
+            // Initialize resolution maps
+            pi0FitResolutionsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            pi0FitResolutionErrorsPerTrigger[triggerIndex].push_back(0);
+            etaFitResolutionsPerTrigger[triggerIndex].push_back(std::numeric_limits<double>::quiet_NaN());
+            etaFitResolutionErrorsPerTrigger[triggerIndex].push_back(0);
         }
 
-        std::string legendEntry_inMassWindow = "Clusters in Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
-        TGraph* dummyGraph_inMassWindow = new TGraph();
-        dummyGraph_inMassWindow->SetMarkerStyle(20);
-        dummyGraph_inMassWindow->SetMarkerColor(colors_inMassWindow[i]);
-        legend->AddEntry(dummyGraph_inMassWindow, legendEntry_inMassWindow.c_str(), "p");
+        size_t index = cutVariations[triggerIndex].size() - 1;
 
-        std::string legendEntry_outsideMassWindow = "Clusters outside Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
-        TGraph* dummyGraph_outsideMassWindow = new TGraph();
-        dummyGraph_outsideMassWindow->SetMarkerStyle(24);
-        dummyGraph_outsideMassWindow->SetMarkerColor(colors_outsideMassWindow[i]);
-        legend->AddEntry(dummyGraph_outsideMassWindow, legendEntry_outsideMassWindow.c_str(), "p");
+        bool invalidPi0Fit = (data.meanPi0Error > 1.0) || (data.meanPi0Error == 0);
+        bool invalidEtaFit = (data.meanEtaError > 1.0) || (data.meanEtaError == 0);
+
+        if (!invalidPi0Fit) {
+            meanPi0sPerTrigger[triggerIndex][index] = data.meanPi0;
+            meanPi0ErrorsPerTrigger[triggerIndex][index] = data.meanPi0Error;
+            sigmaPi0sPerTrigger[triggerIndex][index] = data.sigmaPi0;
+            sigmaPi0ErrorsPerTrigger[triggerIndex][index] = data.sigmaPi0Error;
+            signalToBackgroundPi0RatiosPerTrigger[triggerIndex][index] = data.signalToBackgroundPi0Ratio;
+            signalToBackgroundPi0ErrorsPerTrigger[triggerIndex][index] = data.signalToBackgroundPi0Error;
+            signalPi0YieldsPerTrigger[triggerIndex][index] = data.signalPi0Yield;
+            signalPi0ErrorsPerTrigger[triggerIndex][index] = data.signalPi0Error;
+            pi0FitResolutionsPerTrigger[triggerIndex][index] = data.pi0FitResolution;
+            pi0FitResolutionErrorsPerTrigger[triggerIndex][index] = data.pi0FitResolutionError;
+        }
+
+        if (!invalidEtaFit) {
+            meanEtasPerTrigger[triggerIndex][index] = data.meanEta;
+            meanEtaErrorsPerTrigger[triggerIndex][index] = data.meanEtaError;
+            sigmaEtasPerTrigger[triggerIndex][index] = data.sigmaEta;
+            sigmaEtaErrorsPerTrigger[triggerIndex][index] = data.sigmaEtaError;
+            signalToBackgroundEtaRatiosPerTrigger[triggerIndex][index] = data.signalToBackgroundEtaRatio;
+            signalToBackgroundEtaErrorsPerTrigger[triggerIndex][index] = data.signalToBackgroundEtaError;
+            signalEtaYieldsPerTrigger[triggerIndex][index] = data.signalEtaYield;
+            signalEtaErrorsPerTrigger[triggerIndex][index] = data.signalEtaError;
+            etaFitResolutionsPerTrigger[triggerIndex][index] = data.etaFitResolution;
+            etaFitResolutionErrorsPerTrigger[triggerIndex][index] = data.etaFitResolutionError;
+        }
     }
 
-    // Reference data setup
-    std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
-    std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
-    std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
-
-    std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
-    std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
-    std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
-
-    TLegend* refLegend = new TLegend(0.14, 0.69, 0.45, 0.7);
-    refLegend->SetBorderSize(0);
-    refLegend->SetTextSize(0.027);
-
-    if (drawRefA) {
-        TGraph* refGraphOneDummy = new TGraph();
-        refGraphOneDummy->SetMarkerStyle(22);
-        refGraphOneDummy->SetMarkerColor(kBlack);
-        refLegend->AddEntry(refGraphOneDummy, "2003 pp Dataset, PHENIX Measurement", "p");
-    }
-
-    if (drawRefB) {
-        TGraph* refGraphTwoDummy = new TGraph();
-        refGraphTwoDummy->SetMarkerStyle(21);
-        refGraphTwoDummy->SetMarkerColor(kGray + 2);
-        refLegend->AddEntry(refGraphTwoDummy, "2003 pp Dataset, PHENIX Measurement", "p");
-    }
-
-    for (const auto& entry : dataMap_inMassWindow) {
-        const std::string& cutKey = entry.first;
-        const auto& points_inMassWindow = entry.second;
-
-        // Check if the corresponding key exists in the outsideMassWindow data
-        auto outsideIter = dataMap_outsideMassWindow.find(cutKey);
-        if (outsideIter == dataMap_outsideMassWindow.end()) continue;
-        const auto& points_outsideMassWindow = outsideIter->second;
-        
-        // Extract trigger and cut details from cutKey
-        size_t pos = cutKey.find("_E_");
-        std::string triggerStr = cutKey.substr(0, pos);
-        std::string cutFolder = cutKey.substr(pos + 1);
-
-
-        std::string savePath = outputDir + "IsolationEnergies/" + triggerStr + "/" + cutFolder;
-        gSystem->mkdir(savePath.c_str(), true);
-
-
-        TCanvas* canvas = new TCanvas(("canvas_" + cutKey).c_str(), ("Overlay Ratio vs pT for " + cutKey).c_str(), 800, 600);
-        TMultiGraph* multiGraph = new TMultiGraph();
-
-        // Plot points for both inMassWindow and outsideMassWindow
-        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-            int color_inMassWindow = colors_inMassWindow[i];
-            int color_outsideMassWindow = colors_outsideMassWindow[i];
-            std::pair<float, float> currentRange = isoEtRanges[i];
-
-            // Graphs for inMassWindow and outsideMassWindow
-            TGraphErrors* graph_inMassWindow = new TGraphErrors();
-            TGraphErrors* graph_outsideMassWindow = new TGraphErrors();
-
-            for (const auto& point : points_inMassWindow) {
-                float isoMin = std::get<2>(point);
-                float isoMax = std::get<3>(point);
-                float ratio = std::get<4>(point);
-                float error = std::get<5>(point);
-                float weightedPt = std::get<6>(point);
-
-                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) != exclusionRanges.end()) {
-                    continue;
-                }
-
-                if (isoMin == currentRange.first && isoMax == currentRange.second) {
-                    int index = graph_inMassWindow->GetN();
-                    graph_inMassWindow->SetPoint(index, weightedPt, ratio);
-                    graph_inMassWindow->SetPointError(index, 0, error);
-                    graph_inMassWindow->SetMarkerStyle(20);
-                    graph_inMassWindow->SetMarkerColor(color_inMassWindow);
-                }
-            }
-
-            for (const auto& point : points_outsideMassWindow) {
-                float isoMin = std::get<2>(point);
-                float isoMax = std::get<3>(point);
-                float ratio = std::get<4>(point);
-                float error = std::get<5>(point);
-                float weightedPt = std::get<6>(point);
-
-                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) != exclusionRanges.end()) {
-                    continue;
-                }
-
-                if (isoMin == currentRange.first && isoMax == currentRange.second) {
-                    int index = graph_outsideMassWindow->GetN();
-                    graph_outsideMassWindow->SetPoint(index, weightedPt, ratio);
-                    graph_outsideMassWindow->SetPointError(index, 0, error);
-                    graph_outsideMassWindow->SetMarkerStyle(24);
-                    graph_outsideMassWindow->SetMarkerColor(color_outsideMassWindow);
-                }
-            }
-
-            multiGraph->Add(graph_inMassWindow);
-            multiGraph->Add(graph_outsideMassWindow);
-        }
-
-        // Draw the multiGraph
-        multiGraph->SetTitle(("Overlay Ratio vs pT for " + cutKey).c_str());
-        multiGraph->GetXaxis()->SetRangeUser(0, 15);
-        multiGraph->GetXaxis()->SetTitle("Weighted p_{T} of all Photons from Meson Decay");
-        multiGraph->GetYaxis()->SetRangeUser(0, 1.5);
-        multiGraph->GetYaxis()->SetTitle("Ratio (Isolated/Total)");
-        multiGraph->Draw("AP");
-
-        // Draw a dashed line at y = 1
-        TLine* line = new TLine(2, 1, 15, 1);
-        line->SetLineStyle(2);
-        line->Draw();
-
-        if (drawRefA) {
-            TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
-            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
-                refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
-                refGraphOne->SetPointError(i, 0, referenceStatError[i]);
-            }
-            refGraphOne->SetMarkerStyle(22);
-            refGraphOne->SetMarkerColor(kBlack);
-            refGraphOne->SetLineColor(kBlack);
-            refGraphOne->Draw("P SAME");
-        }
-
-        if (drawRefB) {
-            TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
-            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
-                refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
-                refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
-            }
-            refGraphTwo->SetMarkerStyle(21);
-            refGraphTwo->SetMarkerColor(kGray + 2);
-            refGraphTwo->SetLineColor(kGray + 2);
-            refGraphTwo->Draw("P SAME");
-        }
-
-        if (drawRefA || drawRefB) {
-            refLegend->Draw();
-        }
-
-        legend->Draw();
-
-        gSystem->mkdir(savePath.c_str(), true);
-        canvas->SaveAs((savePath + "/Overlay_RatioVsPt_InsideOutsideMassWindow.png").c_str());
-
-        delete multiGraph;
-        delete canvas;
-    }
-
-    delete legend;
+    return std::make_tuple(clusECore, chi, asymmetry);
 }
 
 
+void generateMesonPlotVsPt(
+    const std::vector<double>& pTCenters,
+    const std::vector<double>& meanValues,
+    const std::vector<double>& meanErrors,
+    const std::string& yAxisLabel,
+    const std::string& outputFilePath,
+    const std::string& triggerName,
+    const std::string& cutCombination,
+    int markerStyle,
+    int markerColor,
+    double clusECore,
+    double chi,
+    double asymmetry,
+    double yMin = std::numeric_limits<double>::quiet_NaN(),
+    double yMax = std::numeric_limits<double>::quiet_NaN(),
+    double xMin = std::numeric_limits<double>::quiet_NaN(),
+    double xMax = std::numeric_limits<double>::quiet_NaN()) {
+    if (pTCenters.empty()) {
+        return; // Nothing to plot if pTCenters is empty
+    }
 
-void analyzeClusterIso() {
+    TGraphErrors* graph = new TGraphErrors(pTCenters.size());
+    for (size_t i = 0; i < pTCenters.size(); ++i) {
+        graph->SetPoint(i, pTCenters[i], meanValues[i]);
+        graph->SetPointError(i, 0, meanErrors[i]);
+    }
+    graph->SetMarkerStyle(markerStyle);
+    graph->SetMarkerSize(1);
+    graph->SetLineWidth(2);
+    graph->SetMarkerColor(markerColor);
+    graph->SetLineColor(markerColor);
+
+    // Automatically calculate y-axis range if yMin or yMax is not provided
+    if (std::isnan(yMin) || std::isnan(yMax)) {
+        yMin = std::numeric_limits<double>::max();
+        yMax = std::numeric_limits<double>::lowest();
+        for (size_t i = 0; i < meanValues.size(); ++i) {
+            double xVal = pTCenters[i];
+            if (xVal >= xMin && xVal <= xMax) {
+                double yVal = meanValues[i];
+                double yErr = meanErrors[i];
+                yMin = std::min(yMin, yVal - yErr);
+                yMax = std::max(yMax, yVal + yErr);
+            }
+        }
+        // Add a 5% margin around yMin and yMax
+        double yMargin = 0.05 * (yMax - yMin);
+        yMin -= yMargin;
+        yMax += yMargin;
+    }
+
+    // Automatically calculate x-axis range if xMin or xMax is NaN
+    if (std::isnan(xMin) || std::isnan(xMax)) {
+        xMin = 2;  // Default starting point for x-axis
+        xMax = *std::max_element(pTCenters.begin(), pTCenters.end()) * 1.1;  // Adding 10% margin
+    }
+
+    // Create canvas
+    TCanvas canvas;
+
+    // Draw graph
+    TH1F* hFrame = canvas.DrawFrame(xMin, yMin, xMax, yMax, (";p_{T} [GeV];" + yAxisLabel).c_str());
+    hFrame->GetXaxis()->SetNdivisions(5);
+    hFrame->GetXaxis()->SetLimits(xMin, xMax);
+    hFrame->GetXaxis()->CenterLabels(false);
+
+    graph->Draw("P SAME");
+
+    // Add trigger and cut information on the top right of the plot
+    TLatex labelText;
+    labelText.SetNDC();
+    labelText.SetTextSize(0.042);
+
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.042);
+
+    labelText.DrawLatex(0.47, 0.87, "#font[62]{Trigger:}");
+    valueText.DrawLatex(0.57, 0.87, triggerName.c_str());
+
+    labelText.DrawLatex(0.47, 0.8, "#font[62]{ECore #geq}");
+    std::ostringstream eCoreWithUnit;
+    eCoreWithUnit << clusECore << "   GeV";
+    valueText.DrawLatex(0.62, 0.8, eCoreWithUnit.str().c_str());
+
+    labelText.DrawLatex(0.47, 0.73, "#font[62]{#chi^{2} <}");
+    std::ostringstream chiStr;
+    chiStr << chi;
+    valueText.DrawLatex(0.62, 0.73, chiStr.str().c_str());
+
+    labelText.DrawLatex(0.47, 0.66, "#font[62]{Asymmetry <}");
+    std::ostringstream asymmetryStr;
+    asymmetryStr << asymmetry;
+    valueText.DrawLatex(0.64, 0.66, asymmetryStr.str().c_str());
+
+    // Ensure the directory exists
+    std::string outputDirPath = outputFilePath.substr(0, outputFilePath.find_last_of("/"));
+    gSystem->mkdir(outputDirPath.c_str(), true);
+
+    // Save plot
+    canvas.SaveAs(outputFilePath.c_str());
+    std::cout << "Saved plot: " << outputFilePath << std::endl;
+
+    // Clean up
+    delete graph;
+}
+
+void generateCutVariationPlot(
+    const std::vector<double>& xValues,
+    const std::vector<double>& xErrors,
+    const std::vector<double>& yValues,
+    const std::vector<double>& yErrors,
+    const std::vector<std::string>& xLabels,
+    const std::string& yAxisLabel,
+    const std::string& outputFilePath,
+    const std::string& triggerName,
+    const std::vector<double>& eCoreValues,
+    const std::vector<double>& chiValues,
+    const std::vector<double>& asymmetryValues,
+    int color) {
+    if (xValues.empty()) {
+        return; // Nothing to plot if xValues is empty
+    }
+
+    TGraphErrors* graph = new TGraphErrors(xValues.size(), &xValues[0], &yValues[0], &xErrors[0], &yErrors[0]);
+    graph->SetMarkerStyle(20);
+    graph->SetMarkerColor(color);
+    graph->SetMarkerSize(1);
+    graph->SetLineWidth(2);
+    graph->SetLineColor(color);
+
+    double minY = std::numeric_limits<double>::max();
+    double maxY = std::numeric_limits<double>::lowest();
+    for (size_t i = 0; i < yValues.size(); ++i) {
+        double yVal = yValues[i];
+        double yErr = yErrors[i];
+        minY = std::min(minY, yVal - yErr);
+        maxY = std::max(maxY, yVal + yErr);
+    }
+
+    // Add a margin to ensure error bars fit within the range
+    double yRange = maxY - minY;
+    double yMargin = 0.15 * yRange; // 15% margin
+    minY -= yMargin;
+    maxY += yMargin;
+
+    // Create canvas
+    TCanvas canvas;
+    canvas.SetBottomMargin(0.15);  // Increase the bottom margin to accommodate labels
+
+    // Draw graph
+    double xMin = 0.5;  // Start at 0.5 to center points between ticks
+    double xMax = xValues.size() + 0.5;
+    TH1F* hFrame = canvas.DrawFrame(xMin, minY, xMax, maxY, (";Cut Variation;" + yAxisLabel).c_str());
+    graph->Draw("P SAME");
+
+    // Set x-axis labels with ticks corresponding to "A", "B", "C", etc.
+    TAxis* axis = hFrame->GetXaxis();
+    axis->SetNdivisions(xValues.size(), false);
+    axis->SetLabelSize(0.03);
+    axis->SetTickLength(0.03); // Add visible ticks
+    axis->SetLabelOffset(999); // Hide default tick numbers
+
+    // Add simple alphabetical labels between ticks
+    for (size_t i = 0; i < xValues.size(); ++i) {
+        double x = xValues[i];  // Use xValues directly (centered between ticks)
+        TLatex label;
+        label.SetTextAlign(22); // Center align
+        label.SetTextSize(0.03);
+        label.DrawLatex(x, minY - (maxY - minY) * 0.05, xLabels[i].c_str());
+    }
+
+    // Add a formatted legend with individual cut values in bold
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.035);
+    double yStart = 0.5; // Starting y-position for the legend
+
+    for (size_t i = 0; i < xLabels.size(); ++i) {
+        std::ostringstream entry;
+        entry << "#font[62]{" << xLabels[i] << "} : #font[62]{ECore} #geq " << eCoreValues[i]
+              << " GeV, #font[62]{#chi^{2}} < " << chiValues[i] << ", #font[62]{Asymmetry} < " << asymmetryValues[i];
+        valueText.DrawLatex(0.4, yStart, entry.str().c_str());
+        yStart -= 0.05;  // Adjust spacing between legend entries
+    }
+
+    // Add trigger name label in bold
+    TLatex latex;
+    latex.SetNDC();
+    latex.SetTextSize(0.04);
+    latex.DrawLatex(0.4, 0.56, ("#font[62]{Trigger:} " + triggerName).c_str());
+
+    // Save plot
+    gSystem->mkdir(outputFilePath.substr(0, outputFilePath.find_last_of("/")).c_str(), true);
+    canvas.SaveAs(outputFilePath.c_str());
+    std::cout << "Saved plot: " << outputFilePath << std::endl;
+
+    // Clean up
+    delete graph;
+}
+
+
+
+
+void plotMesonInformation(const std::vector<HistogramData>& histogramDataVector) {
+    // Organize data by trigger index and cut combination
+    std::map<int, std::map<std::string, std::vector<HistogramData>>> dataMap;
+    std::map<int, std::vector<std::string>> cutVariations;
+    std::map<int, std::vector<double>> meanPi0sPerTrigger, meanPi0ErrorsPerTrigger, sigmaPi0sPerTrigger, sigmaPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalToBackgroundPi0RatiosPerTrigger, signalToBackgroundPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> meanEtasPerTrigger, meanEtaErrorsPerTrigger, sigmaEtasPerTrigger, sigmaEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalToBackgroundEtaRatiosPerTrigger, signalToBackgroundEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalPi0YieldsPerTrigger, signalPi0ErrorsPerTrigger;
+    std::map<int, std::vector<double>> signalEtaYieldsPerTrigger, signalEtaErrorsPerTrigger;
+    std::map<int, std::vector<double>> pi0FitResolutionsPerTrigger, pi0FitResolutionErrorsPerTrigger;
+    std::map<int, std::vector<double>> etaFitResolutionsPerTrigger, etaFitResolutionErrorsPerTrigger;
+
+
+    
+    for (const auto& data : histogramDataVector) {
+        processDataForTrigger(data, dataMap, cutVariations, meanPi0sPerTrigger, meanPi0ErrorsPerTrigger, sigmaPi0sPerTrigger, sigmaPi0ErrorsPerTrigger, signalToBackgroundPi0RatiosPerTrigger, signalToBackgroundPi0ErrorsPerTrigger, meanEtasPerTrigger, meanEtaErrorsPerTrigger, sigmaEtasPerTrigger, sigmaEtaErrorsPerTrigger, signalToBackgroundEtaRatiosPerTrigger, signalToBackgroundEtaErrorsPerTrigger, signalPi0YieldsPerTrigger, signalPi0ErrorsPerTrigger, signalEtaYieldsPerTrigger, signalEtaErrorsPerTrigger, pi0FitResolutionsPerTrigger, pi0FitResolutionErrorsPerTrigger, etaFitResolutionsPerTrigger, etaFitResolutionErrorsPerTrigger);
+    }
+    for (const auto& triggerPair : dataMap) {
+        int triggerIndex = triggerPair.first;
+        std::string triggerName = getTriggerName(triggerIndex);
+
+        for (const auto& cutPair : triggerPair.second) {
+            std::string cutCombination = cutPair.first;
+            const auto& dataList = cutPair.second;
+
+            // Retrieve cut variables from the first entry in dataList
+            double clusECore = dataList[0].cuts.clusECore;
+            double chi = dataList[0].cuts.chi;
+            double asymmetry = dataList[0].cuts.asymmetry;
+
+            std::vector<double> pTCentersPi0, meanPi0s, meanPi0Errors, sigmaPi0s, sigmaPi0Errors, signalPi0Yields, signalPi0Errors;
+            std::vector<double> pTCentersEta, meanEtas, meanEtaErrors, sigmaEtas, sigmaEtaErrors, signalEtaYields, signalEtaErrors;
+            std::vector<double> signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors;
+            std::vector<double> signalToBackgroundEtaRatios, signalToBackgroundEtaErrors;
+            std::vector<double> pi0FitResolutions, pi0FitResolutionErrors;
+            std::vector<double> etaFitResolutions, etaFitResolutionErrors;
+
+
+            for (const auto& data : dataList) {
+                if (data.cuts.pTMin == -1) {
+                    continue;
+                }
+
+                double pTCenter = (data.cuts.pTMin + data.cuts.pTMax) / 2.0;
+
+                bool invalidPi0Fit = (data.meanPi0Error > 1.0) || (data.meanPi0Error == 0);
+                bool invalidEtaFit = (data.meanEtaError > 1.0) || (data.meanEtaError == 0);
+
+                if (!invalidPi0Fit) {
+                    pTCentersPi0.push_back(pTCenter);
+                    meanPi0s.push_back(data.meanPi0);
+                    meanPi0Errors.push_back(data.meanPi0Error);
+                    sigmaPi0s.push_back(data.sigmaPi0);
+                    sigmaPi0Errors.push_back(data.sigmaPi0Error);
+                    signalToBackgroundPi0Ratios.push_back(data.signalToBackgroundPi0Ratio);
+                    signalToBackgroundPi0Errors.push_back(data.signalToBackgroundPi0Error);
+                    signalPi0Yields.push_back(data.signalPi0Yield);
+                    signalPi0Errors.push_back(data.signalPi0Error);
+                    pi0FitResolutions.push_back(data.pi0FitResolution);
+                    pi0FitResolutionErrors.push_back(data.pi0FitResolutionError);
+                }
+
+                if (!invalidEtaFit) {
+                    pTCentersEta.push_back(pTCenter);
+                    meanEtas.push_back(data.meanEta);
+                    meanEtaErrors.push_back(data.meanEtaError);
+                    sigmaEtas.push_back(data.sigmaEta);
+                    sigmaEtaErrors.push_back(data.sigmaEtaError);
+                    signalToBackgroundEtaRatios.push_back(data.signalToBackgroundEtaRatio);
+                    signalToBackgroundEtaErrors.push_back(data.signalToBackgroundEtaError);
+                    signalEtaYields.push_back(data.signalEtaYield);
+                    signalEtaErrors.push_back(data.signalEtaError);
+                    etaFitResolutions.push_back(data.etaFitResolution);
+                    etaFitResolutionErrors.push_back(data.etaFitResolutionError);
+                }
+            }
+            std::string outputDirPath = outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/" + cutCombination + "/";
+            generateMesonPlotVsPt(pTCentersPi0, meanPi0s, meanPi0Errors, "#mu_{#pi0} [GeV]",
+                                 outputDirPath + "MeanPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue,
+                                 clusECore, chi, asymmetry, 0.14, 0.17, 2.0, 7.0);
+            generateMesonPlotVsPt(pTCentersEta, meanEtas, meanEtaErrors, "#mu_{#eta} [GeV]", outputDirPath + "MeanEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.55, 0.62, 2.0, 7.0);
+            
+            
+            generateMesonPlotVsPt(pTCentersPi0, sigmaPi0s, sigmaPi0Errors, "#sigma_{#pi0} [GeV]",
+                                  outputDirPath + "SigmaPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue,
+                                  clusECore, chi, asymmetry, 0.015, 0.025, 2.0, 7.0);
+
+            generateMesonPlotVsPt(pTCentersEta, sigmaEtas, sigmaEtaErrors, "#sigma_{#eta} [GeV]",
+                                  outputDirPath + "SigmaEta_vs_pT.png", triggerName, cutCombination, 20, kRed,
+                                  clusECore, chi, asymmetry, 0.045, 0.055, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersPi0, signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors, "Signal-to-Background Ratio (#pi^{0})", outputDirPath + "SignalToBackgroundPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, 0.0, 20.0, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersEta, signalToBackgroundEtaRatios, signalToBackgroundEtaErrors, "Signal-to-Background Ratio (#eta)", outputDirPath + "SignalToBackgroundEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.0, 2.0, 2.0, 7.0);
+            
+            generateMesonPlotVsPt(pTCentersPi0, signalPi0Yields, signalPi0Errors, "Signal Yield (#pi^{0})", outputDirPath + "SignalYieldPi0_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2, 7);
+            generateMesonPlotVsPt(pTCentersEta, signalEtaYields, signalEtaErrors, "Signal Yield (#eta)", outputDirPath + "SignalYieldEta_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2, 7);
+            generateMesonPlotVsPt(pTCentersPi0, pi0FitResolutions, pi0FitResolutionErrors, "#pi^{0} Fit Resolution", outputDirPath + "Pi0Resolution_vs_pT.png", triggerName, cutCombination, 20, kBlue, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2.0, 7.0);
+            generateMesonPlotVsPt(pTCentersEta, etaFitResolutions, etaFitResolutionErrors, "#eta Fit Resolution", outputDirPath + "EtaResolution_vs_pT.png", triggerName, cutCombination, 20, kRed, clusECore, chi, asymmetry, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN(), 2.0, 7.0);
+
+        }
+    }
+    for (const auto& triggerPair : dataMap) {
+        int triggerIndex = triggerPair.first;
+        std::string triggerName = getTriggerName(triggerIndex);
+
+        const auto& cuts = cutVariations[triggerIndex];
+        const auto& meanPi0s = meanPi0sPerTrigger[triggerIndex];
+        const auto& meanPi0Errors = meanPi0ErrorsPerTrigger[triggerIndex];
+        const auto& sigmaPi0s = sigmaPi0sPerTrigger[triggerIndex];
+        const auto& sigmaPi0Errors = sigmaPi0ErrorsPerTrigger[triggerIndex];
+        const auto& signalToBackgroundPi0Ratios = signalToBackgroundPi0RatiosPerTrigger[triggerIndex];
+        const auto& signalToBackgroundPi0Errors = signalToBackgroundPi0ErrorsPerTrigger[triggerIndex];
+        const auto& signalPi0Yields = signalPi0YieldsPerTrigger[triggerIndex];
+        const auto& signalPi0Errors = signalPi0ErrorsPerTrigger[triggerIndex];
+        const auto& pi0FitResolutions = pi0FitResolutionsPerTrigger[triggerIndex];
+        const auto& pi0FitResolutionErrors = pi0FitResolutionErrorsPerTrigger[triggerIndex];
+
+        const auto& meanEtas = meanEtasPerTrigger[triggerIndex];
+        const auto& meanEtaErrors = meanEtaErrorsPerTrigger[triggerIndex];
+        const auto& sigmaEtas = sigmaEtasPerTrigger[triggerIndex];
+        const auto& sigmaEtaErrors = sigmaEtaErrorsPerTrigger[triggerIndex];
+        const auto& signalToBackgroundEtaRatios = signalToBackgroundEtaRatiosPerTrigger[triggerIndex];
+        const auto& signalToBackgroundEtaErrors = signalToBackgroundEtaErrorsPerTrigger[triggerIndex];
+        const auto& signalEtaYields = signalEtaYieldsPerTrigger[triggerIndex];
+        const auto& signalEtaErrors = signalEtaErrorsPerTrigger[triggerIndex];
+        const auto& etaFitResolutions = etaFitResolutionsPerTrigger[triggerIndex];
+        const auto& etaFitResolutionErrors = etaFitResolutionErrorsPerTrigger[triggerIndex];
+
+        // Prepare vectors for cut variation plots
+        std::vector<double> xValues, xErrors, eCoreValues, chiValues, asymmetryValues;
+        std::vector<std::string> xLabels;
+        xErrors.assign(cuts.size(), 0); // Set all xErrors to 0
+
+        for (size_t i = 0; i < cuts.size(); ++i) {
+            xValues.push_back(i + 1); // Numerical x-values
+            xLabels.push_back(std::string(1, 'A' + i)); // Labels as "A", "B", "C", ...
+
+            // Retrieve cut variables from the first entry in each cut combination
+            double clusECore = dataMap[triggerIndex][cuts[i]][0].cuts.clusECore;
+            double chi = dataMap[triggerIndex][cuts[i]][0].cuts.chi;
+            double asymmetry = dataMap[triggerIndex][cuts[i]][0].cuts.asymmetry;
+
+            eCoreValues.push_back(clusECore);
+            chiValues.push_back(chi);
+            asymmetryValues.push_back(asymmetry);
+        }
+
+        generateCutVariationPlot(xValues, xErrors, meanPi0s, meanPi0Errors, xLabels, "#mu_{#pi^{0}} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/MeanPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
+
+        generateCutVariationPlot(xValues, xErrors, meanEtas, meanEtaErrors, xLabels, "#mu_{#eta} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/MeanEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
+
+        generateCutVariationPlot(xValues, xErrors, sigmaPi0s, sigmaPi0Errors, xLabels, "#sigma_{#pi^{0}} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SigmaPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
+
+        generateCutVariationPlot(xValues, xErrors, sigmaEtas, sigmaEtaErrors, xLabels, "#sigma_{#eta} [GeV]",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SigmaEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
+
+        generateCutVariationPlot(xValues, xErrors, signalToBackgroundPi0Ratios, signalToBackgroundPi0Errors, xLabels,
+                                 "Signal-to-Background Ratio (#pi^{0})",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalToBackgroundPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
+
+        generateCutVariationPlot(xValues, xErrors, signalToBackgroundEtaRatios, signalToBackgroundEtaErrors, xLabels,
+                                 "Signal-to-Background Ratio (#eta)",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalToBackgroundEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
+
+        generateCutVariationPlot(xValues, xErrors, signalPi0Yields, signalPi0Errors, xLabels,
+                                 "Signal Yield (#pi^{0})",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalYieldPi0_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
+
+        generateCutVariationPlot(xValues, xErrors, signalEtaYields, signalEtaErrors, xLabels,
+                                 "Signal Yield (#eta)",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/SignalYieldEta_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
+
+        generateCutVariationPlot(xValues, xErrors, pi0FitResolutions, pi0FitResolutionErrors, xLabels,
+                                 "#pi^{0} Fit Resolution",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/Pi0Resolution_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kBlue);
+
+        generateCutVariationPlot(xValues, xErrors, etaFitResolutions, etaFitResolutionErrors, xLabels,
+                                 "#eta Fit Resolution",
+                                 outputDir + "InvMass/Trigger" + std::to_string(triggerIndex) + "/EtaResolution_vs_CutVariation.png",
+                                 triggerName, eCoreValues, chiValues, asymmetryValues, kRed);
+    }
+}
+
+// Main function to run both processes
+void plotInvariantMass() {
     gROOT->LoadMacro("sPhenixStyle.C");
     SetsPhenixStyle();
-    std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
-//    isolationEnergies(inputFilePath, outputDir);
-//
-
-//    outputHistogramLogs(csvFilePath);
-    
-    std::vector<std::pair<float, float>> exclusionRanges = {{-5, 0}, {0, 2}, {2, 5}, {5, 10}, {0, 10}};
-    // Maps to store data for inMassWindow and outsideMassWindow
-    std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_inMassWindow;
-    std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_outsideMassWindow;
-
-    // Read the data from CSV into maps
-    readDataFromCSV(csvFilePath, dataMap_inMassWindow, dataMap_outsideMassWindow);
-
-    // Plot for inMassWindow data
-    plotRatioVsPt(dataMap_inMassWindow, outputDir, "inMassWindow", exclusionRanges, false, true);
-
-    // Plot for outsideMassWindow data
-    plotRatioVsPt(dataMap_outsideMassWindow, outputDir, "outsideMassWindow", exclusionRanges, false, true);
-    
-    overlayRatioInOutMassWindow(dataMap_inMassWindow, dataMap_outsideMassWindow, outputDir, exclusionRanges, false, false);
+    saveAnnotatedInvariantMassHistograms(inputFilePath);
+    std::vector<HistogramData> histogramDataVector = saveAnnotatedInvariantMassHistograms(inputFilePath);
+    printHistogramData(histogramDataVector);
+    plotMesonInformation(histogramDataVector);
 }
-
