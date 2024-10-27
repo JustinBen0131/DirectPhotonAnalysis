@@ -19,11 +19,80 @@
 
 bool saveHistogramsFlag = false;  // Set to true to save histograms, false to skip
 
-std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/output/";
+std::string inputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/";
 std::string outputDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/";
-std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber44686_runnumber44707.root";
+std::string inputFilePath = inputDir + "Final_Merged_Hists_runnumber46623_runnumber47230.root";
+struct CutValues {
+    float clusECore = 0;
+    float asymmetry = 0;
+    float chi = 0;
+    int triggerIndex = 0;
+    float pTMin = -1;  // Default to -1 indicating no pT bin
+    float pTMax = -1;  // Default to -1 indicating no pT bin
+    float isoMin = -1; // Default to -1 indicating no isoEt range
+    float isoMax = -1; // Default to -1 indicating no isoEt range
+    bool invalid = false; // Flag to indicate parsing failure
+};
+
+std::string formatToThreeSigFigs(double value) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(3) << value; // Use fixed notation with three decimal places
+    return stream.str();
+}
+
+// Function to parse photon histogram names and extract cut values, pT range, isoEt range, and trigger index
+CutValues parsePhotonHistName(const std::string& histName) {
+    CutValues cuts;
+
+    // Updated regex pattern to match negative numbers and ensure proper grouping
+    std::regex re("(isolatedPhotonCount|allPhotonCount|ptPhoton)_E(-?[0-9]+(?:point[0-9]*)?)_Chi(-?[0-9]+(?:point[0-9]*)?)_Asym(-?[0-9]+(?:point[0-9]*)?)"
+                  "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?_pT_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?)_(\\d+)");
+    std::smatch match;
+
+    // Lambda function to convert strings with 'point' and handle negative numbers
+    auto convert = [](const std::string& input) -> float {
+        std::string temp = input;
+        size_t pointPos = temp.find("point");
+        if (pointPos != std::string::npos) {
+            temp.replace(pointPos, 5, ".");
+        }
+        try {
+            return std::stof(temp);
+        } catch (const std::exception&) {
+            return 0.0f;
+        }
+    };
+
+    // Check if the regex matches the histogram name
+    if (std::regex_search(histName, match, re)) {
+        if (match.size() >= 10) {
+            cuts.clusECore = convert(match[2].str());
+            cuts.chi = convert(match[3].str());
+            cuts.asymmetry = convert(match[4].str());
+
+            // If isoEt range is present, assign isoMin and isoMax, otherwise keep them as -1
+            if (match[5].matched && match[6].matched) {
+                cuts.isoMin = convert(match[5].str());
+                cuts.isoMax = convert(match[6].str());
+            }
+
+            // pT bin range is always present
+            cuts.pTMin = convert(match[7].str());
+            cuts.pTMax = convert(match[8].str());
+
+            // Trigger index
+            cuts.triggerIndex = std::stoi(match[9].str());
+        }
+    } else {
+        std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
+        cuts.invalid = true;
+    }
+
+    return cuts;
+}
 
 
+// Mapping trigger indices to names based on the provided trigger list
 std::map<int, std::string> triggerNameMap = {
     {0, "Clock"},
     {1, "ZDC South"},
@@ -178,6 +247,7 @@ void processRunFiles() {
 }
 
 int getDistinctColor(int index) {
+    // Define a fixed set of visually distinct colors
     static std::vector<int> colors = {
         kRed, kBlue, kGreen + 2, kMagenta, kCyan + 1, kOrange + 7, kViolet + 1,
         kPink + 9, kSpring + 4, kTeal, kAzure + 7, kGray + 2, kBlack
@@ -806,831 +876,6 @@ void plotOverlayHistograms() {
      delete inputFileNew;
 }
 
-
-
-// Structure to hold the parsed cut values
-struct CutValues {
-    float clusECore = 0;
-    float asymmetry = 0;
-    float chi = 0;
-    int triggerIndex = 0;
-    float pTMin = -1;  // Default to -1 indicating no pT bin
-    float pTMax = -1;  // Default to -1 indicating no pT bin
-};
-
-// Function to parse histogram names and extract cut values, trigger index, and optional pT range
-CutValues parseHistName(const std::string& histName) {
-    CutValues cuts;
-
-    // Regex pattern that handles both cases: with and without pT bins
-    std::regex re("invMass(?:_noPtBins)?_E([0-9]+(?:point[0-9]*)?)_Chi([0-9]+(?:point[0-9]*)?)_Asym([0-9]+(?:point[0-9]*)?)(?:_pT_([0-9]+(?:point[0-9]*)?)to([0-9]+(?:point[0-9]*)?))?_(\\d+)");
-    std::smatch match;
-
-    // Lambda function to convert strings with 'point' to float values
-    auto convert = [](const std::string& input) -> float {
-        std::string temp = input;
-        size_t pointPos = temp.find("point");
-        if (pointPos != std::string::npos) {
-            temp.replace(pointPos, 5, ".");
-        }
-        try {
-            return std::stof(temp);
-        } catch (const std::exception&) {
-            return 0.0f;
-        }
-    };
-
-    // Check if the regex matches the histogram name
-    if (std::regex_search(histName, match, re)) {
-        if (match.size() >= 5) {
-            cuts.clusECore = convert(match[1].str());
-            cuts.chi = convert(match[2].str());
-            cuts.asymmetry = convert(match[3].str());
-
-            // Optional pT bin range (check if it was captured)
-            if (match[4].matched && match[5].matched) {
-                cuts.pTMin = convert(match[4].str());
-                cuts.pTMax = convert(match[5].str());
-            }
-
-            cuts.triggerIndex = std::stoi(match[6].str());
-
-            // Diagnostic prints
-            std::cout << "Parsed histogram: " << histName << std::endl;
-            std::cout << "  clusECore: " << cuts.clusECore << ", Chi: " << cuts.chi << ", Asymmetry: " << cuts.asymmetry
-                      << ", pTMin: " << cuts.pTMin << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex << std::endl;
-        }
-    } else {
-        std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
-    }
-
-    return cuts;
-}
-
-
-TFitResultPtr PerformFitting(TH1* hPi0Mass, TF1*& totalFit, TF1*& gaussPi0Fit, TF1*& gaussEtaFit, TF1*& polyFit, double& fitStart, double& fitEnd) {
-    ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
-    ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(10000);
-
-    fitStart = 0.04;
-    fitEnd = 0.9;
-
-    // Pi0 estimates
-    double sigmaPi0Estimate = 0.021;  // Estimate for pi0 sigma
-    double meanPi0Estimate = 0.135;   // Estimate for pi0 mean
-    double amplitudePi0Estimate = hPi0Mass->GetBinContent(hPi0Mass->GetXaxis()->FindBin(meanPi0Estimate));
-
-    // Eta estimates
-    double sigmaEtaEstimate = 0.04;   // Eta sigma estimate
-    double meanEtaEstimate = 0.62;    // Eta mean estimate
-    double amplitudeEtaEstimate = 0.1 * amplitudePi0Estimate; // Eta amplitude much smaller than pi0
-
-    // Define the totalFit function as two Gaussians (pi0 and eta) plus a fourth-order polynomial (pol4)
-    totalFit = new TF1("totalFit", "gaus(0) + gaus(3) + pol4(6)", fitStart, fitEnd);
-    totalFit->SetLineColor(kRed);
-
-    // Set initial parameters for pi0 and eta Gaussian components
-    totalFit->SetParameters(amplitudePi0Estimate, meanPi0Estimate, sigmaPi0Estimate, amplitudeEtaEstimate, meanEtaEstimate, sigmaEtaEstimate);
-
-    // Set limits on eta mean and sigma to help fit convergence
-    totalFit->SetParLimits(4, 0.55, 0.65);   // Eta mean constrained between 550 and 650 MeV
-    totalFit->SetParLimits(5, 0.03, 0.05);   // Eta sigma constrained between 30 and 50 MeV
-
-    // Perform the fit
-    TFitResultPtr fitResult = hPi0Mass->Fit("totalFit", "SR+");
-
-    // Separate Gaussian fits for pi0 and eta
-    gaussPi0Fit = new TF1("gaussPi0Fit", "gaus", fitStart, fitEnd);
-    gaussPi0Fit->SetParameters(totalFit->GetParameter(0), totalFit->GetParameter(1), totalFit->GetParameter(2));
-    gaussPi0Fit->SetLineColor(kBlue);
-    gaussPi0Fit->SetLineStyle(2);  // Dashed line for pi0
-
-    gaussEtaFit = new TF1("gaussEtaFit", "gaus", fitStart, fitEnd);
-    gaussEtaFit->SetParameters(totalFit->GetParameter(3), totalFit->GetParameter(4), totalFit->GetParameter(5));
-    gaussEtaFit->SetLineColor(kGreen);
-    gaussEtaFit->SetLineStyle(2);  // Dotted line for eta
-
-    // Polynomial for the background (pol4 has 5 parameters)
-    polyFit = new TF1("polyFit", "pol4", fitStart, fitEnd);
-    for (int i = 6; i < 11; i++) {  // Parameters 6 to 10 correspond to the pol4 background
-        polyFit->SetParameter(i - 6, totalFit->GetParameter(i));
-    }
-    polyFit->SetLineColor(kOrange + 7);
-    polyFit->SetLineStyle(2);
-
-    return fitResult;
-}
-
-
-// Function to format numbers to three significant figures without scientific notation
-std::string formatToThreeSigFigs(double value) {
-    std::ostringstream stream;
-    stream << std::fixed << std::setprecision(3) << value; // Use fixed notation with three decimal places
-    return stream.str();
-}
-
-void saveAnnotatedInvariantMassHistograms(const std::string& inputFilePath) {
-    TFile* inputFile = TFile::Open(inputFilePath.c_str(), "READ");
-    if (!inputFile || inputFile->IsZombie()) {
-        std::cerr << "Error: Could not open the file " << inputFilePath << std::endl;
-        return;
-    }
-
-    // Get the 'PhotonAnalysis' directory
-    TDirectory* invMassDir = (TDirectory*)inputFile->Get("PhotonAnalysis");
-    if (!invMassDir) {
-        std::cerr << "Error: 'PhotonAnalysis' directory not found." << std::endl;
-        inputFile->Close();
-        return;
-    }
-
-    // Iterate through trigger directories
-    TIter nextTriggerDir(invMassDir->GetListOfKeys());
-    TKey* keyTriggerDir;
-    while ((keyTriggerDir = (TKey*)nextTriggerDir())) {
-        TObject* objTriggerDir = keyTriggerDir->ReadObj();
-        if (objTriggerDir->InheritsFrom(TDirectory::Class())) {
-            TDirectory* triggerDir = (TDirectory*)objTriggerDir;
-            std::string triggerName = triggerDir->GetName();
-            std::string outputTriggerDir = outputDir + "InvMass/" + triggerName;
-            gSystem->mkdir(outputTriggerDir.c_str(), true);
-
-            // Iterate through histograms in the trigger subdirectory
-            TIter nextHist(triggerDir->GetListOfKeys());
-            TKey* keyHist;
-            while ((keyHist = (TKey*)nextHist())) {
-                TObject* objHist = keyHist->ReadObj();
-                if (objHist->InheritsFrom(TH1::Class())) {
-                    TH1* hist = (TH1*)objHist;
-                    std::string histName = hist->GetName();
-
-                    // Check if the histogram has any entries
-                    if (hist->GetEntries() == 0) {
-                        std::cerr << "Skipping empty histogram: " << histName << std::endl;
-                        delete objHist;
-                        continue;  // Skip this histogram
-                    }
-
-                    // Filter histograms: only process those with 'invMass' in the name
-                    if (histName.find("invMass_E") != 0 && histName.find("invMass_noPtBins_E") != 0) {
-                        std::cerr << "Skipping histogram: " << histName << " (does not match invMass naming pattern)" << std::endl;
-                        delete objHist;
-                        continue;
-                    }
-
-                    // Parse the histogram name to get cut values and trigger index
-                    CutValues cuts = parseHistName(histName);
-
-                    // Construct the correct output directory based on parsed triggerIndex
-                    std::string outputTriggerDir = outputDir + "InvMass/Trigger" + std::to_string(cuts.triggerIndex);
-                    gSystem->mkdir(outputTriggerDir.c_str(), true);  // Create trigger-specific directory
-
-                    // Construct the directory for the specific cut
-                    std::ostringstream cutDirStream;
-                    cutDirStream << outputTriggerDir << "/E" << formatToThreeSigFigs(cuts.clusECore)
-                                 << "_Chi" << formatToThreeSigFigs(cuts.chi)
-                                 << "_Asym" << formatToThreeSigFigs(cuts.asymmetry);
-                    std::string cutDirPath = cutDirStream.str();
-                    gSystem->mkdir(cutDirPath.c_str(), true);  // Create cut directory
-
-                    // If there's a pT range, create the pT folder inside the cut-specific directory
-                    std::string outputDirPath = cutDirPath;
-                    if (cuts.pTMin != -1 && cuts.pTMax != -1) {
-                        std::ostringstream ptDirStream;
-                        ptDirStream << cutDirPath << "/pT_" << formatToThreeSigFigs(cuts.pTMin)
-                                    << "_to_" << formatToThreeSigFigs(cuts.pTMax);
-                        outputDirPath = ptDirStream.str();
-                        gSystem->mkdir(outputDirPath.c_str(), true);  // Create pT directory
-                    }
-
-                    // Construct the output file path for the histogram PNG
-                    std::string outputFilePath = outputDirPath + "/" + histName + ".png";
-
-
-                    // Set axis labels
-                    hist->GetXaxis()->SetTitle("M_{#gamma#gamma} [GeV]");
-                    hist->GetYaxis()->SetTitle("Counts");
-
-                    // Create a canvas and draw the histogram
-                    TCanvas canvas;
-                    TF1* totalFit = nullptr;
-                    TF1* gaussPi0Fit = nullptr;
-                    TF1* gaussEtaFit = nullptr;
-                    TF1* polyFit = nullptr;
-                    double fitStart, fitEnd;
-
-                    // Perform the fit
-                    TFitResultPtr fitResult = PerformFitting(hist, totalFit, gaussPi0Fit, gaussEtaFit, polyFit, fitStart, fitEnd);
-
-                    // Draw the histogram and the fits
-                    hist->Draw();
-                    gaussPi0Fit->Draw("SAME");
-                    gaussEtaFit->Draw("SAME");
-                    polyFit->Draw("SAME");
-                    totalFit->Draw("SAME");
-
-                    // Annotate the results
-                    double meanPi0 = totalFit->GetParameter(1);
-                    double sigmaPi0 = totalFit->GetParameter(2);
-                    double meanEta = totalFit->GetParameter(4);
-                    double sigmaEta = totalFit->GetParameter(5);
-
-                    double massRatio = meanEta / meanPi0;
-                    
-                    
-                    // Clone histograms for signal and background extraction (for pi0)
-                    TH1F* hSignalPi0 = (TH1F*)hist->Clone("hSignalPi0");
-                    TH1F* hBackgroundPi0 = (TH1F*)hist->Clone("hBackgroundPi0");
-
-                    // Clone histograms for signal and background extraction (for eta)
-                    TH1F* hSignalEta = (TH1F*)hist->Clone("hSignalEta");
-                    TH1F* hBackgroundEta = (TH1F*)hist->Clone("hBackgroundEta");
-
-                    // Define signal and background bins for both pi0 and eta
-                    int firstBinPi0 = hist->FindBin(std::max(meanPi0 - 2 * sigmaPi0, fitStart));
-                    int lastBinPi0 = hist->FindBin(std::min(meanPi0 + 2 * sigmaPi0, fitEnd));
-
-                    int firstBinEta = hist->FindBin(std::max(meanEta - 2 * sigmaEta, fitStart));
-                    int lastBinEta = hist->FindBin(std::min(meanEta + 2 * sigmaEta, fitEnd));
-
-                    // Extract signal and background for pi0
-                    double binCenter, binContent, bgContent, binError;
-                    for (int i = firstBinPi0; i <= lastBinPi0; ++i) {
-                        binCenter = hist->GetBinCenter(i);
-                        binContent = hist->GetBinContent(i);
-                        binError = hist->GetBinError(i);
-                        bgContent = totalFit->Eval(binCenter) - gaussPi0Fit->Eval(binCenter); // background model for pi0
-
-                        bgContent = std::max(bgContent, 0.0);  // Ensure background is non-negative
-                        hSignalPi0->SetBinContent(i, binContent - bgContent);
-                        hBackgroundPi0->SetBinContent(i, bgContent);
-                        hSignalPi0->SetBinError(i, binError);  // Error for signal
-                        hBackgroundPi0->SetBinError(i, sqrt(bgContent));  // Error for background (Poisson statistics)
-                    }
-
-                    // Extract signal and background for eta
-                    for (int i = firstBinEta; i <= lastBinEta; ++i) {
-                        binCenter = hist->GetBinCenter(i);
-                        binContent = hist->GetBinContent(i);
-                        binError = hist->GetBinError(i);
-                        bgContent = totalFit->Eval(binCenter) - gaussEtaFit->Eval(binCenter); // background model for eta
-
-                        bgContent = std::max(bgContent, 0.0);  // Ensure background is non-negative
-                        hSignalEta->SetBinContent(i, binContent - bgContent);
-                        hBackgroundEta->SetBinContent(i, bgContent);
-                        hSignalEta->SetBinError(i, binError);  // Error for signal
-                        hBackgroundEta->SetBinError(i, sqrt(bgContent));  // Error for background (Poisson statistics)
-                    }
-                    std::ostringstream ptRangeLabel;
-                    if (cuts.pTMin != -1 && cuts.pTMax != -1) {
-                        ptRangeLabel << "pT: " << formatToThreeSigFigs(cuts.pTMin) << " - " << formatToThreeSigFigs(cuts.pTMax) << " GeV";
-                    }
-                    // Calculate signal and background yields and their errors (for pi0)
-                    double signalPi0Yield, signalPi0Error, backgroundPi0Yield, backgroundPi0Error;
-                    signalPi0Yield = hSignalPi0->IntegralAndError(firstBinPi0, lastBinPi0, signalPi0Error, "");
-                    backgroundPi0Yield = hBackgroundPi0->IntegralAndError(firstBinPi0, lastBinPi0, backgroundPi0Error, "");
-
-                    // Calculate signal and background yields and their errors (for eta)
-                    double signalEtaYield, signalEtaError, backgroundEtaYield, backgroundEtaError;
-                    signalEtaYield = hSignalEta->IntegralAndError(firstBinEta, lastBinEta, signalEtaError, "");
-                    backgroundEtaYield = hBackgroundEta->IntegralAndError(firstBinEta, lastBinEta, backgroundEtaError, "");
-
-                    // Calculate signal-to-background ratio for pi0
-                    double signalToBackgroundPi0Ratio = backgroundPi0Yield > 0 ? signalPi0Yield / backgroundPi0Yield : 0;
-                    double signalToBackgroundPi0Error = signalToBackgroundPi0Ratio > 0 ? signalToBackgroundPi0Ratio * sqrt(pow(signalPi0Error / signalPi0Yield, 2) + pow(backgroundPi0Error / backgroundPi0Yield, 2)) : 0;
-
-                    // Calculate signal-to-background ratio for eta
-                    double signalToBackgroundEtaRatio = backgroundEtaYield > 0 ? signalEtaYield / backgroundEtaYield : 0;
-                    double signalToBackgroundEtaError = signalToBackgroundEtaRatio > 0 ? signalToBackgroundEtaRatio * sqrt(pow(signalEtaError / signalEtaYield, 2) + pow(backgroundEtaError / backgroundEtaYield, 2)) : 0;
-
-                    // Get the corresponding trigger name using the helper function
-                    std::string triggerNameLabel = getTriggerName(cuts.triggerIndex);
-                    // Create two TLatex objects for the formatted output
-                    TLatex labelText, valueText;
-                    labelText.SetNDC();
-                    labelText.SetTextSize(0.03);
-                    labelText.SetTextColor(kRed);       // Set text color to red
-                    labelText.SetTextFont(62);          // Bold font for labels
-
-                    valueText.SetNDC();
-                    valueText.SetTextSize(0.03);
-                    valueText.SetTextColor(kBlack);     // Default color for values
-                    valueText.SetTextFont(42);          // Normal font for values
-
-                    // Format in three columns: Trigger, pi0, and eta
-
-                    // First column: Trigger information
-                    labelText.DrawLatex(0.5, 0.90, "Trigger:");
-                    valueText.DrawLatex(0.62, 0.90, triggerNameLabel.c_str());
-
-                    labelText.DrawLatex(0.5, 0.85, "clusECore:");
-                    valueText.DrawLatex(0.62, 0.85, formatToThreeSigFigs(cuts.clusECore).c_str());
-
-                    labelText.DrawLatex(0.5, 0.80, "Chi2:");
-                    valueText.DrawLatex(0.62, 0.80, formatToThreeSigFigs(cuts.chi).c_str());
-
-                    labelText.DrawLatex(0.5, 0.75, "Asymmetry:");
-                    valueText.DrawLatex(0.62, 0.75, formatToThreeSigFigs(cuts.asymmetry).c_str());
-
-                    // If pT range is available, add it to the legend
-                    if (!ptRangeLabel.str().empty()) {
-                        labelText.DrawLatex(0.5, 0.70, "pT Range:");
-                        valueText.DrawLatex(0.62, 0.70, ptRangeLabel.str().c_str());
-                    }
-
-                    // Second column: Pi0 information
-                    labelText.DrawLatex(0.6, 0.55, "#pi^{0}:");
-                    labelText.DrawLatex(0.8, 0.55, "#eta:");
-
-                    labelText.DrawLatex(0.50, 0.5, "Mass:");
-                    valueText.DrawLatex(0.60, 0.5, formatToThreeSigFigs(meanPi0).c_str());
-                    valueText.DrawLatex(0.80, 0.5, formatToThreeSigFigs(meanEta).c_str());
-
-                    labelText.DrawLatex(0.50, 0.45, "Sigma:");
-                    valueText.DrawLatex(0.60, 0.45, formatToThreeSigFigs(sigmaPi0).c_str());
-                    valueText.DrawLatex(0.80, 0.45, formatToThreeSigFigs(sigmaEta).c_str());
-
-                    labelText.DrawLatex(0.50, 0.4, "S/B Ratio:");
-                    valueText.DrawLatex(0.60, 0.4, formatToThreeSigFigs(signalToBackgroundPi0Ratio).c_str());
-                    valueText.DrawLatex(0.80, 0.4, formatToThreeSigFigs(signalToBackgroundEtaRatio).c_str());
-
-                    // Third row: Mass ratio
-                    labelText.DrawLatex(0.5, 0.35, "Mass Ratio (#eta/#pi^{0}):");
-                    valueText.DrawLatex(0.68, 0.35, formatToThreeSigFigs(massRatio).c_str());
-
-                    // Save the canvas as a PNG file
-                    canvas.SaveAs(outputFilePath.c_str());
-                    std::cout << "Saved: " << outputFilePath << std::endl;
-
-                    // Clean up
-                    delete totalFit;
-                    delete hSignalPi0;
-                    delete hBackgroundPi0;
-                    delete hSignalEta;
-                    delete hBackgroundEta;
-                }
-                delete objHist;
-            }
-        }
-        delete objTriggerDir;
-    }
-
-    inputFile->Close();
-    delete inputFile;
-}
-
-void isolationEnergies(const std::string& inputFilePath, const std::string& outputDir) {
-    // Open the input file
-    TFile* inputFile = TFile::Open(inputFilePath.c_str(), "READ");
-    if (!inputFile || inputFile->IsZombie()) {
-        std::cerr << "Error: Could not open the file " << inputFilePath << std::endl;
-        return;
-    }
-
-    // Get the 'QA' directory
-    TDirectory* qaDir = (TDirectory*)inputFile->Get("QA");
-    if (!qaDir) {
-        std::cerr << "Error: 'QA' directory not found in file " << inputFilePath << std::endl;
-        inputFile->Close();
-        return;
-    }
-
-    std::cout << "QA directory found. Processing trigger subdirectories...\n";
-
-    // Create the base output directory 'IsolationEnergies'
-    std::string isolationEnergiesDir = outputDir + "/IsolationEnergies";
-    gSystem->mkdir(isolationEnergiesDir.c_str(), true);
-
-    // Iterate through trigger subdirectories in the 'QA' directory
-    TIter nextTriggerDir(qaDir->GetListOfKeys());
-    TKey* keyTriggerDir;
-    while ((keyTriggerDir = (TKey*)nextTriggerDir())) {
-        TObject* objTriggerDir = keyTriggerDir->ReadObj();
-
-        if (objTriggerDir->InheritsFrom(TDirectory::Class())) {
-            TDirectory* triggerDir = (TDirectory*)objTriggerDir;
-            std::string triggerDirName = triggerDir->GetName();
-
-            // Extract the trigger index from the directory name (e.g., "Trigger3")
-            if (triggerDirName.find("Trigger") != 0) {
-                std::cout << "Skipping non-trigger directory: " << triggerDirName << std::endl;
-                delete objTriggerDir;
-                continue;
-            }
-
-            int triggerIndex = std::stoi(triggerDirName.substr(7));  // Extract the index after "Trigger"
-            std::string triggerName = getTriggerName(triggerIndex);
-
-            std::cout << "Processing directory: " << triggerDirName << " for trigger " << triggerIndex << " (" << triggerName << ")\n";
-
-            // Create the output directory for this trigger index
-            std::string triggerOutputDir = isolationEnergiesDir + "/" + triggerDirName;
-            gSystem->mkdir(triggerOutputDir.c_str(), true);
-
-            // Iterate through histograms in the trigger directory
-            TIter nextHist(triggerDir->GetListOfKeys());
-            TKey* keyHist;
-            while ((keyHist = (TKey*)nextHist())) {
-                TObject* objHist = keyHist->ReadObj();
-
-                // Only process histograms with specific naming patterns
-                std::string histName = objHist->GetName();
-                std::string prefix2D = "h2_cluster_iso_Ecore_";
-                std::string prefix1D = "h1_isoEt_";
-
-                if (histName.find(prefix2D) == 0) {
-                        // It's a 2D histogram
-                        std::string outputFilePath = triggerOutputDir + "/" + histName + ".png";
-
-                        TH2* h2 = (TH2*)objHist;
-                        
-                        // Set the title for 2D histograms
-                        h2->SetTitle(("Isolation Energy vs Ecore for " + triggerName).c_str());
-
-                        // Disable the statistics box for 2D histograms
-                        gStyle->SetOptStat(0);
-
-                        // Set Z-axis range as requested
-                        h2->GetZaxis()->SetRangeUser(0, 10000);
-
-                        // Set Z-axis title
-                        h2->GetZaxis()->SetTitle("Counts");
-
-                        // Create the canvas and set the right margin to fit the color palette
-                        TCanvas canvas;
-                        canvas.SetRightMargin(0.18);
-                        canvas.SetLogz();
-                    
-                    
-                        // Draw the 2D histogram with color palette (Z-axis)
-                        h2->Draw("COLZ");
-
-                        TLatex latex;
-                        latex.SetNDC();  // Use normalized coordinates (0-1 range)
-                        latex.SetTextSize(0.04);  // Set text size
-                        latex.DrawLatex(0.5, 0.8, ("Trigger: " + getTriggerName(triggerIndex)).c_str()); // Concatenate string
-
-
-                        // Save the canvas as a PNG file
-                        canvas.SaveAs(outputFilePath.c_str());
-                        std::cout << "Saved 2D histogram: " << outputFilePath << std::endl;
-
-                    } else if (histName.find(prefix1D) == 0) {
-                        // It's a 1D histogram
-                        std::string outputFilePath = triggerOutputDir + "/" + histName + ".png";
-
-                        TH1* h1 = (TH1*)objHist;
-                        // Set the title for 1D histograms
-                        h1->SetTitle(("Isolation Energy for " + triggerName).c_str());
-                        h1->GetXaxis()->SetRangeUser(-10, 10);
-                        // Enable the statistics box for 1D histograms
-                        gStyle->SetOptStat(1);
-                        TCanvas canvas;
-
-                        h1->Draw();
-                        // Add TLatex for the trigger name (concatenate string manually)
-                        TLatex latex;
-                        latex.SetNDC();  // Use normalized coordinates (0-1 range)
-                        latex.SetTextSize(0.04);  // Set text size
-                        latex.DrawLatex(0.65, 0.8, ("Trigger: " + getTriggerName(triggerIndex)).c_str());  // Concatenate string
-
-
-                        
-                        canvas.SaveAs(outputFilePath.c_str());
-                        std::cout << "Saved 1D histogram: " << outputFilePath << std::endl;
-                    } else {
-                        std::cout << "Skipping histogram: " << histName << " (does not match pattern)" << std::endl;
-                    }
-
-                    // Clean up the read object (if necessary)
-                    delete objHist;
-                }
-            } else {
-                std::cout << "Skipping non-directory object: " << objTriggerDir->GetName() << std::endl;
-            }
-
-            // Clean up the trigger directory object
-            delete objTriggerDir;
-        }
-
-    // Close the input file
-    inputFile->Close();
-    delete inputFile;
-}
-
-// Function to parse photon histogram names and extract cut values, pT range, and trigger index
-CutValues parsePhotonHistName(const std::string& histName) {
-    CutValues cuts;
-
-    // Regex pattern to match isolatedPhotonCount, allPhotonCount, or ptPhoton histograms
-    std::regex re("(isolatedPhotonCount|allPhotonCount|ptPhoton)_E([0-9]+(?:point[0-9]*)?)_Chi([0-9]+(?:point[0-9]*)?)_Asym([0-9]+(?:point[0-9]*)?)_pT_([0-9]+(?:point[0-9]*)?)to([0-9]+(?:point[0-9]*)?)_(\\d+)");
-    std::smatch match;
-
-    // Lambda function to convert strings with 'point' to float values
-    auto convert = [](const std::string& input) -> float {
-        std::string temp = input;
-        size_t pointPos = temp.find("point");
-        if (pointPos != std::string::npos) {
-            temp.replace(pointPos, 5, ".");
-        }
-        try {
-            return std::stof(temp);
-        } catch (const std::exception&) {
-            return 0.0f;
-        }
-    };
-
-    // Check if the regex matches the histogram name
-    if (std::regex_search(histName, match, re)) {
-        if (match.size() >= 7) {
-            cuts.clusECore = convert(match[2].str());
-            cuts.chi = convert(match[3].str());
-            cuts.asymmetry = convert(match[4].str());
-
-            // pT bin range is always present
-            cuts.pTMin = convert(match[5].str());
-            cuts.pTMax = convert(match[6].str());
-
-            // Trigger index
-            cuts.triggerIndex = std::stoi(match[7].str());
-
-            // Diagnostic prints
-            std::cout << "Parsed histogram: " << histName << std::endl;
-            std::cout << "  clusECore: " << cuts.clusECore << ", Chi: " << cuts.chi << ", Asymmetry: " << cuts.asymmetry
-                      << ", pTMin: " << cuts.pTMin << ", pTMax: " << cuts.pTMax << ", Trigger Index: " << cuts.triggerIndex << std::endl;
-        }
-    } else {
-        std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
-    }
-
-    return cuts;
-}
-
-void findHistogramsRecursive(TDirectory* dir, std::vector<TH1*>& isolatedPhotonHists, std::vector<TH1*>& allPhotonHists, std::vector<TH1*>& ptPhotonHists, std::vector<std::string>& histNames) {
-    // Iterate over the keys in the current directory
-    TIter nextKey(dir->GetListOfKeys());
-    TKey* key;
-    
-    while ((key = (TKey*)nextKey())) {
-        TObject* obj = key->ReadObj();
-
-        if (obj->InheritsFrom(TDirectory::Class())) {
-            // Recursively search subdirectories
-            TDirectory* subdir = (TDirectory*)obj;
-            findHistogramsRecursive(subdir, isolatedPhotonHists, allPhotonHists, ptPhotonHists, histNames);
-        } else if (obj->InheritsFrom(TH1::Class())) {
-            // We found a histogram, process it
-            TH1* hist = (TH1*)obj;
-            std::string histName = hist->GetName();
-
-            // Filter histograms: Process only those with isolatedPhotonCount, allPhotonCount, or ptPhoton in the name
-            if (histName.find("isolatedPhotonCount_E") == 0) {
-                isolatedPhotonHists.push_back(hist);
-                histNames.push_back(histName);
-            } else if (histName.find("allPhotonCount_E") == 0) {
-                allPhotonHists.push_back(hist);
-                histNames.push_back(histName);
-            } else if (histName.find("ptPhoton_E") == 0) {
-                ptPhotonHists.push_back(hist);
-                histNames.push_back(histName);
-            } else {
-                std::cerr << "Skipping histogram: " << histName << " (does not match expected naming pattern)" << std::endl;
-            }
-        } else {
-            // Object is neither a directory nor a histogram
-            std::cerr << "Skipping object: " << obj->GetName() << " (not a histogram)" << std::endl;
-        }
-    }
-}
-
-void savePhotonAnalysisHistograms(const std::string& inputFilePath, const std::string& outputDir) {
-    // Define first reference data (from the first table)
-    std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
-    std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
-    std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
-
-    // Define second reference data (from the second table - Reference Two)
-    std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
-    std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
-    std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
-
-    TFile* inputFile = TFile::Open(inputFilePath.c_str(), "READ");
-    if (!inputFile || inputFile->IsZombie()) {
-        std::cerr << "Error: Could not open the file " << inputFilePath << std::endl;
-        return;
-    }
-
-    // Get the 'PhotonAnalysis' directory
-    TDirectory* photonAnalysisDir = (TDirectory*)inputFile->Get("PhotonAnalysis");
-    if (!photonAnalysisDir) {
-        std::cerr << "Error: 'PhotonAnalysis' directory not found." << std::endl;
-        inputFile->Close();
-        return;
-    }
-
-    // Create the base output directory 'IsolationEnergies'
-    std::string baseOutputDir = outputDir + "/IsolationEnergies";
-    gSystem->mkdir(baseOutputDir.c_str(), true);
-
-    // Collect histograms from all subdirectories recursively
-    std::vector<TH1*> isolatedPhotonHists, allPhotonHists, ptPhotonHists;
-    std::vector<std::string> histNames;
-
-    // Call recursive function to find histograms
-    findHistogramsRecursive(photonAnalysisDir, isolatedPhotonHists, allPhotonHists, ptPhotonHists, histNames);
-
-    // Ensure histograms are grouped by trigger, cut combination, and pT bin
-    if (isolatedPhotonHists.size() == allPhotonHists.size() && isolatedPhotonHists.size() == ptPhotonHists.size()) {
-        std::string lastCutDir = "";  // Keep track of the cut folder for the final ratio plot
-        TGraph* ratioGraph = new TGraph();  // Initialize the ratio plot TGraph
-        int pointIndex = 0;
-        TLegend* legend = new TLegend(0.2, 0.7, 0.4, 0.9);  // Initialize the legend for the graph
-        legend->SetTextSize(0.035);
-
-        for (size_t i = 0; i < isolatedPhotonHists.size(); ++i) {
-            TH1* isolatedPhotonHist = isolatedPhotonHists[i];
-            TH1* allPhotonHist = allPhotonHists[i];
-            TH1* ptPhotonHist = ptPhotonHists[i];
-
-            std::string histName = isolatedPhotonHist->GetName();
-            CutValues cuts = parsePhotonHistName(histName);
-
-            // Output directories based on parsed values (cut variation)
-            std::string outputCutDir = baseOutputDir + "/Trigger" + std::to_string(cuts.triggerIndex) +
-                                       "/E" + formatToThreeSigFigs(cuts.clusECore) +
-                                       "_Chi" + formatToThreeSigFigs(cuts.chi) +
-                                       "_Asym" + formatToThreeSigFigs(cuts.asymmetry);
-
-            if (outputCutDir != lastCutDir) {
-                if (pointIndex > 0) {
-                    // Save the ratio graph for the previous cut variation
-                    TCanvas* ratioCanvas = new TCanvas("c2", "Isolated/All Photon Ratio", 800, 600);
-                    ratioGraph->SetTitle("Isolated/All Photon Ratio; p_{T} [GeV/c]; Isolated/All Ratio");
-                    ratioGraph->GetXaxis()->SetLimits(0, 20);
-                    ratioGraph->GetYaxis()->SetRangeUser(0, 2);
-                    ratioGraph->Draw("AP");
-                    legend->Draw();
-
-                    TLine* lineAtOne = new TLine(0, 1, 20, 1);  // From x = 0 to x = 20, y = 1
-                    lineAtOne->SetLineColor(kBlack);
-                    lineAtOne->SetLineStyle(1);  // Solid line
-                    lineAtOne->Draw("same");     // Draw on top of the existing graph
-                    
-                    
-                    // Add the first set of reference data points (black circles)
-                    TGraphErrors* refGraph = new TGraphErrors(referencePTGamma.size());
-                    for (size_t j = 0; j < referencePTGamma.size(); ++j) {
-                        refGraph->SetPoint(j, referencePTGamma[j], referenceRatio[j]);
-                        refGraph->SetPointError(j, 0, referenceStatError[j]);
-                    }
-                    refGraph->SetMarkerColor(kBlack);
-                    refGraph->SetMarkerStyle(24);  // Black circle markers
-                    refGraph->Draw("P same");  // Overlay reference data points
-
-                    // Add the second set of reference data points (red circles)
-                    TGraphErrors* refTwoGraph = new TGraphErrors(referenceTwoPTGamma.size());
-                    for (size_t j = 0; j < referenceTwoPTGamma.size(); ++j) {
-                        refTwoGraph->SetPoint(j, referenceTwoPTGamma[j], referenceTwoRatio[j]);
-                        refTwoGraph->SetPointError(j, 0, referenceTwoStatError[j]);
-                    }
-                    refTwoGraph->SetMarkerColor(kRed);
-                    refTwoGraph->SetMarkerStyle(25);  // Red triangle markers
-                    refTwoGraph->Draw("P same");  // Overlay reference data points
-
-                    // Add both references to the legend
-                    legend->AddEntry(refGraph, "2003 PHENIX Data - Ratio of Isolated/All Direct Phtons from a #pi^{0} Tagging Method", "P");
-                    legend->AddEntry(refTwoGraph, "2003 PHENIX Data, Ratio of Isolated to all Photons from #pi^{0} Decay", "P");
-
-                    std::string ratioPlotFile = lastCutDir + "/IsolatedAllRatio.png";
-                    ratioCanvas->SaveAs(ratioPlotFile.c_str());
-
-                    delete ratioCanvas;
-                    delete ratioGraph;
-                    delete refGraph;
-                    delete refTwoGraph;
-                    delete legend;
-                }
-
-                // Start a new ratio graph and legend for the next cut variation
-                ratioGraph = new TGraph();
-                legend = new TLegend(0.18, 0.65, 0.36, 0.9);
-                legend->SetTextSize(0.028);
-                pointIndex = 0;
-                lastCutDir = outputCutDir;
-                gSystem->mkdir(outputCutDir.c_str(), true);
-            }
-
-            // Create subdirectory for this pT bin
-            std::string outputPtDir = outputCutDir + "/pT_" + formatToThreeSigFigs(cuts.pTMin) +
-                                      "_to_" + formatToThreeSigFigs(cuts.pTMax);
-            gSystem->mkdir(outputPtDir.c_str(), true);
-
-            // Save the three histograms for this pT bin as PNGs
-            std::string outputIsolated = outputPtDir + "/isolatedPhoton_" + std::to_string(i) + ".png";
-            std::string outputAll = outputPtDir + "/allPhoton_" + std::to_string(i) + ".png";
-            std::string outputPt = outputPtDir + "/ptPhoton_" + std::to_string(i) + ".png";
-
-            TCanvas* canvas = new TCanvas("c1", "", 800, 600);
-            isolatedPhotonHist->Draw();
-            canvas->SaveAs(outputIsolated.c_str());
-
-            allPhotonHist->Draw();
-            canvas->SaveAs(outputAll.c_str());
-
-            ptPhotonHist->Draw();
-            canvas->SaveAs(outputPt.c_str());
-            delete canvas;
-
-            // Compute the ratio and weighted average pT for the ratio plot
-            double totalIsolated = isolatedPhotonHist->GetEntries();
-            double totalAll = allPhotonHist->GetEntries();
-            double weightedSumPt = 0;
-            double totalPhotonCounts = 0;
-            int nBins = ptPhotonHist->GetNbinsX();
-
-            for (int bin = 1; bin <= nBins; ++bin) {
-                double photonCount = ptPhotonHist->GetBinContent(bin);
-                double pt = ptPhotonHist->GetBinCenter(bin);
-                weightedSumPt += pt * photonCount;
-                totalPhotonCounts += photonCount;
-            }
-
-            double weightedAveragePt = (totalPhotonCounts > 0) ? weightedSumPt / totalPhotonCounts : 0;
-
-            // Only add a point if we have a valid ratio
-            if (totalAll > 0) {
-                double ratio = totalIsolated / totalAll;
-
-                // Set the point with a different color and marker style
-                ratioGraph->SetPoint(pointIndex, weightedAveragePt, ratio);
-                ratioGraph->SetMarkerColor(kBlue);  // Set blue color for calculated points
-                ratioGraph->SetMarkerStyle(20);     // Set square markers for calculated points
-
-                // Add to legend with details of the calculated point
-                std::string legendText = "pT range: " + formatToThreeSigFigs(cuts.pTMin) + " to " +
-                                         formatToThreeSigFigs(cuts.pTMax) +
-                                         ", Weighted pT: " + formatToThreeSigFigs(weightedAveragePt) +
-                                         ", Ratio: " + formatToThreeSigFigs(ratio);
-                legend->AddEntry(ratioGraph, legendText.c_str(), "P");
-
-                pointIndex++;
-            }
-        }
-
-        // Save the final ratio graph for the last cut variation
-        if (pointIndex > 0) {
-            TCanvas* ratioCanvas = new TCanvas("c2", "Isolated/All Photon Ratio", 800, 600);
-            ratioGraph->SetTitle("Isolated/All Photon Ratio; p_{T} [GeV/c]; Isolated/All Ratio");
-            ratioGraph->GetXaxis()->SetLimits(0, 20);
-            ratioGraph->GetYaxis()->SetRangeUser(0, 2);
-            ratioGraph->Draw("AP");
-
-            // Add the first set of reference data points (black circles)
-            TGraphErrors* refGraph = new TGraphErrors(referencePTGamma.size());
-            for (size_t j = 0; j < referencePTGamma.size(); ++j) {
-                refGraph->SetPoint(j, referencePTGamma[j], referenceRatio[j]);
-                refGraph->SetPointError(j, 0, referenceStatError[j]);
-            }
-            refGraph->SetMarkerColor(kBlack);
-            refGraph->SetMarkerStyle(kCircle);  // Black circle markers
-            refGraph->Draw("P same");  // Overlay reference data points
-
-            // Add the second set of reference data points (red triangles)
-            TGraphErrors* refTwoGraph = new TGraphErrors(referenceTwoPTGamma.size());
-            for (size_t j = 0; j < referenceTwoPTGamma.size(); ++j) {
-                refTwoGraph->SetPoint(j, referenceTwoPTGamma[j], referenceTwoRatio[j]);
-                refTwoGraph->SetPointError(j, 0, referenceTwoStatError[j]);
-            }
-            refTwoGraph->SetMarkerColor(kBlack);
-            refTwoGraph->SetMarkerStyle(24);  // Red triangle markers
-            refTwoGraph->Draw("P same");  // Overlay reference data points
-
-            // Add both references to the legend
-            legend->AddEntry(refGraph, "Reference One", "P");
-            legend->AddEntry(refTwoGraph, "Reference Two", "P");
-
-            legend->Draw();
-
-            std::string ratioPlotFile = lastCutDir + "/IsolatedAllRatio.png";
-            ratioCanvas->SaveAs(ratioPlotFile.c_str());
-
-            delete ratioCanvas;
-            delete ratioGraph;
-            delete refGraph;
-            delete refTwoGraph;
-            delete legend;
-        }
-    } else {
-        std::cerr << "Mismatch between isolated, all, and ptPhoton histograms sizes." << std::endl;
-    }
-
-    // Close the input file
-    inputFile->Close();
-    delete inputFile;
-}
-
-
-
 // Main function to run both processes
 void plotOutput() {
     gROOT->LoadMacro("sPhenixStyle.C");
@@ -1643,8 +888,5 @@ void plotOutput() {
 
     // Run the function to overlay histograms from the merged file
     plotOverlayHistograms();
-    OverlayCaloQA();
-   saveAnnotatedInvariantMassHistograms(inputFilePath);
-    isolationEnergies(inputFilePath, outputDir);
-    savePhotonAnalysisHistograms(inputFilePath, outputDir);
+   // OverlayCaloQA();
 }
