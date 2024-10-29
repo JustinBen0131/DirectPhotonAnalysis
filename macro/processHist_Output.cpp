@@ -75,10 +75,10 @@ void scale_histogram(TH1* hist, int scaledown, int triggerIndex) {
 
     // Apply the scaling if the scaledown factor is valid
     if (scaledown > 0) {
-        hist->Scale(1.0 / (scaledown + 1.0));  // Scale by inverse of (scaledown + 1)
+        hist->Scale(scaledown + 1.0);  // Scale by inverse of (scaledown + 1)
         std::cout << ANSI_YELLOW << "Scaled histogram \"" << hist->GetName()
                   << "\" for trigger index " << triggerIndex
-                  << " by inverse factor " << 1.0 / (scaledown + 1)
+                  << " by inverse factor " << scaledown + 1
                   << " (scale-down factor: " << scaledown << ")" << ANSI_RESET << std::endl;
     } else if (scaledown == 0) {
         std::cout << ANSI_CYAN << "No scaling applied to histogram \""
@@ -131,25 +131,26 @@ void processQAHistograms(const std::string& outputFileName, int runNumber) {
         // Change to the Trigger directory to ensure histograms are modified in place
         triggerDir->cd();  // Set current directory to TriggerX
         
-        // List of histogram names to scale
-        std::vector<std::string> histNames = {
-            "h8by8TowerEnergySum_" + std::to_string(triggerIndex),
-            "h_jet_energy_" + std::to_string(triggerIndex),
-            "h_hcal_energy_" + std::to_string(triggerIndex),
-            "h_jet_emcal_energy_" + std::to_string(triggerIndex),
-            "h_jet_hcalin_energy_" + std::to_string(triggerIndex),
-            "h_jet_hcalout_energy_" + std::to_string(triggerIndex),
-            "hCluster_maxECore_" + std::to_string(triggerIndex)
-        };
-
-        // Scale each histogram in the list
-        for (const auto& histName : histNames) {
-            TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
-            if (hist) {
-                scale_histogram(hist, scaledowns[triggerIndex], triggerIndex);
-                hist->Write("", TObject::kOverwrite);
+        // Iterate over all keys in the trigger directory
+        TIter next(triggerDir->GetListOfKeys());
+        TKey *key;
+        while ((key = (TKey*)next())) {
+            std::string className = key->GetClassName();
+            std::string objName = key->GetName();
+            if (className.find("TH1") != std::string::npos) {
+                // It's a histogram
+                TH1* hist = (TH1*)triggerDir->Get(objName.c_str());
+                if (hist) {
+                    scale_histogram(hist, scaledowns[triggerIndex], triggerIndex);
+                    hist->Write("", TObject::kOverwrite);
+                }
+            } else if (className.find("TDirectory") != std::string::npos) {
+                // Handle subdirectories if needed
+                std::cout << "Found subdirectory: " << objName << std::endl;
+                // Optionally, implement recursive scaling for subdirectories
             } else {
-                std::cout << "Histogram not found: " << histName << std::endl;
+                // Not a histogram or directory
+                std::cout << "Skipping object: " << objName << " of class " << className << std::endl;
             }
         }
         
