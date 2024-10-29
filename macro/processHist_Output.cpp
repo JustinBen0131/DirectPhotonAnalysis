@@ -67,18 +67,12 @@ void scale_histogram(TH1* hist, int scaledown, int triggerIndex) {
         return;
     }
 
-    // Print the histogram's integral (sum of bin contents) before scaling
-    double beforeIntegral = hist->Integral();
-    std::cout << ANSI_CYAN << "Before scaling: Histogram \"" << hist->GetName()
-              << "\" (Trigger Index: " << triggerIndex
-              << "), Integral = " << beforeIntegral << ANSI_RESET << std::endl;
-
     // Apply the scaling if the scaledown factor is valid
     if (scaledown > 0) {
-        hist->Scale(scaledown + 1.0);  // Scale by inverse of (scaledown + 1)
+        hist->Scale(scaledown + 1.0);  // Scale by (scaledown + 1)
         std::cout << ANSI_YELLOW << "Scaled histogram \"" << hist->GetName()
                   << "\" for trigger index " << triggerIndex
-                  << " by inverse factor " << scaledown + 1
+                  << " by factor " << scaledown + 1
                   << " (scale-down factor: " << scaledown << ")" << ANSI_RESET << std::endl;
     } else if (scaledown == 0) {
         std::cout << ANSI_CYAN << "No scaling applied to histogram \""
@@ -88,16 +82,8 @@ void scale_histogram(TH1* hist, int scaledown, int triggerIndex) {
         std::cout << ANSI_RED << "Skipping histogram \"" << hist->GetName()
                   << "\" for trigger index " << triggerIndex
                   << " because the trigger was off (scale-down factor = -1)" << ANSI_RESET << std::endl;
-        return;  // Don't write if nothing was done
     }
-
-    // Print the histogram's integral after scaling
-    double afterIntegral = hist->Integral();
-    std::cout << ANSI_CYAN << "After scaling: Histogram \"" << hist->GetName()
-              << "\" (Trigger Index: " << triggerIndex
-              << "), Integral = " << afterIntegral << ANSI_RESET << std::endl;
 }
-
 
 void processQAHistograms(const std::string& outputFileName, int runNumber) {
     // Retrieve scale-down factors for the current run
@@ -119,52 +105,142 @@ void processQAHistograms(const std::string& outputFileName, int runNumber) {
         return;
     }
 
-    // Iterate through each TriggerX subdirectory in QA
     for (int triggerIndex = 0; triggerIndex < 64; ++triggerIndex) {
+        std::cout << "Processing QA Trigger Directory: Trigger" << triggerIndex << std::endl;
         std::string triggerDirName = "Trigger" + std::to_string(triggerIndex);
         TDirectory* triggerDir = (TDirectory*)qaDir->Get(triggerDirName.c_str());
         if (!triggerDir) {
             std::cout << "Trigger directory not found: " << triggerDirName << std::endl;
-            continue;  // Skip if this TriggerX directory doesn't exist
+            continue;
         }
         
-        // Change to the Trigger directory to ensure histograms are modified in place
-        triggerDir->cd();  // Set current directory to TriggerX
+        triggerDir->cd();
         
-        // Iterate over all keys in the trigger directory
-        TIter next(triggerDir->GetListOfKeys());
-        TKey *key;
-        while ((key = (TKey*)next())) {
-            std::string className = key->GetClassName();
-            std::string objName = key->GetName();
-            if (className.find("TH1") != std::string::npos) {
-                // It's a histogram
-                TH1* hist = (TH1*)triggerDir->Get(objName.c_str());
-                if (hist) {
-                    scale_histogram(hist, scaledowns[triggerIndex], triggerIndex);
-                    hist->Write("", TObject::kOverwrite);
-                }
-            } else if (className.find("TDirectory") != std::string::npos) {
-                // Handle subdirectories if needed
-                std::cout << "Found subdirectory: " << objName << std::endl;
-                // Optionally, implement recursive scaling for subdirectories
+        std::vector<std::string> histNames = {
+            "h8by8TowerEnergySum_" + std::to_string(triggerIndex),
+            "h_jet_energy_" + std::to_string(triggerIndex),
+            "h_hcal_energy_" + std::to_string(triggerIndex),
+            "h_jet_emcal_energy_" + std::to_string(triggerIndex),
+            "h_jet_hcalin_energy_" + std::to_string(triggerIndex),
+            "h_jet_hcalout_energy_" + std::to_string(triggerIndex),
+            "hCluster_maxECore_" + std::to_string(triggerIndex)
+        };
+
+        // Scale each histogram in the list
+        for (const auto& histName : histNames) {
+            TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
+            if (hist) {
+                scale_histogram(hist, scaledowns[triggerIndex], triggerIndex);
+                hist->Write("", TObject::kOverwrite);
             } else {
-                // Not a histogram or directory
-                std::cout << "Skipping object: " << objName << " of class " << className << std::endl;
+                std::cout << "Histogram not found: " << histName << std::endl;
             }
         }
-        
-        // Go back to the QA directory
-        qaDir->cd();  // After processing each TriggerX directory, return to the QA directory
+        qaDir->cd();
     }
+    
+    // PhotonAnalysis Directory
+    TDirectory* photonDir = (TDirectory*)file->Get("PhotonAnalysis");
+    if (photonDir) {
+        for (int triggerIndex = 0; triggerIndex < 64; ++triggerIndex) {
+            std::cout << "Processing PhotonAnalysis Trigger Directory: Trigger" << triggerIndex << std::endl;
+            std::string triggerDirName = "Trigger" + std::to_string(triggerIndex);
+            TDirectory* triggerDir = (TDirectory*)photonDir->Get(triggerDirName.c_str());
+            if (!triggerDir) {
+                std::cout << "Trigger directory not found: " << triggerDirName << std::endl;
+                continue;
+            }
+            triggerDir->cd();
 
+            // List of histogram prefixes to scale
+            std::vector<std::string> histogramPrefixes = {
+                "isolatedPhotonCount_E",
+                "allPhotonCount_E",
+                "ptPhoton_E"
+            };
+
+            // Get the list of keys and make a copy of the histogram names
+            TList* keyList = triggerDir->GetListOfKeys();
+            int totalHistograms = keyList->GetEntries();
+            std::cout << "Total histograms in Trigger" << triggerIndex << ": " << totalHistograms << std::endl;
+
+            std::vector<std::string> histNames;
+            TIter next(keyList);
+            TKey* key;
+            while ((key = (TKey*)next())) {
+                histNames.push_back(key->GetName());
+            }
+
+            // Counters for statistics
+            int histogramsProcessed = 0;
+            int histogramsSkippedZeroEntries = 0;
+            int histogramsSkippedTriggerOff = 0;
+            int histogramsSkippedNotMatching = 0;
+            int histogramsSkippedNotTH1 = 0;
+
+            for (const auto& histName : histNames) {
+                TObject* obj = triggerDir->Get(histName.c_str());
+                if (!obj) continue;
+                std::string className = obj->ClassName();
+
+                // Check if the object is a TH1 histogram
+                if (className.find("TH1") != std::string::npos) {
+                    // Check if histogram name starts with any of the prefixes and ends with '_' + triggerIndex
+                    bool matchesPattern = false;
+                    for (const auto& prefix : histogramPrefixes) {
+                        std::string suffix = "_" + std::to_string(triggerIndex);
+                        if (histName.find(prefix) == 0 && histName.size() >= suffix.size() &&
+                            histName.compare(histName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                            matchesPattern = true;
+                            break; // Found a matching prefix
+                        }
+                    }
+                    if (matchesPattern) {
+                        // Histogram matches the pattern
+                        TH1* hist = (TH1*)obj;
+                        if (hist) {
+                            if (hist->GetEntries() == 0) {
+                                histogramsSkippedZeroEntries++;
+                                continue;
+                            }
+                            // Check the scaledown factor
+                            if (scaledowns[triggerIndex] == -1) {
+                                histogramsSkippedTriggerOff++;
+                                continue;
+                            }
+                            scale_histogram(hist, scaledowns[triggerIndex], triggerIndex);
+                            hist->Write("", TObject::kOverwrite);
+                            histogramsProcessed++;
+                        }
+                    } else {
+                        histogramsSkippedNotMatching++;
+                    }
+                } else {
+                    histogramsSkippedNotTH1++;
+                }
+
+                // Optional: Print progress every 100 histograms
+                if (histogramsProcessed % 100 == 0 && histogramsProcessed > 0) {
+                    std::cout << "Processed " << histogramsProcessed << " histograms in Trigger" << triggerIndex << std::endl;
+                }
+            }
+
+            // Report statistics for this trigger
+            std::cout << "Trigger " << triggerIndex << " processing summary:" << std::endl;
+            std::cout << "  Total histograms: " << totalHistograms << std::endl;
+            std::cout << "  Histograms processed (scaled): " << histogramsProcessed << std::endl;
+            std::cout << "  Histograms skipped (zero entries): " << histogramsSkippedZeroEntries << std::endl;
+            std::cout << "  Histograms skipped (trigger off): " << histogramsSkippedTriggerOff << std::endl;
+            std::cout << "  Histograms skipped (not matching pattern): " << histogramsSkippedNotMatching << std::endl;
+            std::cout << "  Histograms skipped (not TH1): " << histogramsSkippedNotTH1 << std::endl;
+
+            photonDir->cd();
+        }
+    }
     file->Close();
     std::cout << "Successfully processed and scaled histograms for run " << runNumber << std::endl;
 }
 
-
-
-// Function to merge ROOT files for a given run number using hadd
 void mergeRunFiles(const std::string& runNumber, const std::string& baseDir, const std::string& outputDir) {
     std::string runPath = baseDir + runNumber + "/";
     std::string outputFileName = outputDir + runNumber + "_HistOutput.root";
