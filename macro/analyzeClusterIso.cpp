@@ -305,6 +305,11 @@ void processDirectory(TDirectory* baseDir, const std::string& isolationEnergiesD
 
                     auto baseKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.massWindowLabel);
                     auto isoKey = std::make_tuple(triggerIndex, cuts.clusECore, cuts.chi, cuts.asymmetry, cuts.pTMin, cuts.pTMax, cuts.isoMin, cuts.isoMax, cuts.massWindowLabel);
+                    
+                    // Adjust the x-axis range for histograms named "h1_isoEt_pT_XtoY_triggerIndex"
+                    if (histName.find("h1_isoEt_pT_") == 0 && objHist->InheritsFrom(TH1::Class())) {
+                        ((TH1*)objHist)->GetXaxis()->SetRangeUser(-20, 20);
+                    }
 
                     if (histName.find("isolatedPhotonCount_E") == 0) {
                         if (objHist->InheritsFrom(TH1::Class())) {
@@ -665,45 +670,211 @@ void readDataFromCSV(const std::string& filename,
     file.close();
 }
 
+void createCombinedPlot(
+    const std::string& outputDir, const std::string& label,
+    const std::map<int, std::vector<std::tuple<float, float, float, float, float, float, float>>>& triggerDataMap,
+    const std::vector<std::pair<float, float>>& isoEtRanges,
+    const std::vector<int>& colors, const std::vector<std::pair<float, float>>& exclusionRanges,
+    const std::string& plotTitle, const std::string& yAxisTitle, bool drawRefA, bool drawRefB,
+    TLegend* refLegend, TLegend* dummyLegend,
+    const std::vector<double>& referencePTGamma, const std::vector<double>& referenceRatio,
+    const std::vector<double>& referenceStatError, const std::vector<double>& referenceTwoPTGamma,
+    const std::vector<double>& referenceTwoRatio, const std::vector<double>& referenceTwoStatError,
+    const std::string& cutFolder) {
+
+    // Ensure both Trigger 10 and Trigger 25 data are present
+    if (triggerDataMap.count(10) == 0 || triggerDataMap.count(25) == 0) {
+        std::cerr << "Error: Data for Trigger 10 or Trigger 25 not found." << std::endl;
+        return;
+    }
+    
+    const auto& pointsTrigger10 = triggerDataMap.at(10);
+    const auto& pointsTrigger25 = triggerDataMap.at(25);
+
+    // Create a folder path based on the cutFolder to save the plot
+    std::string savePath = outputDir + "/CombinedTrigger/" + cutFolder + "/" + label;
+    gSystem->mkdir(savePath.c_str(), true);
+
+    std::cout << "Creating combined plot for Trigger 10 (pT < 10) and Trigger 25 (pT >= 10) at: " << savePath << std::endl;
+
+    TCanvas* canvas = new TCanvas(("canvas_Combined_" + label).c_str(), ("Ratio vs pT " + label).c_str(), 800, 600);
+    TMultiGraph* multiGraph = new TMultiGraph();
+
+    // Iterate over each isoEt range and ensure only matching points are plotted for each cut combination
+    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+        TGraphErrors* graphWithError = new TGraphErrors();
+        int color = colors[i];
+        std::pair<float, float> currentRange = isoEtRanges[i];
+
+        std::cout << "\nProcessing isoEt range: [" << currentRange.first << ", " << currentRange.second << "]\n";
+
+        // Plot points for Trigger 10 (pT < 10) for the current isoEt range
+        for (const auto& point : pointsTrigger10) {
+            float ptMin = std::get<0>(point);
+            float isoMin = std::get<2>(point);
+            float isoMax = std::get<3>(point);
+            float ratio = std::get<4>(point);
+            float error = std::get<5>(point);
+            float weightedPt = std::get<6>(point);
+
+            if (weightedPt >= 10) continue; // Only plot for pT < 10 for Trigger 10
+
+            // Check isoEt range and exclusion
+            if (isoMin == currentRange.first && isoMax == currentRange.second &&
+                std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) == exclusionRanges.end()) {
+                
+                int index = graphWithError->GetN();
+                graphWithError->SetPoint(index, weightedPt, ratio);
+                graphWithError->SetPointError(index, 0, error);
+                graphWithError->SetMarkerStyle(20);
+                graphWithError->SetMarkerColor(color);
+                graphWithError->SetLineColor(color);
+                std::cout << "  Added to plot for Trigger 10: weightedPt = " << weightedPt << ", ratio = " << ratio << "\n";
+            }
+        }
+
+        // Plot points for Trigger 25 (pT >= 10) for the current isoEt range
+        for (const auto& point : pointsTrigger25) {
+            float ptMin = std::get<0>(point);
+            float isoMin = std::get<2>(point);
+            float isoMax = std::get<3>(point);
+            float ratio = std::get<4>(point);
+            float error = std::get<5>(point);
+            float weightedPt = std::get<6>(point);
+
+            if (weightedPt < 10) continue; // Only plot for pT >= 10 for Trigger 25
+
+            // Check isoEt range and exclusion
+            if (isoMin == currentRange.first && isoMax == currentRange.second &&
+                std::find(exclusionRanges.begin(), exclusionRanges.end(), std::make_pair(isoMin, isoMax)) == exclusionRanges.end()) {
+                
+                int index = graphWithError->GetN();
+                graphWithError->SetPoint(index, weightedPt, ratio);
+                graphWithError->SetPointError(index, 0, error);
+                graphWithError->SetMarkerStyle(20);
+                graphWithError->SetMarkerColor(color);
+                graphWithError->SetLineColor(color);
+                std::cout << "  Added to plot for Trigger 25: weightedPt = " << weightedPt << ", ratio = " << ratio << "\n";
+            }
+        }
+
+        multiGraph->Add(graphWithError);
+    }
+    // Before drawing the multiGraph, define a frame with the correct axis limits
+    TH1F* hFrame = canvas->DrawFrame(2, 0, 15, 1.5);
+    hFrame->SetTitle(plotTitle.c_str());
+    hFrame->GetXaxis()->SetTitle("Cluster p_{T}");
+    hFrame->GetXaxis()->SetTitleSize(0.045);
+    hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
+    hFrame->GetYaxis()->SetTitleSize(0.045);
+
+    // Now draw the multiGraph on top of the frame
+    multiGraph->Draw("P");
+
+    // Draw a dashed line at y = 1
+    TLine* line = new TLine(2, 1, 15, 1);
+    line->SetLineStyle(2); // Dashed line
+    line->Draw();
+
+    if (drawRefA) {
+        TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
+        for (size_t i = 0; i < referencePTGamma.size(); ++i) {
+            refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
+            refGraphOne->SetPointError(i, 0, referenceStatError[i]);
+        }
+        refGraphOne->SetMarkerStyle(20);
+        refGraphOne->SetMarkerColor(kBlue);
+        refGraphOne->SetLineColor(kBlue);
+        refGraphOne->Draw("P SAME");
+    }
+
+    if (drawRefB) {
+        TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
+        for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
+            refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
+            refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
+        }
+        refGraphTwo->SetMarkerStyle(20);
+        refGraphTwo->SetMarkerColor(kBlue);
+        refGraphTwo->SetLineColor(kBlue);
+        refGraphTwo->Draw("P SAME");
+    }
+    if (drawRefA || drawRefB) {
+        refLegend->Draw();
+    }
+    TLatex labelText;
+    labelText.SetNDC();
+    labelText.SetTextSize(0.025);
+
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.025);
+
+    labelText.DrawLatex(0.19, 0.72, "#font[62]{Triggers:}");
+
+    // Retrieve trigger names
+    std::string triggerName10 = getTriggerName(10);
+    std::string triggerName25 = getTriggerName(25);
+
+    // Construct the labels with trigger names and p_T ranges
+    std::string triggerLabel = triggerName10 + " (p_{T} #leq 10 GeV) & " + triggerName25 + " (p_{T} > 10 GeV)";
+    valueText.DrawLatex(0.29, 0.72, triggerLabel.c_str());
+
+    labelText.DrawLatex(0.19, 0.64, "#font[62]{ECore #geq}");
+    std::string eCoreWithUnit = cutFolder.substr(cutFolder.find("E_") + 2, 5) + " GeV";
+    valueText.DrawLatex(0.29, 0.64, eCoreWithUnit.c_str());
+
+    labelText.DrawLatex(0.19, 0.6, "#font[62]{#chi^{2} <}");
+    std::string chi = cutFolder.substr(cutFolder.find("Chi") + 3, 5);
+    valueText.DrawLatex(0.25, 0.6, chi.c_str());
+
+    labelText.DrawLatex(0.19, 0.56, "#font[62]{Asymmetry <}");
+    std::string asymmetry = cutFolder.substr(cutFolder.find("Asym") + 4, 5);
+    valueText.DrawLatex(0.31, 0.56, asymmetry.c_str());
+
+    // Add the dummy legend and latex for labels
+    dummyLegend->Draw();  // Paste the fixed dummy legend
+
+    // Save the plot to the appropriate directory
+    gSystem->mkdir(savePath.c_str(), true);
+    canvas->SaveAs((savePath + "/RatioVsPt_" + label + ".png").c_str());
+
+    // Cleanup
+    delete multiGraph;
+    delete canvas;
+}
+
 
 // Function to plot Ratio vs pT with fixed isoEt ranges, with an option to exclude certain ranges
 void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap,
                    const std::string& outputDir, const std::string& label,
                    const std::vector<std::pair<float, float>>& exclusionRanges = {},
-                   bool drawRefA = false, bool drawRefB = false) {
+                   bool drawRefA = false, bool drawRefB = false, const std::string& massWindowType = "outsideMassWindow") {
     // Define isoEt ranges and assign colors
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-5, 0},
+        {0, 5},
+        {-2, 0},
         {0, 2},
+        {-2, -5},
         {2, 5},
+        {-5, -10},
         {5, 10},
         {-10, 0},
         {0, 10}
     };
-
-//    std::vector<std::pair<float, float>> isoEtRanges = {
-//        {-5, 0},
-//        {0, 5},
-//        {-2, 0},
-//        {0, 2},
-//        {-2, -5},
-//        {2, 5},
-//        {-5, -10},
-//        {5, 10},
-//        {-10, 0},
-//        {0, 10}
-//    };
     
-    
-    std::vector<int> colors = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
+    std::vector<int> colors = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange, kCyan, kRed, kRed, kRed};
 
-    const std::string plotTitle = "Ratio of Isolated Photons from Meson Decays to All Clusters from Meson Decays Compared to PHENIX Data";
+    const std::string plotTitle = (massWindowType == "inMassWindow") ?
+        "Ratio of Isolated Photons from #pi^{0}/#eta Decays to All Photons from #pi^{0}/#eta Decays" :
+        "Ratio of Isolated Prompt Photons to All Prompt Photons";
 
     // Create a single dummy legend
-    TLegend* dummyLegend = new TLegend(0.18, 0.84, 0.38, 0.89); // Enlarged legend size
+    TLegend* dummyLegend = new TLegend(0.18, 0.815, 0.38, 0.925); // Enlarged legend size
     dummyLegend->SetBorderSize(0);  // Remove legend border
-    dummyLegend->SetTextSize(0.03); // Set text size for the legend
-     
+    dummyLegend->SetTextSize(0.028); // Set text size for the legend
+
     for (size_t i = 0; i < isoEtRanges.size(); ++i) {
         std::pair<float, float> currentRange = isoEtRanges[i];
         if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentRange) != exclusionRanges.end()) {
@@ -712,10 +883,9 @@ void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, flo
 
         // Format values to two decimal places
         std::ostringstream formattedRange;
-        formattedRange << "#font[62]{sPHENIX, Isolation Criteria:}"
+        formattedRange << "#font[62]{sPHENIX, Isolation Criteria:}   "
                        << std::fixed << std::setprecision(2)
                        << isoEtRanges[i].first << " #leq E_{T, iso} < " << isoEtRanges[i].second << " GeV, #Delta R_{cone} < 0.3";
-
 
         std::string legendEntry = formattedRange.str();
         TGraph* dummyGraph = new TGraph();
@@ -724,7 +894,7 @@ void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, flo
         dummyLegend->AddEntry(dummyGraph, legendEntry.c_str(), "p");
     }
 
-    
+    // Reference data (keep as is)
     std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
     std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
     std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
@@ -734,16 +904,16 @@ void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, flo
     std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
     std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
 
-    TLegend* refLegend = new TLegend(0.18, 0.77, 0.38, 0.81);  // Adjust position for reference points
+    TLegend* refLegend = new TLegend(0.179, 0.735, 0.39, 0.825);  // Adjust position for reference points
     refLegend->SetBorderSize(0);  // Remove legend border
-    refLegend->SetTextSize(0.03); // Set text size for the legend
+    refLegend->SetTextSize(0.028); // Set text size for the legend
 
     // Add dummy markers and labels for reference data
     if (drawRefA) {
         TGraph* refGraphOneDummy = new TGraph();  // Dummy graph for Reference 1
-        refGraphOneDummy->SetMarkerStyle(22);
-        refGraphOneDummy->SetMarkerColor(kBlack);
-        refLegend->AddEntry(refGraphOneDummy, "2003 pp Dataset, PHENIX Measurement", "p");
+        refGraphOneDummy->SetMarkerStyle(20);
+        refGraphOneDummy->SetMarkerColor(kBlue);
+        refLegend->AddEntry(refGraphOneDummy, "#font[62]{PHENIX (2003 pp RHIC Run):} Ratio = #frac{Isolated Direct Photons}{All Direct Photons}", "p");
     }
 
     if (drawRefB) {
@@ -753,157 +923,206 @@ void plotRatioVsPt(const std::map<std::string, std::vector<std::tuple<float, flo
         refLegend->AddEntry(refGraphTwoDummy, "#font[62]{PHENIX (2003 pp RHIC Run):} Ratio = #frac{Isolated Photons from #pi^{0} Decays}{All Photons from #pi^{0} Decays}", "p");
     }
 
-    // Iterate over the map and create a plot for each unique combination
+    // Define y-axis title based on mass window type
+    const std::string yAxisTitle = (massWindowType == "inMassWindow") ?
+        "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
+        "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+
+    // Create a nested map: cutFolder -> triggerIndex -> data
+    std::map<std::string, std::map<int, std::vector<std::tuple<float, float, float, float, float, float, float>>>> cutFolderMap;
+
+    // Populate the nested map
     for (const auto& entry : dataMap) {
         const std::string& cutKey = entry.first;
         const auto& points = entry.second;
 
-        std::cout << "Creating plot for cut combination: " << cutKey << std::endl;
-
-        // Extract trigger and cut information from cutKey
+        // Extract trigger and cutFolder from cutKey
         size_t pos = cutKey.find("_E_");
         std::string triggerStr = cutKey.substr(0, pos);
         int triggerIndex = std::stoi(triggerStr.substr(triggerStr.find("Trigger") + 7));
         std::string cutFolder = cutKey.substr(pos + 1);
 
-        // Format trigger name and cut values
-        std::string triggerName = getTriggerName(triggerIndex);
-        std::string eCore = cutFolder.substr(cutFolder.find("E_") + 2, 5);
-        std::string chi = cutFolder.substr(cutFolder.find("Chi") + 3, 5);
-        std::string asymmetry = cutFolder.substr(cutFolder.find("Asym") + 4, 5);
-        
-        
-        std::string savePath = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots/IsolationEnergies/" + triggerStr + "/" + cutFolder + "_" + label;
-
-        std::cout << "Saving to folder: " << savePath << std::endl;
-
-        // Create the canvas and graphs
-        TCanvas* canvas = new TCanvas(("canvas_" + label).c_str(), ("Ratio vs pT " + label).c_str(), 800, 600);
-        TMultiGraph* multiGraph = new TMultiGraph();
-        TLatex latex;
-        latex.SetNDC();
-        latex.SetTextSize(0.04);
- 
-        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-            // Create a new TGraphErrors for each isoEt range
-            TGraphErrors* graphWithError = new TGraphErrors();
-            int color = colors[i];
-            std::pair<float, float> currentRange = isoEtRanges[i];
-
-            // Add points to the graph for the current isoEt range
-            for (const auto& point : points) {
-                float ptMin = std::get<0>(point);
-                float ptMax = std::get<1>(point);
-                float isoMin = std::get<2>(point);
-                float isoMax = std::get<3>(point);
-                float ratio = std::get<4>(point);
-                float error = std::get<5>(point);
-                float weightedPt = std::get<6>(point);
-
-                // Check if the current isoEt range is in the exclusion list
-                std::pair<float, float> isoRange = {isoMin, isoMax};
-                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoRange) != exclusionRanges.end()) {
-                    std::cout << "Excluding isoEt range: isoMin = " << isoMin << ", isoMax = " << isoMax << std::endl;
-                    continue;  // Skip the points belonging to the excluded ranges
-                }
-
-                // Only add points that belong to the current isoEt range
-                if (isoMin == currentRange.first && isoMax == currentRange.second) {
-                    int index = graphWithError->GetN();
-                    graphWithError->SetPoint(index, weightedPt, ratio);
-                    graphWithError->SetPointError(index, 0, error);
-                    graphWithError->SetMarkerStyle(20);
-                    graphWithError->SetMarkerColor(color); // Set the correct color for this range
-                    graphWithError->SetLineColor(color);
-                }
-            }
-
-            // Add the graph for the current isoEt range to the multiGraph
-            multiGraph->Add(graphWithError);
-        }
-
-        //multiGraph->SetTitle(plotTitle.c_str());
-        multiGraph->GetXaxis()->SetRangeUser(0, 15);  // X-axis range
-        multiGraph->GetXaxis()->SetTitleSize(0.045);
-        multiGraph->GetXaxis()->SetTitle("Weighted Average p_{T} of all Photons from #pi^{0}/#eta Decay");
-        multiGraph->GetYaxis()->SetRangeUser(0, 1.5);  // Y-axis range
-        multiGraph->GetYaxis()->SetTitleSize(0.045);
-        multiGraph->GetYaxis()->SetTitle("#frac{Isolated Photons from #pi^{0}/#eta Decay}{All Photons from #pi^{0}/#eta Decay}");
-        multiGraph->Draw("AP");
-        
-        // Draw a dashed line at y = 1
-        TLine* line = new TLine(2, 1, 15, 1);
-        line->SetLineStyle(2); // Dashed line
-        line->Draw();
-        
-        if (drawRefA) {
-            // Create reference TGraphErrors for the first set of reference points
-            TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
-            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
-                refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
-                refGraphOne->SetPointError(i, 0, referenceStatError[i]);
-            }
-            refGraphOne->SetMarkerStyle(22);
-            refGraphOne->SetMarkerColor(kBlack);
-            refGraphOne->SetLineColor(kBlack);
-            refGraphOne->Draw("P SAME");
-        }
-
-        if (drawRefB) {
-            // Create reference TGraphErrors for the second set of reference points
-            TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
-            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
-                refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
-                refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
-            }
-            refGraphTwo->SetMarkerStyle(20);
-            refGraphTwo->SetMarkerColor(kBlue);
-            refGraphTwo->SetLineColor(kBlue);
-            refGraphTwo->Draw("P SAME");
-        }
-
-        // Draw reference legend if either refA or refB is drawn
-        if (drawRefA || drawRefB) {
-            refLegend->Draw();
-        }
-
-        // Add trigger and cut information on the top right of the plot
-        TLatex labelText;
-        labelText.SetNDC();
-        labelText.SetTextSize(0.03);
-
-        TLatex valueText;
-        valueText.SetNDC();
-        valueText.SetTextSize(0.03);
-
-        labelText.DrawLatex(0.21, 0.65, "#font[62]{Trigger:}");
-        valueText.DrawLatex(0.31, 0.65, triggerName.c_str());
-
-        labelText.DrawLatex(0.21, 0.6, "#font[62]{ECore #geq}");
-        std::string eCoreWithUnit = eCore + " GeV";
-        valueText.DrawLatex(0.31, 0.6, eCoreWithUnit.c_str());
-
-        labelText.DrawLatex(0.21, 0.55, "#font[62]{#chi^{2} <}");
-        valueText.DrawLatex(0.26, 0.55, chi.c_str());
-
-        labelText.DrawLatex(0.21, 0.5, "#font[62]{Asymmetry <}");
-        valueText.DrawLatex(0.34, 0.5, asymmetry.c_str());
-        
-        // Add the dummy legend and latex for labels
-        dummyLegend->Draw();  // Paste the fixed dummy legend
-
-        // Save the plot to the appropriate directory
-        gSystem->mkdir(savePath.c_str(), true);
-        canvas->SaveAs((savePath + "/RatioVsPt_" + label + ".png").c_str());
-
-        // Cleanup
-        delete multiGraph;
-        delete canvas;
+        // Add data to cutFolderMap
+        cutFolderMap[cutFolder][triggerIndex] = points;
     }
 
-    // Cleanup the dummy legend
+    // Now, iterate over the nested map
+    for (const auto& cutFolderEntry : cutFolderMap) {
+        const std::string& cutFolder = cutFolderEntry.first;
+        const auto& triggerDataMap = cutFolderEntry.second;
+
+        // Process individual triggers as before
+        for (const auto& triggerEntry : triggerDataMap) {
+            int triggerIndex = triggerEntry.first;
+            const auto& points = triggerEntry.second;
+
+            // Build cutKey
+            std::string triggerStr = "Trigger" + std::to_string(triggerIndex);
+            std::string cutKey = triggerStr + "_E_" + cutFolder;
+
+            std::cout << "Creating plot for cut combination: " << cutKey << std::endl;
+
+            // Format trigger name and cut values
+            std::string triggerName = getTriggerName(triggerIndex);
+            std::string eCore = cutFolder.substr(cutFolder.find("E_") + 2, 5);
+            std::string chi = cutFolder.substr(cutFolder.find("Chi") + 3, 5);
+            std::string asymmetry = cutFolder.substr(cutFolder.find("Asym") + 4, 5);
+
+            std::string savePath = outputDir + "/" + triggerStr + "/" + cutFolder + "_" + label;
+
+            std::cout << "Saving to folder: " << savePath << std::endl;
+
+            // Create the canvas and graphs
+            TCanvas* canvas = new TCanvas(("canvas_" + label).c_str(), ("Ratio vs pT " + label).c_str(), 800, 600);
+            TMultiGraph* multiGraph = new TMultiGraph();
+            TLatex latex;
+            latex.SetNDC();
+            latex.SetTextSize(0.04);
+
+            for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+                // Create a new TGraphErrors for each isoEt range
+                TGraphErrors* graphWithError = new TGraphErrors();
+                int color = colors[i];
+                std::pair<float, float> currentRange = isoEtRanges[i];
+
+                // Add points to the graph for the current isoEt range
+                for (const auto& point : points) {
+                    float ptMin = std::get<0>(point);
+                    float ptMax = std::get<1>(point);
+                    float isoMin = std::get<2>(point);
+                    float isoMax = std::get<3>(point);
+                    float ratio = std::get<4>(point);
+                    float error = std::get<5>(point);
+                    float weightedPt = std::get<6>(point);
+
+                    // Check if the current isoEt range is in the exclusion list
+                    std::pair<float, float> isoRange = {isoMin, isoMax};
+                    if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoRange) != exclusionRanges.end()) {
+                        continue;  // Skip the points belonging to the excluded ranges
+                    }
+
+                    // Only add points that belong to the current isoEt range
+                    if (isoMin == currentRange.first && isoMax == currentRange.second) {
+                        int index = graphWithError->GetN();
+                        graphWithError->SetPoint(index, weightedPt, ratio);
+                        graphWithError->SetPointError(index, 0, error);
+                        graphWithError->SetMarkerStyle(20);
+                        graphWithError->SetMarkerColor(color); // Set the correct color for this range
+                        graphWithError->SetLineColor(color);
+                    }
+                }
+
+                // Add the graph for the current isoEt range to the multiGraph
+                multiGraph->Add(graphWithError);
+            }
+
+            // Draw the frame with desired axis ranges
+            TH1F* hFrame = canvas->DrawFrame(2, 0, 15, 1.5);
+            hFrame->SetTitle(plotTitle.c_str());
+            hFrame->GetXaxis()->SetTitleSize(0.045);
+            hFrame->GetXaxis()->SetTitle("Cluster p_{T}");
+            hFrame->GetYaxis()->SetTitleSize(0.045);
+            hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
+
+            // Now draw the multiGraph on top of the frame
+            multiGraph->Draw("P");
+
+            // Draw a dashed line at y = 1
+            TLine* line = new TLine(2, 1, 15, 1);
+            line->SetLineStyle(2); // Dashed line
+            line->Draw();
+
+            if (drawRefA) {
+                // Create reference TGraphErrors for the first set of reference points
+                TGraphErrors* refGraphOne = new TGraphErrors(referencePTGamma.size());
+                for (size_t i = 0; i < referencePTGamma.size(); ++i) {
+                    refGraphOne->SetPoint(i, referencePTGamma[i], referenceRatio[i]);
+                    refGraphOne->SetPointError(i, 0, referenceStatError[i]);
+                }
+                refGraphOne->SetMarkerStyle(20);
+                refGraphOne->SetMarkerColor(kBlue);
+                refGraphOne->SetLineColor(kBlue);
+                refGraphOne->Draw("P SAME");
+            }
+
+            if (drawRefB) {
+                // Create reference TGraphErrors for the second set of reference points
+                TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size());
+                for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
+                    refGraphTwo->SetPoint(i, referenceTwoPTGamma[i], referenceTwoRatio[i]);
+                    refGraphTwo->SetPointError(i, 0, referenceTwoStatError[i]);
+                }
+                refGraphTwo->SetMarkerStyle(20);
+                refGraphTwo->SetMarkerColor(kBlue);
+                refGraphTwo->SetLineColor(kBlue);
+                refGraphTwo->Draw("P SAME");
+            }
+
+            // Draw reference legend if either refA or refB is drawn
+            if (drawRefA || drawRefB) {
+                refLegend->Draw();
+            }
+
+            // Add trigger and cut information on the top right of the plot
+            TLatex labelText;
+            labelText.SetNDC();
+            labelText.SetTextSize(0.028);
+
+            TLatex valueText;
+            valueText.SetNDC();
+            valueText.SetTextSize(0.028);
+
+            labelText.DrawLatex(0.19, 0.7, "#font[62]{Trigger:}");
+            valueText.DrawLatex(0.29, 0.7, triggerName.c_str());
+
+            labelText.DrawLatex(0.19, 0.65, "#font[62]{ECore #geq}");
+            std::string eCoreWithUnit = eCore + " GeV";
+            valueText.DrawLatex(0.29, 0.65, eCoreWithUnit.c_str());
+
+            labelText.DrawLatex(0.19, 0.6, "#font[62]{#chi^{2} <}");
+            valueText.DrawLatex(0.25, 0.6, chi.c_str());
+
+            labelText.DrawLatex(0.19, 0.55, "#font[62]{Asymmetry <}");
+            valueText.DrawLatex(0.31, 0.55, asymmetry.c_str());
+
+            // Add the dummy legend and latex for labels
+            dummyLegend->Draw();  // Draw the fixed dummy legend
+
+            // Save the plot to the appropriate directory
+            gSystem->mkdir(savePath.c_str(), true);
+            canvas->SaveAs((savePath + "/RatioVsPt_" + label + ".png").c_str());
+
+            // Cleanup
+            delete multiGraph;
+            delete canvas;
+        }
+        if (triggerDataMap.count(10) && triggerDataMap.count(25)) {
+            createCombinedPlot(
+                outputDir, label, triggerDataMap, isoEtRanges, colors, exclusionRanges,
+                plotTitle, yAxisTitle, drawRefA, drawRefB, refLegend, dummyLegend,
+                referencePTGamma, referenceRatio, referenceStatError,
+                referenceTwoPTGamma, referenceTwoRatio, referenceTwoStatError,
+                cutFolder
+            );
+        }
+    }
+
+    // Cleanup the dummy legends
     delete dummyLegend;
+    delete refLegend;
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Function to overlay Ratio vs pT plots for both inMassWindow and outsideMassWindow with exclusion range
 void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>>& dataMap_inMassWindow,
@@ -911,24 +1130,29 @@ void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tu
                                  const std::string& outputDir,
                                  const std::vector<std::pair<float, float>>& exclusionRanges = {},
                                  bool drawRefA = false, bool drawRefB = false) {
-    // Define isoEt ranges and assign colors
+   
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-5, 0},
+        {0, 5},
+        {-2, 0},
         {0, 2},
+        {-2, -5},
         {2, 5},
+        {-5, -10},
         {5, 10},
         {-10, 0},
         {0, 10}
     };
 
+
     // Colors for inMassWindow and outsideMassWindow datasets
-    std::vector<int> colors_inMassWindow = {kRed + 4, kGreen, kBlue, kMagenta, kRed, kOrange};
-    std::vector<int> colors_outsideMassWindow = {kRed - 3, kGreen - 6, kBlue - 7, kMagenta - 6, kRed - 2, kOrange - 5};
+    std::vector<int> colors_inMassWindow = {kRed, kRed, kRed, kRed, kRed, kRed, kRed, kRed, kRed, kRed};
+    std::vector<int> colors_outsideMassWindow = colors_inMassWindow;
 
     // Create a single legend for isoEt ranges, adding labels for inMassWindow and outsideMassWindow
-    TLegend* legend = new TLegend(0.16, 0.72, 0.45, 0.88);
+    TLegend* legend = new TLegend(0.18, 0.72, 0.37, 0.88);
     legend->SetBorderSize(0);
-    legend->SetTextSize(0.03);
+    legend->SetTextSize(0.027);
 
     for (size_t i = 0; i < isoEtRanges.size(); ++i) {
         std::pair<float, float> currentRange = isoEtRanges[i];
@@ -938,13 +1162,20 @@ void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tu
             continue;
         }
 
-        std::string legendEntry_inMassWindow = "Clusters in Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
+        // Format isoEt range values to two significant figures
+        std::ostringstream formattedRangeIn, formattedRangeOut;
+        formattedRangeIn << std::fixed << std::setprecision(2)
+                         << isoEtRanges[i].first << " #leq E_{T, iso} < " << isoEtRanges[i].second;
+        formattedRangeOut << std::fixed << std::setprecision(2)
+                          << isoEtRanges[i].first << " #leq E_{T, iso} < " << isoEtRanges[i].second;
+
+        std::string legendEntry_inMassWindow = "#font[62]{Ratio of Isolated Photons from Meson Decay}, Isolation Criteria:  " + formattedRangeIn.str();
         TGraph* dummyGraph_inMassWindow = new TGraph();
         dummyGraph_inMassWindow->SetMarkerStyle(20);
         dummyGraph_inMassWindow->SetMarkerColor(colors_inMassWindow[i]);
         legend->AddEntry(dummyGraph_inMassWindow, legendEntry_inMassWindow.c_str(), "p");
 
-        std::string legendEntry_outsideMassWindow = "Clusters outside Meson Mass Window (#pi^{0}, #eta): " + std::to_string(isoEtRanges[i].first) + " #leq E_{T, iso} < " + std::to_string(isoEtRanges[i].second);
+        std::string legendEntry_outsideMassWindow = "#font[62]{Ratio of Prompt Photons}, Isolation Criteria:  " + formattedRangeOut.str();
         TGraph* dummyGraph_outsideMassWindow = new TGraph();
         dummyGraph_outsideMassWindow->SetMarkerStyle(24);
         dummyGraph_outsideMassWindow->SetMarkerColor(colors_outsideMassWindow[i]);
@@ -1057,7 +1288,7 @@ void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tu
         // Draw the multiGraph
         multiGraph->SetTitle(("Overlay Ratio vs pT for " + cutKey).c_str());
         multiGraph->GetXaxis()->SetRangeUser(0, 15);
-        multiGraph->GetXaxis()->SetTitle("Weighted p_{T} of all Photons from Meson Decay");
+        multiGraph->GetXaxis()->SetTitle("Cluster p_{T}");
         multiGraph->GetYaxis()->SetRangeUser(0, 1.5);
         multiGraph->GetYaxis()->SetTitle("Ratio (Isolated/Total)");
         multiGraph->Draw("AP");
@@ -1107,18 +1338,15 @@ void overlayRatioInOutMassWindow(const std::map<std::string, std::vector<std::tu
     delete legend;
 }
 
-
-
 void analyzeClusterIso() {
     gROOT->LoadMacro("sPhenixStyle.C");
     SetsPhenixStyle();
     std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonInformation.csv";
-//    isolationEnergies(inputFilePath, outputDir);
-//
+    isolationEnergies(inputFilePath, outputDir);
 
-//    outputHistogramLogs(csvFilePath);
-    
-    std::vector<std::pair<float, float>> exclusionRanges = {{-5, 0}, {0, 2}, {2, 5}, {5, 10}, {0, 10}};
+
+    outputHistogramLogs(csvFilePath);
+    std::vector<std::pair<float, float>> exclusionRanges = {{0, 5}, {-2, 0}, {0, 2}, {-2, -5}, {5, 10}, {-5, -10}, {2, 5}, {5, 0}, {-5, 0}, {-10, 0}};
     // Maps to store data for inMassWindow and outsideMassWindow
     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_inMassWindow;
     std::map<std::string, std::vector<std::tuple<float, float, float, float, float, float, float>>> dataMap_outsideMassWindow;
@@ -1127,10 +1355,10 @@ void analyzeClusterIso() {
     readDataFromCSV(csvFilePath, dataMap_inMassWindow, dataMap_outsideMassWindow);
 
     // Plot for inMassWindow data
-    plotRatioVsPt(dataMap_inMassWindow, outputDir, "inMassWindow", exclusionRanges, false, true);
+    plotRatioVsPt(dataMap_inMassWindow, outputDir, "inMassWindow", exclusionRanges, false, true, "inMassWindow");
 
     // Plot for outsideMassWindow data
-    plotRatioVsPt(dataMap_outsideMassWindow, outputDir, "outsideMassWindow", exclusionRanges, false, true);
+    plotRatioVsPt(dataMap_outsideMassWindow, outputDir, "outsideMassWindow", exclusionRanges, true, false, "outsideMassWindow");
     
     overlayRatioInOutMassWindow(dataMap_inMassWindow, dataMap_outsideMassWindow, outputDir, exclusionRanges, false, false);
 }
