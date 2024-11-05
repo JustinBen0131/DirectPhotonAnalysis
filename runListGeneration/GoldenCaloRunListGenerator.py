@@ -21,7 +21,7 @@ def get_all_run_numbers_no_event_count(cursor):
     FROM datasets
     WHERE runnumber > 46619;
     """
-    cursor.execute(query
+    cursor.execute(query)
     all_runs_no_event_count = [row.runnumber for row in cursor.fetchall()]
     return all_runs_no_event_count
 
