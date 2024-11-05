@@ -6,9 +6,9 @@ def get_all_run_numbers(cursor):
     query = """
     SELECT runnumber
     FROM datasets
-    WHERE filename like 'DST_CALO_%' and dataset = 'ana430_2024p007'
+    WHERE filename LIKE 'DST_CALO_run2pp_ana437_2024p007-%' AND dataset = 'ana437_2024p007'
     GROUP BY runnumber
-    HAVING SUM(events) >= 1000000 AND runnumber > 46619;
+    HAVING SUM(events) >= 1000000;
     """
     cursor.execute(query)
     run_numbers = [row.runnumber for row in cursor.fetchall()]
@@ -21,7 +21,7 @@ def get_all_run_numbers_no_event_count(cursor):
     FROM datasets
     WHERE runnumber > 46619;
     """
-    cursor.execute(query)
+    cursor.execute(query
     all_runs_no_event_count = [row.runnumber for row in cursor.fetchall()]
     return all_runs_no_event_count
 
@@ -148,5 +148,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
