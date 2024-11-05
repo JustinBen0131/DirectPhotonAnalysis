@@ -15,11 +15,12 @@ def get_all_run_numbers(cursor):
     return run_numbers
 
 
+
 def get_all_run_numbers_no_event_count(cursor):
     query = """
     SELECT DISTINCT runnumber
     FROM datasets
-    WHERE runnumber > 46619;
+    WHERE filename LIKE 'DST_CALO_run2pp_ana437_2024p007-%';
     """
     cursor.execute(query)
     all_runs_no_event_count = [row.runnumber for row in cursor.fetchall()]
@@ -84,7 +85,7 @@ def main():
     file_catalog_cursor = file_catalog_conn.cursor()
 
     all_runs_no_event_count = get_all_run_numbers_no_event_count(file_catalog_cursor)
-    print(f"Total number of runs after 46619 (regardless of event count): {len(all_runs_no_event_count)}")
+    print(f"Total number of runs with prefix 'DST_CALO_run2pp_ana437_2024p007-': {len(all_runs_no_event_count)}")
 
 
     # Get unique run numbers with at least 1 million total events
