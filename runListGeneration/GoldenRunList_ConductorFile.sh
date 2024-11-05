@@ -51,8 +51,8 @@ echo "6. Generating Calo + GL1 + FEM golden run number list"
 root -l -q -b FinalizeGoldenRunList_calo_gl1_fem.C
 
 # Copy the initial final golden run list to a separate file
-echo "Copying the initial golden run list to GoldenRunNumbers_afterRun46619_zeroCrossing.txt..."
-cp FileLists/FinalGoldenRunList_calo_gl1_femChecked.txt ../GoldenRunNumbers_afterRun46619_zeroCrossing.txt
+echo "Copying the initial golden run list to Full_ppGoldenRunList.txt..."
+cp FileLists/FinalGoldenRunList_calo_gl1_femChecked.txt ../Full_ppGoldenRunList.txt
 
 # Step 7: Filter the final golden run list based on bad tower maps
 echo " "
@@ -68,14 +68,14 @@ echo "Listing bad tower runs in bad_tower_runs.txt..."
 echo "$bad_tower_runs" > bad_tower_runs.txt
 
 # Check that the initial golden run list exists
-golden_run_list="../GoldenRunNumbers_afterRun46619_zeroCrossing.txt"
+golden_run_list="../Full_ppGoldenRunList.txt"
 if [[ ! -f "$golden_run_list" ]]; then
     echo "[ERROR] The file $golden_run_list does not exist. Please check the path and try again."
     exit 1
 fi
 
 # Filter the final golden run list to keep only runs that have a bad tower map
-filtered_golden_run_list="/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/GoldenRunList_AfterZeroCrossing.txt"
+filtered_golden_run_list="/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/Full_ppGoldenRunList_FinalList_withBadTowerMaps.txt"
 echo "Filtering the golden run list to keep only runs with a bad tower map..."
 grep -Ff bad_tower_runs.txt "$golden_run_list" > "$filtered_golden_run_list"
 
@@ -93,20 +93,20 @@ rm bad_tower_runs.txt
 
 
 echo " "
-echo "Final golden run list has been filtered to include only runs with a bad tower map and saved as GoldenRunList_AfterZeroCrossing.txt."
+echo "Final golden run list has been filtered to include only runs with a bad tower map and saved as Full_ppGoldenRunList_FinalList_withBadTowerMaps.txt."
 echo " "
 
 # Step 8: Create a .list file for CreateDstList.pl command
 echo "Creating .list file for CreateDstList.pl..."
-cp "$filtered_golden_run_list" ../GoldenRunList_AfterZeroCrossing.list
+cp "$filtered_golden_run_list" ../Full_ppGoldenRunList_FinalList_withBadTowerMaps.list
 
 # Step 9: Change to the dst_list directory and generate DST list using CreateDstList.pl
 echo "Changing to dst_list directory to generate DST lists..."
 cd ../dst_list
 
 echo "Running CreateDstList.pl to generate the DST list..."
-CreateDstList.pl --build ana437 --cdb 2024p007 DST_CALO_run2pp --list ../GoldenRunList_AfterZeroCrossing.list
+CreateDstList.pl --build ana437 --cdb 2024p007 DST_CALO_run2pp --list ../Full_ppGoldenRunList_FinalList_withBadTowerMaps.list
 
 echo " "
-echo "DST list generated and saved to ../dst_list for the runs present in GoldenRunList_AfterZeroCrossing.txt."
+echo "DST list generated and saved to ../dst_list for the runs present in Full_ppGoldenRunList_FinalList_withBadTowerMaps.txt."
 
