@@ -18,7 +18,7 @@ std::map<int, std::string> getTriggerMappingForRun(int run) {
 
     // Connect to the database
     TSQLServer* db = TSQLServer::Connect("pgsql://sphnxdaqdbreplica:5432/daq", "phnxro", "");
-    if (!db) {
+    if (!db || db->IsZombie()) {
         std::cerr << "Error: Failed to connect to the database." << std::endl;
         return triggerMap;
     }
@@ -47,10 +47,10 @@ std::map<int, std::string> getTriggerMappingForRun(int run) {
     TSQLResult* res = db->Query(query.c_str());
     if (!res) {
         std::cerr << "Error: Failed to query trigger mapping for run " << run << std::endl;
+        db->Close();
         delete db;
         return triggerMap;
     }
-
     // Store the trigger mapping in the map
     TSQLRow* row;
     while ((row = res->Next())) {
@@ -90,12 +90,16 @@ void checkAndUpdateUniqueMappings(int run, const std::map<int, std::string>& tri
 
 // Function to print the saved mappings
 void printUniqueMappings() {
-    std::ofstream file1("runListTriggerLUTv1.txt");
-    std::ofstream file2("runListTriggerLUTv2.txt");
-
-    std::cout << "\nUnique Trigger Mappings:\n";
     int groupNumber = 1;
     for (const auto& [uniqueMap, runList] : uniqueTriggerMappings) {
+        // Create a new output file for each unique mapping
+        std::string filename = "runListTriggerLUTv" + std::to_string(groupNumber) + ".txt";
+        std::ofstream outFile(filename);
+        if (!outFile) {
+            std::cerr << "Error: Failed to open file " << filename << " for writing." << std::endl;
+            continue;
+        }
+
         std::cout << "\nGroup " << groupNumber << ":\n";
         for (const auto& [index, triggername] : uniqueMap) {
             std::cout << "Index " << index << ": " << triggername << std::endl;
@@ -104,35 +108,13 @@ void printUniqueMappings() {
         std::cout << "Runs: ";
         for (int run : runList) {
             std::cout << run << " ";
+            outFile << run << "\n";  // Write the run number to the file
         }
         std::cout << "\n----------------------------------------\n";
 
-        // Write the run list to the appropriate file
-        std::ofstream* outFile = (groupNumber == 1) ? &file1 : &file2;
-        for (int run : runList) {
-            *outFile << run << "\n";
-        }
+        outFile.close();
         groupNumber++;
     }
-
-    file1.close();
-    file2.close();
-
-    std::cout << "\nTrigger Map 1:\nIndex\tTrigger Name\n";
-    for (const auto& [index, triggername] : uniqueTriggerMappings.begin()->first) {
-        std::cout << index << "\t" << triggername << "\n";
-    }
-    std::cout << "\n" << uniqueTriggerMappings.begin()->second.size()
-              << " run numbers have been added to 'runListTriggerLUTv1.txt' with a unique LUT.\n";
-
-    std::cout << "\nTrigger Map 2:\nIndex\tTrigger Name\n";
-    auto it = uniqueTriggerMappings.begin();
-    std::advance(it, 1);
-    for (const auto& [index, triggername] : it->first) {
-        std::cout << index << "\t" << triggername << "\n";
-    }
-    std::cout << "\n" << it->second.size()
-              << " run numbers have been added to 'runListTriggerLUTv2.txt' with a unique LUT.\n";
 }
 
 // Function to detect trigger index switches between runs
@@ -147,7 +129,6 @@ void detectTriggerSwitches(int run, const std::map<int, std::string>& currentTri
     }
     previousTriggerMap = currentTriggerMap; // Update for next run
 }
-
 
 // Function to read run numbers from a file
 std::vector<int> readRunNumbersFromFile(const std::string& filename) {
@@ -170,7 +151,7 @@ std::vector<int> readRunNumbersFromFile(const std::string& filename) {
 // Main function for ROOT macro
 void QueryGl1() {
     // Read run numbers from the file
-    std::vector<int> runNumbers = readRunNumbersFromFile("../GoldenRunNumbers_afterRun44452.txt");
+    std::vector<int> runNumbers = readRunNumbersFromFile("../Full_ppGoldenRunList_FinalList_withBadTowerMaps.txt");
 
     // Process each run number from the file
     for (int run : runNumbers) {
