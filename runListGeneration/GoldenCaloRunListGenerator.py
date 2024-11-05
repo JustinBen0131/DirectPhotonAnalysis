@@ -6,7 +6,7 @@ def get_all_run_numbers(cursor):
     query = """
     SELECT runnumber
     FROM datasets
-    WHERE filename LIKE 'DST_CALO_run2pp_ana437_2024p007-%' AND dataset = 'ana437_2024p007'
+    WHERE filename LIKE 'DST_CALO_run2pp_ana437_2024p007-%'
     GROUP BY runnumber
     HAVING SUM(events) >= 1000000;
     """
