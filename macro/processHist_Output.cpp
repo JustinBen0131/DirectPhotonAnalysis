@@ -14,6 +14,19 @@
 #define ANSI_CYAN   "\x1b[36m"
 
 
+// Function to load run numbers from a text file into an unordered_set for fast lookups
+std::unordered_set<std::string> loadRunNumbersFromFile(const std::string& filename) {
+    std::unordered_set<std::string> validRunNumbers;
+    std::ifstream file(filename);
+    std::string line;
+    while (std::getline(file, line)) {
+        validRunNumbers.insert(line);  // Add each line (run number) to the set
+    }
+    file.close();
+    return validRunNumbers;
+}
+
+
 void get_scaledowns(int runnumber, int scaledowns[]) {
     // Connect to the PostgreSQL server
     TSQLServer *db = TSQLServer::Connect("pgsql://sphnxdaqdbreplica:5432/daq", "phnxro", "");
@@ -245,7 +258,15 @@ void mergeRunFiles(const std::string& runNumber, const std::string& baseDir, con
     std::string runPath = baseDir + runNumber + "/";
     std::string outputFileName = outputDir + runNumber + "_HistOutput.root";
 
+    struct stat buffer;
+    if (stat(outputFileName.c_str(), &buffer) == 0) {
+        std::cout << "Output file already exists for run " << runNumber << ": " << outputFileName
+                  << ". Skipping merge for this run." << std::endl;
+        return;
+    }
+
     std::cout << "Processing run number: " << runNumber << std::endl;
+
 
     // Open the directory containing the ROOT files
     DIR* dir = opendir(runPath.c_str());
@@ -318,10 +339,12 @@ void mergeAllRuns(std::vector<std::string>& runNumbers, const std::string& outpu
     }
 }
 
-// Main function to process all runs by merging their segment files
+// Main function to process all runs by merging their segment files, based on input run numbers
 void processHist_Output() {
     std::string baseDir = "/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/";
     std::string outputDir = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/output/";
+    std::string inputFile = "/path/to/runListTriggerLUTv1.txt";  // Path to the input text file
+    std::unordered_set<std::string> validRunNumbers = loadRunNumbersFromFile(inputFile);
     std::vector<std::string> runNumbers;
 
     DIR* dir = opendir(baseDir.c_str());
@@ -337,17 +360,20 @@ void processHist_Output() {
         std::string folderPath = baseDir + folderName;
 
         if (stat(folderPath.c_str(), &s) == 0 && S_ISDIR(s.st_mode) && folderName != "." && folderName != "..") {
-            runNumbers.push_back(folderName);
+            // Check if the folder name (run number) is in the validRunNumbers set
+            if (validRunNumbers.find(folderName) != validRunNumbers.end()) {
+                runNumbers.push_back(folderName);  // Only add folders that match run numbers from the file
+            }
         }
     }
     closedir(dir);
 
     if (runNumbers.empty()) {
-        std::cerr << "No run directories found in base directory: " << baseDir << std::endl;
+        std::cerr << "No matching run directories found in base directory: " << baseDir << std::endl;
         return;
     }
 
-    // Process each run number found
+    // Process each valid run number found
     for (const auto& runNumber : runNumbers) {
         mergeRunFiles(runNumber, baseDir, outputDir);
     }
