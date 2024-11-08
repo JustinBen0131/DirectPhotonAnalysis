@@ -343,7 +343,10 @@ void mergeAllRuns(std::vector<std::string>& runNumbers, const std::string& outpu
 void processHist_Output() {
     std::string baseDir = "/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/";
     std::string outputDir = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/output/";
-    std::string inputFile = "/path/to/runListTriggerLUTv1.txt";  // Path to the input text file
+    /*
+     SKIP ADDING segmenets for run numbers that are not included in below textfile
+     */
+    std::string inputFile = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/runListTriggerLUTv1.txt";  // Path to the input text file
     std::unordered_set<std::string> validRunNumbers = loadRunNumbersFromFile(inputFile);
     std::vector<std::string> runNumbers;
 
@@ -368,14 +371,24 @@ void processHist_Output() {
     }
     closedir(dir);
 
+    std::sort(runNumbers.begin(), runNumbers.end());
+
     if (runNumbers.empty()) {
         std::cerr << "No matching run directories found in base directory: " << baseDir << std::endl;
         return;
     }
 
-    // Process each valid run number found
-    for (const auto& runNumber : runNumbers) {
+    // **Add these lines to track progress**
+    size_t totalRuns = runNumbers.size();
+    for (size_t i = 0; i < runNumbers.size(); ++i) {
+        const auto& runNumber = runNumbers[i];
+        size_t runsLeft = totalRuns - i - 1;
+
+        std::cout << "Processing run number: " << runNumber << std::endl;
+        std::cout << "Runs left to process: " << runsLeft << std::endl;
+
         mergeRunFiles(runNumber, baseDir, outputDir);
     }
+    
     mergeAllRuns(runNumbers, outputDir);
 }
