@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <regex>
 
 // Define ANSI color codes
 #define ANSI_RESET  "\x1b[0m"
@@ -13,6 +14,8 @@
 #define ANSI_YELLOW "\x1b[33m"
 #define ANSI_CYAN   "\x1b[36m"
 
+
+std::vector<std::string> filesWithWarnings;
 
 // Function to load run numbers from a text file into an unordered_set for fast lookups
 std::unordered_set<std::string> loadRunNumbersFromFile(const std::string& filename) {
@@ -299,7 +302,35 @@ void mergeRunFiles(const std::string& runNumber, const std::string& baseDir, con
 
     // Execute the hadd command to merge the files
     std::cout << "Merging files for run: " << runNumber << std::endl;
-    int haddResult = gSystem->Exec(haddCommand.c_str());
+    // Open a pipe to the hadd command
+    FILE* pipe = gSystem->OpenPipe(haddCommand.c_str(), "r");
+    if (!pipe) {
+        std::cerr << "Error: Failed to open pipe to hadd command for run " << runNumber << std::endl;
+        return;
+    }
+
+    char line[1024];
+    while (fgets(line, sizeof(line), pipe)) {
+        std::string strLine(line);
+        // Print the output line
+        std::cout << strLine;
+        // Check if the line contains warning
+        if (strLine.find("Warning in <TFile::Init>: file") != std::string::npos &&
+            strLine.find("probably not closed, trying to recover") != std::string::npos) {
+            // Extract the filename from the line
+            size_t pos1 = strLine.find("file ");
+            size_t pos2 = strLine.find(" probably not closed");
+            if (pos1 != std::string::npos && pos2 != std::string::npos && pos2 > pos1) {
+                size_t start = pos1 + 5; // Length of "file "
+                size_t length = pos2 - start;
+                std::string fileName = strLine.substr(start, length);
+                filesWithWarnings.push_back(fileName);
+            }
+        }
+    }
+    // Close the pipe and get the hadd command's exit code
+    int haddResult = gSystem->ClosePipe(pipe);
+
     if (haddResult != 0) {
         std::cerr << "Error: hadd failed with exit code " << haddResult << " for run " << runNumber << std::endl;
     } else {
@@ -388,6 +419,13 @@ void processHist_Output() {
         std::cout << "Runs left to process: " << runsLeft << std::endl;
 
         mergeRunFiles(runNumber, baseDir, outputDir);
+    }
+    
+    if (!filesWithWarnings.empty()) {
+        std::cout << "\nList of files with warnings before merging final run list:" << std::endl;
+        for (const auto& fileName : filesWithWarnings) {
+            std::cout << fileName << std::endl;
+        }
     }
     
     mergeAllRuns(runNumbers, outputDir);
