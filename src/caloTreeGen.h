@@ -99,32 +99,111 @@ class caloTreeGen : public SubsysReco{
 
     // Define the map to store mass windows by trigger, Ecore, Chi2, Asym, pTMin, and pTMax
     std::map<std::tuple<int, float, float, float, float, float>, MesonMassWindow> mesonMassWindowsMap;
-
     
     bool verbose = true;
     bool m_limitEvents = true;   // Enable event limiting by default
     int m_eventLimit = 5000;    // Maximum number of events to process (10,000 by default)
 
-    std::vector<int> triggerIndices = {10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
-    std::vector<float> asymmetry_values = {0.5, 0.6, 0.7};
+    std::vector<int> triggerIndices = {10, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    std::vector<float> asymmetry_values = {0.5, 0.7};
     std::vector<float> clus_chi_values = {4};
-    std::vector<float> clus_Ecore_values = {1.0, 1.2};
+    std::vector<float> clus_Ecore_values = {1.0, 1.5};
     std::vector<std::pair<float, float>> pT_bins = {
-        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}
+        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}, {20, 30}
     };
     
     std::vector<std::pair<float, float>> isoEtRanges = {
-        {-5, 0},
-        {0, 5},
-        {-2, 0},
-        {0, 2},
-        {-2, -5},
-        {2, 5},
-        {-5, -10},
-        {5, 10},
+        {-100, 6},
+        {-100, 6},
         {-10, 0},
         {0, 10}
     };
+    
+    triggerNameMap1 = {
+        {0, "Clock"},
+        {1, "ZDC_South"},
+        {2, "ZDC_North"},
+        {3, "ZDC_Coincidence"},
+        {4, "HCAL_Singles"},
+        {5, "HCAL_Coincidence"},
+        {8, "MBD_S_>=_1"},
+        {9, "MBD_N_>=_1"},
+        {10, "MBD_N&S_>=_1"},
+        {11, "MBD_N&S_>=_2"},
+        {12, "MBD_N&S_>=_1_vtx_<_10_cm"},
+        {13, "MBD_N&S_>=_1_vtx_<_30_cm"},
+        {14, "MBD_N&S_>=_1_vtx_<_60_cm"},
+        {15, "HCAL_Singles_+_MBD_NS_>=_1"},
+        {16, "Jet_4_GeV_+_MBD_NS_>=_1"},
+        {17, "Jet_6_GeV_+_MBD_NS_>=_1"},
+        {18, "Jet_8_GeV_+_MBD_NS_>=_1"},
+        {19, "Jet_10_GeV_+_MBD_NS_>=_1"},
+        {20, "Jet_4_GeV"},
+        {21, "Jet_6_GeV"},
+        {22, "Jet_8_GeV"},
+        {23, "Jet_10_GeV"},
+        {24, "Photon_1_GeV_+_MBD_NS_>=_1"},
+        {25, "Photon_2_GeV_+_MBD_NS_>=_1"},
+        {26, "Photon_3_GeV_+_MBD_NS_>=_1"},
+        {27, "Photon_4_GeV_+_MBD_NS_>=_1"},
+        {28, "Photon_1_GeV"},
+        {29, "Photon_2_GeV"},
+        {30, "Photon_3_GeV"},
+        {31, "Photon_4_GeV"}
+    };
+
+    triggerNameMap2 = {
+        {0, "Clock"},
+        {1, "ZDC_South"},
+        {2, "ZDC_North"},
+        {3, "ZDC_Coincidence"},
+        {4, "HCAL_Singles"},
+        {5, "HCAL_Coincidence"},
+        {8, "MBD_S_>=_1"},
+        {9, "MBD_N_>=_1"},
+        {10, "MBD_N&S_>=_1"},
+        {11, "MBD_N&S_>=_2"},
+        {12, "MBD_N&S_>=_1_vtx_<_10_cm"},
+        {13, "MBD_N&S_>=_1_vtx_<_30_cm"},
+        {14, "MBD_N&S_>=_1_vtx_<_60_cm"},
+        {15, "HCAL_Singles_+_MBD_NS_>=_1"},
+        {16, "Jet_6_GeV_+_MBD_NS_>=_1"},
+        {17, "Jet_8_GeV_+_MBD_NS_>=_1"},
+        {18, "Jet_10_GeV_+_MBD_NS_>=_1"},
+        {19, "Jet_12_GeV_+_MBD_NS_>=_1"},
+        {20, "Jet_6_GeV"},
+        {21, "Jet_8_GeV"},
+        {22, "Jet_10_GeV"},
+        {23, "Jet_12_GeV"},
+        {24, "Photon_2_GeV_+_MBD_NS_>=_1"},
+        {25, "Photon_3_GeV_+_MBD_NS_>=_1"},
+        {26, "Photon_4_GeV_+_MBD_NS_>=_1"},
+        {27, "Photon_5_GeV_+_MBD_NS_>=_1"},
+        {28, "Photon_2_GeV"},
+        {29, "Photon_3_GeV"},
+        {30, "Photon_4_GeV"},
+        {31, "Photon_5_GeV"}
+    };
+    runNumbersForMap1 = {44477, 44478, 44482, 44483, 44495, 44498, 44499, 44503, 44505, 44506, 44507, 44509, 44510, 44511, 44512, 44513, 44533
+        44534, 44604, 44608, 44611, 44616, 44618, 44619, 44621, 44631, 44638, 44642, 45034, 45035, 45036, 45038, 45041, 45048
+        45051, 45052, 45090, 45100, 45103, 45105, 45106, 45107, 45150, 45151, 45153, 45154, 45155, 45157, 45159, 45160, 45161
+        45162, 45164, 45166, 45167, 45170, 45172, 45176, 45177, 45178, 45181, 45183, 45186, 45189, 45190, 45191, 45196, 45199
+        45201, 45203, 45246, 45248, 45249, 45252, 45255, 45256, 45258, 45274, 45288, 45290, 45291, 45292, 45315, 45316, 45318
+        45325, 45390, 45391, 45393, 45394, 45401, 45402, 45414, 45443, 45485, 45486, 45487, 45489, 45490, 45491, 45493, 45494
+        45495, 45531, 45540, 45541, 45547, 45548, 45551, 45552, 45620, 45624, 45627, 45628, 45633, 45637, 45645, 45724, 45807
+        45816, 45837, 45841, 45842, 45851, 45852, 45856, 45858, 45872, 45883, 46011, 46019, 46022, 46023, 46025, 46029, 46036};
+    
+    runNumbersForMap2 = {44477, 44478, 44482, 44483, 44495, 44498, 44499, 44503, 44505, 44506, 44507, 44509, 44510, 44511, 44512, 44513, 44533
+        44534, 44604, 44608, 44611, 44616, 44618, 44619, 44621, 44631, 44638, 44642, 45034, 45035, 45036, 45038, 45041, 45048
+        45051, 45052, 45090, 45100, 45103, 45105, 45106, 45107, 45150, 45151, 45153, 45154, 45155, 45157, 45159, 45160, 45161
+        45162, 45164, 45166, 45167, 45170, 45172, 45176, 45177, 45178, 45181, 45183, 45186, 45189, 45190, 45191, 45196, 45199
+        45201, 45203, 45246, 45248, 45249, 45252, 45255, 45256, 45258, 45274, 45288, 45290, 45291, 45292, 45315, 45316, 45318
+        45325, 45390, 45391, 45393, 45394, 45401, 45402, 45414, 45443, 45485, 45486, 45487, 45489, 45490, 45491, 45493, 45494
+        45495, 45531, 45540, 45541, 45547, 45548, 45551, 45552, 45620, 45624, 45627, 45628, 45633, 45637, 45645, 45724, 45807
+        45816, 45837, 45841, 45842, 45851, 45852, 45856, 45858, 45872, 45883, 46011, 46019, 46022, 46023, 46025, 46029, 46036};
+    
+    // Pointer to the active trigger name map for the current run
+    std::map<int, std::string>* activeTriggerNameMap = nullptr;
 
     int event_count = 0;
 
@@ -171,7 +250,9 @@ class caloTreeGen : public SubsysReco{
     std::vector<std::vector<int> > m_clusTowEta;
     std::vector<std::vector<int> > m_clusTowPhi;
     std::vector<std::vector<float> > m_clusTowE;
-    std::map<int, std::pair<float, float>> clusterEtIsoMap; // <cluster ID, Ecore, Iso>
+    
+    std::map<int, std::pair<float, float>> clusterEtIsoMap_unsubtracted;
+    std::map<int, std::pair<float, float>> clusterEtIsoMap_subtracted;
     
     //GL1 information
     Gl1Packet *_gl1_packet;
@@ -361,6 +442,9 @@ class caloTreeGen : public SubsysReco{
         
         return false;
     }
+    // Function to set the correct trigger map based on the run number
+    void setTriggerNameMapForRun(int runNumber);
+    
     bool IsAcceptableTower(TowerInfo* tower);
 
 };
