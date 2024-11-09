@@ -194,24 +194,17 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         std::cout << "No CSV file found at " << csvFilePath << ". Skipping meson mass windows loading." << std::endl;
     }
     
+    if (!gDirectory->GetDirectory("QA")) {
+        out->mkdir("QA");
+    }
+    out->cd("QA");
+    
     for (int triggerIndex : triggerIndices) {
-        // Create trigger-specific directories within the output file
-        std::string qaDir = "QA/Trigger" + std::to_string(triggerIndex);
-        
-        // Check if directories already exist before creating them
-        if (!gDirectory->GetDirectory(qaDir.c_str())) {
-            out->mkdir(qaDir.c_str());
-        }
-
-        // Create QA histograms
         if (verbose) {
-            std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to QA directory: " << qaDir << ANSI_COLOR_RESET << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating histograms for trigger index: " << triggerIndex << ANSI_COLOR_RESET << std::endl;
         }
-        
-        out->cd(qaDir.c_str());
-        std::map<std::string, TObject*>& qaHistograms = qaHistogramsByTrigger[triggerIndex];
 
-        
+        std::map<std::string, TObject*>& qaHistograms = qaHistogramsByTrigger[triggerIndex];
         // Helper functions for creating histograms with logging
         auto createHistogram = [&](const std::string& name, const std::string& title, int bins, double xMin, double xMax) {
             if (verbose) {
@@ -347,21 +340,23 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
 
         qaHistogramsByTrigger[triggerIndex] = qaHistograms;
         qaIsolationHistogramsByTriggerAndPt[triggerIndex] = qaIsolationHistograms;
-        
-        out->cd("/");
     }
     
+    // Return to the root directory after creating QA histograms
+    out->cd("/");
+    
+    
+    // Ensure the "PhotonAnalysis" directory exists and change into it
+    if (!gDirectory->GetDirectory("PhotonAnalysis")) {
+        out->mkdir("PhotonAnalysis");
+    }
+    out->cd("PhotonAnalysis");
+
+    
     for (int triggerIndex : triggerIndices) {
-        std::string invMassDir = "PhotonAnalysis/Trigger" + std::to_string(triggerIndex);
-        // Create invariant mass histograms
-        if (!gDirectory->GetDirectory(invMassDir.c_str())) {
-            out->mkdir(invMassDir.c_str());
-        }
         if (verbose) {
-            std::cout << ANSI_COLOR_BLUE_BOLD << "Switching to Invariant Mass directory: " << invMassDir << ANSI_COLOR_RESET << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating PhotonAnalysis histograms for trigger index: " << triggerIndex << ANSI_COLOR_RESET << std::endl;
         }
-        // Navigate into the invariant mass directory
-        out->cd(invMassDir.c_str());
         
         for (float maxAsym : asymmetry_values) {
             for (float maxChi2 : clus_chi_values) {
@@ -492,9 +487,10 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                 }
             }
         }
-        // Finally, return to the root directory ("/") after processing trigger
-        out->cd("/");
     }
+    
+    // Return to the root directory after creating PhotonAnalysis histograms
+    out->cd("/");
     //so that the histos actually get written out
     Fun4AllServer *se = Fun4AllServer::instance();
     if (verbose) {
@@ -1936,137 +1932,135 @@ int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
 int caloTreeGen::End(PHCompositeNode *topNode) {
     std::cout << ANSI_COLOR_BLUE_BOLD << "caloTreeGen::End(PHCompositeNode *topNode) All events have been processed. Beginning final analysis steps..." << ANSI_COLOR_RESET << std::endl;
 
+    
     // Write all QA histograms to file and clean up
-    for (const auto& [triggerIndex, qaHistograms] : qaHistogramsByTrigger) {
-        if (qaHistograms.empty()) {
-            if (verbose) {
-                std::cout << ANSI_COLOR_BLUE_BOLD << "No QA histograms found for Trigger " << triggerIndex << "." << ANSI_COLOR_RESET << std::endl;
-            }
-            continue; // Skip if no histograms exist
-        }
-
-        std::string qaDir = "QA/Trigger" + std::to_string(triggerIndex);
-        if (!out->cd(qaDir.c_str())) {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to change directory to " << qaDir << " when writing QA histograms." << ANSI_COLOR_RESET << std::endl;
-            continue; // Skip this trigger index since the directory change failed
-        }
-
-        for (const auto& [name, hist] : qaHistograms) {
-            if (!hist) {
-                std::cerr << ANSI_COLOR_RED_BOLD << "Warning: QA Histogram " << name << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
-                continue;
+    if (!out->cd("QA")) {
+        std::cerr << ANSI_COLOR_RED_BOLD
+        << "Error: Failed to change directory to QA when writing QA histograms."
+        << ANSI_COLOR_RESET << std::endl;
+    } else {
+        for (const auto& [triggerIndex, qaHistograms] : qaHistogramsByTrigger) {
+            if (qaHistograms.empty()) {
+                if (verbose) {
+                    std::cout << ANSI_COLOR_BLUE_BOLD << "No QA histograms found for Trigger " << triggerIndex << "." << ANSI_COLOR_RESET << std::endl;
+                }
+                continue; // Skip if no histograms exist
             }
 
-            int writeResult = hist->Write();
-            if (writeResult == 0) {
-                std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
-            } else if (verbose) {
-                std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
-            }
-
-            delete hist; // Clean up after writing
-        }
-    }
-
-    // Write the isolation histograms for each pT bin
-    for (const auto& [triggerIndex, isolationHistMap] : qaIsolationHistogramsByTriggerAndPt) {
-        std::string isolationDir = "QA/Trigger" + std::to_string(triggerIndex);
-        
-        // Ensure the directory exists and change into it
-        if (!out->cd(isolationDir.c_str())) {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to change directory to " << isolationDir << " when writing isolation histograms." << ANSI_COLOR_RESET << std::endl;
-            continue; // Skip this trigger index since the directory change failed
-        }
-
-        for (const auto& [pT_bin, histMap] : isolationHistMap) {
-            for (const auto& [name, hist] : histMap) {
+            for (const auto& [name, hist] : qaHistograms) {
                 if (!hist) {
-                    std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Isolation Histogram " << name << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Warning: QA Histogram " << name << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
                     continue;
                 }
 
                 int writeResult = hist->Write();
                 if (writeResult == 0) {
-                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
                 } else if (verbose) {
-                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
                 }
 
                 delete hist; // Clean up after writing
             }
         }
     }
-    
-    
-    // Write all invariant mass histograms to file and clean up
-    for (const auto& [triggerIndex, cutHistMap] : massAndIsolationHistograms) {
-        // Define the top-level directory for this trigger in the output file
-        std::string invMassDir = "PhotonAnalysis/Trigger" + std::to_string(triggerIndex);
-
-        out->cd(invMassDir.c_str());
-        
-        // Iterate over each combination of cuts (asymmetry, chi2, and Ecore) for this trigger index
-        for (const auto& [cutCombination, pTHistMap] : cutHistMap) {
-            // Loop over each pT bin within this cut combination
-            for (const auto& [pT_bin, histMap] : pTHistMap) {
-                // Write each histogram in the current pT bin to the output file
-                for (const auto& [histName, hist] : histMap) {
-                    // Ensure the histogram exists before attempting to write it
+    if (!out->cd("QA")) {
+        std::cerr << ANSI_COLOR_RED_BOLD
+        << "Error: Failed to change directory to QA when writing isolation histograms."
+        << ANSI_COLOR_RESET << std::endl;
+    } else {
+        // Write the isolation histograms for each pT bin
+        for (const auto& [triggerIndex, isolationHistMap] : qaIsolationHistogramsByTriggerAndPt) {
+            for (const auto& [pT_bin, histMap] : isolationHistMap) {
+                for (const auto& [name, hist] : histMap) {
                     if (!hist) {
-                        std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Mass histogram " << histName << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
+                        std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Isolation Histogram " << name << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
                         continue;
                     }
-                    std::string currentDir = gDirectory->GetPath();
-                    if (verbose) {
-                        std::cout << ANSI_COLOR_BLUE_BOLD << "Writing histogram " << histName << " to directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
-                    }
-                    
-                    // Attempt to write the histogram to the file; check the return code for success
+
                     int writeResult = hist->Write();
                     if (writeResult == 0) {
-                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write mass histogram " << histName << " to the directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
                     } else if (verbose) {
-                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote mass histogram " << histName << " to the directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
                     }
 
-                    // Delete the histogram from memory after writing to avoid memory
-                    delete hist;
+                    delete hist; // Clean up after writing
                 }
             }
         }
     }
+    out->cd("/");
+    
+    if (!out->cd("PhotonAnalysis")) {
+        std::cerr << ANSI_COLOR_RED_BOLD
+        << "Error: Failed to change directory to PhotonAnalysis when writing mass histograms."
+        << ANSI_COLOR_RESET << std::endl;
+    } else {
+        // Write all invariant mass histograms to file and clean up
+        for (const auto& [triggerIndex, cutHistMap] : massAndIsolationHistograms) {
+            // Iterate over each combination of cuts (asymmetry, chi2, and Ecore) for this trigger index
+            for (const auto& [cutCombination, pTHistMap] : cutHistMap) {
+                // Loop over each pT bin within this cut combination
+                for (const auto& [pT_bin, histMap] : pTHistMap) {
+                    // Write each histogram in the current pT bin to the output file
+                    for (const auto& [histName, hist] : histMap) {
+                        // Ensure the histogram exists before attempting to write it
+                        if (!hist) {
+                            std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Mass histogram " << histName << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
+                            continue;
+                        }
+                        std::string currentDir = gDirectory->GetPath();
+                        if (verbose) {
+                            std::cout << ANSI_COLOR_BLUE_BOLD << "Writing histogram " << histName << " to directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                        }
+                        
+                        // Attempt to write the histogram to the file; check the return code for success
+                        int writeResult = hist->Write();
+                        if (writeResult == 0) {
+                            std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write mass histogram " << histName << " to the directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                        } else if (verbose) {
+                            std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote mass histogram " << histName << " to the directory: " << currentDir << ANSI_COLOR_RESET << std::endl;
+                        }
+
+                        // Delete the histogram from memory after writing to avoid memory
+                        delete hist;
+                    }
+                }
+            }
+        }
+    }
+
     
     // Write the no-pT-binned mass histograms to the file
     if (verbose) {
         std::cout << ANSI_COLOR_BLUE_BOLD << "Writing no-pT-binned mass histograms..." << ANSI_COLOR_RESET << std::endl;
     }
 
-    for (const auto& [triggerIndex, histMap] : massAndIsolationHistogramsNoPtBins) {
-        std::string invMassDir = "PhotonAnalysis/Trigger" + std::to_string(triggerIndex);
-        
-        if (!out->cd(invMassDir.c_str())) {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to change directory to " << invMassDir << " when writing no-pT-bin mass histograms." << ANSI_COLOR_RESET << std::endl;
-            continue;
-        }
+    if (!out->cd("PhotonAnalysis")) {
+        std::cerr << ANSI_COLOR_RED_BOLD
+        << "Error: Failed to change directory to PhotonAnalysis when writing no-pT-bin mass histograms."
+        << ANSI_COLOR_RESET << std::endl;
+    } else {
+        for (const auto& [triggerIndex, histMap] : massAndIsolationHistogramsNoPtBins) {
+            for (const auto& [histName, hist] : histMap) {
+                if (!hist) {
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Warning: No-pT-bin mass histogram " << histName << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
+                    continue;
+                }
 
-        for (const auto& [histName, hist] : histMap) {
-            if (!hist) {
-                std::cerr << ANSI_COLOR_RED_BOLD << "Warning: No-pT-bin mass histogram " << histName << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
-                continue;
+                int writeResult = hist->Write();
+                if (writeResult == 0) {
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
+                } else if (verbose) {
+                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
+                }
+
+                delete hist;  // Clean up after writing
             }
-
-            int writeResult = hist->Write();
-            if (writeResult == 0) {
-                std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
-            } else if (verbose) {
-                std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
-            }
-
-            delete hist;  // Clean up after writing
         }
     }
-
-    gDirectory->cd("/");
+    out->cd("/");
     
     // Close the output file and clean up
     std::cout << ANSI_COLOR_BLUE_BOLD << "Closing output file and cleaning up..." << ANSI_COLOR_RESET << std::endl;
