@@ -187,13 +187,14 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     st->set_towerNodePrefix(HIJETS::tower_prefix);
     se->registerSubsystem(st);
     
-    ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 0);
+    //  ClusterIso(const std::string&, float eTCut, int coneSize, bool do_subtracted, bool do_unsubtracted);
+    ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 1);
     makeClusterEt->Verbosity(0);
     se->registerSubsystem(makeClusterEt);
     std::cout << "[INFO] ClusterIso subsystem created and registered successfully." << std::endl;
     
-    //the 0/1 in second argument referres to false/true have event limit 5000 for local tests
     caloTreeGen *eval = new caloTreeGen(inName);
+    eval->setTriggerNameMapForRun(runnumber);
     se -> registerSubsystem(eval);
     
     Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTcalo");
