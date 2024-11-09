@@ -1,12 +1,3 @@
-/*!
- * \file ClusterIso.cc
- * \brief
- * \author Francesco Vassalli <Francesco.Vassalli@colorado.edu>
- * \author Chase Smith <chsm5267@colorado.edu>
- * \version $Revision: 2 $
- * \date $Date: July 17th, 2018 $
- */
-
 #include "ClusterIso.h"
 
 #include <calobase/RawCluster.h>
@@ -21,14 +12,14 @@
 #include <globalvertex/GlobalVertex.h>
 #include <globalvertex/GlobalVertexMap.h>
 
-#include <fun4all/Fun4AllBase.h>             // for Fun4AllBase::VERBOSITY_MORE
+#include <fun4all/Fun4AllBase.h>
 #include <fun4all/SubsysReco.h>
 #include <fun4all/Fun4AllServer.h>
 #include <fun4all/Fun4AllReturnCodes.h>
 
 
 #include <phool/getClass.h>
-#include <phool/PHCompositeNode.h> //added
+#include <phool/PHCompositeNode.h>
 
 
 #include <CLHEP/Vector/ThreeVector.h>
@@ -316,9 +307,8 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
           //calculate Outer HCal tower contribution to isolation energy
           {
            unsigned int ntowers = towersOH3->size();
-        for (unsigned int channel = 0; channel < ntowers;channel++)
-            {
-             TowerInfo *tower = towersOH3->get_tower_at_channel(channel);
+        for (unsigned int channel = 0; channel < ntowers;channel++) {
+          TowerInfo *tower = towersOH3->get_tower_at_channel(channel);
           unsigned int towerkey =towersOH3->encode_key(channel);
           int ieta = towersOH3->getTowerEtaBin(towerkey);
           int iphi = towersOH3->getTowerPhiBin(towerkey);
@@ -353,15 +343,15 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
     if (Verbosity() >= VERBOSITY_EVEN_MORE) std::cout << Name() << "::ClusterIso starting unsubtracted calculation" << '\n';
     {
       //get EMCal towers
-      TowerInfoContainer *towersEM3old = findNode::getClass<TowerInfoContainerv1>(topNode, "TOWERINFO_CALIB_CEMC");
+      TowerInfoContainer *towersEM3old = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC");
       if (Verbosity() >= VERBOSITY_MORE) std::cout << "ClusterIso::process_event: " << towersEM3old->size() << " TOWERINFO_CALIB_CEMC towers" << '\n';
 
       //get InnerHCal towers
-      TowerInfoContainer *towersIH3 = findNode::getClass<TowerInfoContainerv1>(topNode, "TOWERINFO_CALIB_HCALIN");
+      TowerInfoContainer *towersIH3 = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
       if (Verbosity() >= VERBOSITY_MORE) std::cout << "ClusterIso::process_event: " << towersIH3->size() << " TOWERINFO_CALIB_HCALIN towers" << '\n';
 
       //get outerHCal towers
-      TowerInfoContainer *towersOH3 = findNode::getClass<TowerInfoContainerv1>(topNode, "TOWERINFO_CALIB_HCALOUT");
+      TowerInfoContainer *towersOH3 = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
       if (Verbosity() >= VERBOSITY_MORE) std::cout << "ClusterIso::process_event: " << towersOH3->size() << " TOWERINFO_CALIB_HCALOUT towers" << std::endl;
 
       //get geometry of calorimeter towers
@@ -370,40 +360,93 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
       RawTowerGeomContainer *geomOH = findNode::getClass<RawTowerGeomContainer>(topNode, "TOWERGEOM_HCALOUT");
 
       {
-        RawClusterContainer *clusters = findNode::getClass<RawClusterContainer>(topNode, "CLUSTER_CEMC");
+        RawClusterContainer *clusters = findNode::getClass<RawClusterContainer>(topNode, "CLUSTERINFO_CEMC");
         RawClusterContainer::ConstRange begin_end = clusters->getClusters();
         RawClusterContainer::ConstIterator rtiter;
+          
         if (Verbosity() >= VERBOSITY_SOME) std::cout << " ClusterIso sees " << clusters->size() << " clusters " << '\n';
 
-        //vertexmap is used to get correct collision vertex
-        GlobalVertexMap *vertexmap = findNode::getClass<GlobalVertexMap>(topNode, "GlobalVertexMap");
-        m_vx = m_vy = m_vz = 0;
-        if (vertexmap && !vertexmap->empty())
-        {
-          GlobalVertex *vertex = (vertexmap->begin()->second);
-          m_vx = vertex->get_x();
-          m_vy = vertex->get_y();
-          m_vz = vertex->get_z();
-          if (Verbosity() >= VERBOSITY_SOME) std::cout << Name() << "ClusterIso Event Vertex Calculated at x:" << m_vx << " y:" << m_vy << " z:" << m_vz << '\n';
-        }
+          // Improved checks for GlobalVertexMap and vertex extraction
+          GlobalVertexMap *vertexmap = findNode::getClass<GlobalVertexMap>(topNode, "GlobalVertexMap");
+          m_vx = m_vy = m_vz = 0;  // Initialize vertex values to zero
 
-        for (rtiter = begin_end.first; rtiter != begin_end.second; ++rtiter)
-        {
+          if (!vertexmap)
+          {
+              if (Verbosity() >= VERBOSITY_MORE){
+                  std::cerr << "[ERROR] GlobalVertexMap node is missing." << std::endl;
+              }
+              return Fun4AllReturnCodes::EVENT_OK;
+          }
+          else
+          {
+              // If GlobalVertexMap was found, print a success message
+              if (Verbosity() >= VERBOSITY_MORE){
+                  std::cout << "[INFO] GlobalVertexMap node found." << std::endl;
+              }
+
+              
+              if (vertexmap->empty())
+              {
+                  // If the map is empty, print a warning and abort the event
+                  if (Verbosity() >= VERBOSITY_MORE){
+                      std::cerr << "[WARNING] GlobalVertexMap is empty. No vertex data available." << std::endl;
+                  }
+              }
+              else
+              {
+                  // If the map is not empty, proceed with vertex extraction
+                  GlobalVertexMap::ConstIter vertexIter = vertexmap->begin();
+                  if (vertexIter == vertexmap->end() || !(vertexIter->second))
+                  {
+                      // Check if the iterator points to a valid vertex
+                      if (Verbosity() >= VERBOSITY_MORE){
+                          std::cerr << "[ERROR] No valid vertex found in GlobalVertexMap." << std::endl;
+                      }
+                      return Fun4AllReturnCodes::ABORTEVENT;
+                  }
+                  else
+                  {
+                      // Extract the vertex and its coordinates
+                      GlobalVertex *vertex = vertexIter->second;
+                      if (!vertex)
+                      {
+                          if (Verbosity() >= VERBOSITY_MORE){
+                              std::cerr << "[ERROR] GlobalVertex object is null!" << std::endl;
+                          }
+                          return Fun4AllReturnCodes::ABORTEVENT;
+                      }
+                      
+                      // Assign vertex coordinates
+                      m_vx = vertex->get_x();
+                      m_vy = vertex->get_y();
+                      m_vz = vertex->get_z();
+                      
+                      // Print the vertex information for debugging
+                      if (Verbosity() >= VERBOSITY_MORE){
+                          std::cout << "[INFO] Vertex found: x = " << m_vx << ", y = " << m_vy << ", z = " << m_vz << std::endl;
+                      }
+                  }
+              }
+          }
+
+        for (rtiter = begin_end.first; rtiter != begin_end.second; ++rtiter) {
           RawCluster *cluster = rtiter->second;
 
           CLHEP::Hep3Vector vertex(m_vx, m_vy, m_vz);
           CLHEP::Hep3Vector E_vec_cluster = RawClusterUtility::GetEVec(*cluster, vertex);
-          double cluster_energy = E_vec_cluster.mag();
-          double cluster_eta = E_vec_cluster.pseudoRapidity();
-          double cluster_phi = E_vec_cluster.phi();
-          double et = cluster_energy / cosh(cluster_eta);
-          double isoEt = 0;
-          if (Verbosity() >= VERBOSITY_MAX)
-          {
-            std::cout << Name() << "::ClusterIso processing";
-            cluster->identify();
-            std::cout << '\n';
+          CLHEP::Hep3Vector E_core_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);
+            
+          double cluster_ecore = E_core_vec_cluster.mag();
+          if (cluster_ecore < 1) {
+              continue;
           }
+            
+          double cluster_eta = E_core_vec_cluster.pseudoRapidity();
+          double cluster_phi = E_core_vec_cluster.phi();
+            
+          double et = cluster_ecore / cosh(cluster_eta);
+            
+          double isoEt = 0;
           if (et < m_eTCut)
           {
             continue;
@@ -412,67 +455,62 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
           //calculate EMCal tower contribution to isolation energy
           {
         unsigned int ntowers = towersEM3old->size();
-        for (unsigned int channel = 0; channel < ntowers;channel++)
-          {
-        TowerInfo *tower = towersEM3old->get_tower_at_channel(channel);
-        unsigned int towerkey = towersEM3old->encode_key(channel);
-        int ieta = towersEM3old->getTowerEtaBin(towerkey);
-        int iphi = towersEM3old->getTowerPhiBin(towerkey);
-        const RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::CEMC, ieta, iphi);
-        RawTowerGeom *tower_geom = geomEM->get_tower_geometry(key);
-        double this_phi = tower_geom->get_phi();
-        double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
-        if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize) {
+        for (unsigned int channel = 0; channel < ntowers;channel++) {
+            TowerInfo *tower = towersEM3old->get_tower_at_channel(channel);
+            unsigned int towerkey = towersEM3old->encode_key(channel);
+            int ieta = towersEM3old->getTowerEtaBin(towerkey);
+            int iphi = towersEM3old->getTowerPhiBin(towerkey);
+            const RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::CEMC, ieta, iphi);
+            RawTowerGeom *tower_geom = geomEM->get_tower_geometry(key);
+            double this_phi = tower_geom->get_phi();
+            double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
+            if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize) {
             isoEt += tower->get_energy() / cosh(this_eta);  //if tower is in cone, add energy
-        }
+            }
           }
           }
           if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after EMCal isoEt:" << isoEt << '\n';
           //calculate Inner HCal tower contribution to isolation energy
-          {
+      {
         unsigned int ntowers = towersIH3->size();
-        for (unsigned int channel = 0; channel < ntowers;channel++)
-            {
+        for (unsigned int channel = 0; channel < ntowers;channel++) {
           TowerInfo *tower = towersIH3->get_tower_at_channel(channel);
           unsigned int towerkey = towersIH3->encode_key(channel);
           int ieta = towersIH3->getTowerEtaBin(towerkey);
           int iphi = towersIH3->getTowerPhiBin(towerkey);
           const RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::HCALIN, ieta, iphi);
           RawTowerGeom *tower_geom = geomIH->get_tower_geometry(key);
-              double this_phi = tower_geom->get_phi();
-              double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
-              if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize)
-              {
+          double this_phi = tower_geom->get_phi();
+          double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
+          if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize) {
                 isoEt += tower->get_energy() / cosh(this_eta);  //if tower is in cone, add energy
-              }
+          }
+        }
+       }
+       if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after innerHCal isoEt:" << isoEt << '\n';
+          //calculate Outer HCal tower contribution to isolation energy
+        {
+         unsigned int ntowers = towersOH3->size();
+        for (unsigned int channel = 0; channel < ntowers;channel++) {
+            TowerInfo *tower = towersOH3->get_tower_at_channel(channel);
+            unsigned int towerkey = towersOH3->encode_key(channel);
+            int ieta = towersOH3->getTowerEtaBin(towerkey);
+            int iphi = towersOH3->getTowerPhiBin(towerkey);
+            const RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::HCALOUT, ieta, iphi);
+            RawTowerGeom *tower_geom = geomOH->get_tower_geometry(key);
+            double this_phi = tower_geom->get_phi();
+            double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
+            if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize) {
+                isoEt += tower->get_energy() / cosh(this_eta);  //if tower is in cone, add energy
             }
           }
-          if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after innerHCal isoEt:" << isoEt << '\n';
-          //calculate Outer HCal tower contribution to isolation energy
-          {
-         unsigned int ntowers = towersOH3->size();
-        for (unsigned int channel = 0; channel < ntowers;channel++)
-          {
-        TowerInfo *tower = towersOH3->get_tower_at_channel(channel);
-        unsigned int towerkey = towersOH3->encode_key(channel);
-        int ieta = towersOH3->getTowerEtaBin(towerkey);
-        int iphi = towersOH3->getTowerPhiBin(towerkey);
-        const RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::HCALOUT, ieta, iphi);
-        RawTowerGeom *tower_geom = geomOH->get_tower_geometry(key);
-        double this_phi = tower_geom->get_phi();
-        double this_eta = getTowerEta(tower_geom, m_vx, m_vy, m_vz);
-        if (deltaR(cluster_eta, this_eta, cluster_phi, this_phi) < m_coneSize)
-          {
-            isoEt += tower->get_energy() / cosh(this_eta);  //if tower is in cone, add energy
-          }
-          }
-          }
-          if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after outerHCal isoEt:" << isoEt << '\n';
-            // Subtract cluster eT from isoET
-            isoEt -= et;
-            cluster->identify();
+        }
+        if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after outerHCal isoEt:" << isoEt << '\n';
+        // Subtract cluster eT from isoET
+        isoEt -= et;
+        cluster->identify();
 
-            cluster->set_et_iso(isoEt, (int) 10 * m_coneSize, 1, 1);
+        cluster->set_et_iso(isoEt, (int) (10 * m_coneSize), /*subtracted=*/0, /*clusterTower=*/1);
         }
       }
     }
