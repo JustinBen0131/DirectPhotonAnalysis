@@ -122,7 +122,15 @@ bool get_scaledowns(int runnumber, int scaledowns[]) {
     return true;
 }
 
-void analyzeTriggers(const std::vector<int>& runNumbers, const std::vector<int>& triggerIndices) {
+void analyzeTriggersAndWriteCSV(const std::vector<int>& runNumbers, const std::vector<int>& triggerIndices, const std::string& outputFilePath) {
+    std::ofstream csvFile(outputFilePath);
+    csvFile << "runNumber";
+
+    for (int triggerIndex : triggerIndices) {
+        csvFile << "," << triggerNameMap[triggerIndex];
+    }
+    csvFile << "\n";
+
     // Data structure to hold run numbers for each trigger bit
     struct TriggerRunData {
         std::vector<int> runsOn;
@@ -145,6 +153,8 @@ void analyzeTriggers(const std::vector<int>& runNumbers, const std::vector<int>&
             std::cerr << "Skipping run number: " << runNumber << " due to error in retrieving scaledowns." << std::endl;
             continue;
         }
+        
+        csvFile << runNumber;
 
         // Loop over trigger bits of interest
         for (int triggerIndex : triggerIndices) {
@@ -153,12 +163,16 @@ void analyzeTriggers(const std::vector<int>& runNumbers, const std::vector<int>&
             if (scaledown == -1) {
                 // Trigger is OFF
                 triggerDataMap[triggerIndex].runsOff.push_back(runNumber);
+                csvFile << ",OFF";
             } else {
                 // Trigger is ON
                 triggerDataMap[triggerIndex].runsOn.push_back(runNumber);
+                csvFile << ",ON";
             }
         }
+        csvFile << "\n";
     }
+    csvFile.close();
 
     // Output the results
     for (int triggerIndex : triggerIndices) {
@@ -201,6 +215,9 @@ void AnalyzeTriggerOnOrOff() {
         triggerBits.push_back(i);
     }
 
-    // Analyze triggers
-    analyzeTriggers(runNumbers, triggerBits);
+    std::string csvOutputFile = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/triggerAnalysisLUTv1.csv";
+    analyzeTriggersAndWriteCSV(runNumbers, triggerBits, csvOutputFile);
+
+    std::cout << "CSV file saved to: " << csvOutputFile << std::endl;
 }
+
