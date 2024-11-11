@@ -99,26 +99,6 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     }
     rc->set_uint64Flag("TIMESTAMP", runnumber);
     
-    RetowerCEMC *rcemc = new RetowerCEMC();
-    rcemc->Verbosity(0);
-    rcemc->set_towerinfo(true);
-    rcemc->set_frac_cut(0.5); //fraction of retower that must be masked to mask the full retower
-    rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
-    std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
-    se->registerSubsystem(rcemc);
-    /*
-     Relevent code from Calo_Calib.C since production p007 do not contain the TOWERS_CEMCnode that the Process_Calo_Calib() call needs
-     */
-    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
-    ClusterBuilder->Detector("CEMC");
-    ClusterBuilder->set_threshold_energy(0.030);  // for when using basic calibration
-    std::string emc_prof = getenv("CALIBRATIONROOT");
-    emc_prof += "/EmcProfile/CEMCprof_Thresh30MeV.root";
-    ClusterBuilder->LoadProfile(emc_prof);
-    ClusterBuilder->set_UseTowerInfo(1);  // to use towerinfo objects rather than old RawTower
-    std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
-    se->registerSubsystem(ClusterBuilder);
-    
     std::cout << "status setters" << std::endl;
     CaloTowerStatus *statusEMC = new CaloTowerStatus("CEMCSTATUS");
     statusEMC->set_detector_type(CaloTowerDefs::CEMC);
@@ -142,6 +122,26 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusHCALOUT->set_inputNodePrefix("TOWERINFO_CALIB_");
     statusHCALOUT->Verbosity(Fun4AllBase::VERBOSITY_MORE);
     se->registerSubsystem(statusHCALOUT);
+    
+    RetowerCEMC *rcemc = new RetowerCEMC();
+    rcemc->Verbosity(0);
+    rcemc->set_towerinfo(true);
+    rcemc->set_frac_cut(0.5); //fraction of retower that must be masked to mask the full retower
+    rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
+    std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
+    se->registerSubsystem(rcemc);
+    /*
+     Relevent code from Calo_Calib.C since production p007 do not contain the TOWERS_CEMCnode that the Process_Calo_Calib() call needs
+     */
+    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
+    ClusterBuilder->Detector("CEMC");
+    ClusterBuilder->set_threshold_energy(0.030);  // for when using basic calibration
+    std::string emc_prof = getenv("CALIBRATIONROOT");
+    emc_prof += "/EmcProfile/CEMCprof_Thresh30MeV.root";
+    ClusterBuilder->LoadProfile(emc_prof);
+    ClusterBuilder->set_UseTowerInfo(1);  // to use towerinfo objects rather than old RawTower
+    std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
+    se->registerSubsystem(ClusterBuilder);
 
     JetReco *towerjetreco = new JetReco();
     towerjetreco->add_input(new TowerJetInput(Jet::CEMC_TOWERINFO_RETOWER,HIJETS::tower_prefix));
