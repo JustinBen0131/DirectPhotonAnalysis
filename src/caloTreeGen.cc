@@ -199,9 +199,21 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
     }
     out->cd("QA");
     
+    
+    
     for (int triggerIndex : triggerIndices) {
+        // Get the trigger name from the active trigger name map
+        std::string triggerName;
+        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
+            triggerName = activeTriggerNameMap->at(triggerIndex);
+        } else {
+            std::cerr << "[ERROR] Trigger index " << triggerIndex << " not found in active trigger map." << std::endl;
+            continue; // Skip to next triggerIndex if not found
+        }
+
+        
         if (verbose) {
-            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating histograms for trigger index: " << triggerIndex << ANSI_COLOR_RESET << std::endl;
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating histograms for trigger: " << triggerName << " (index " << triggerIndex << ")" << ANSI_COLOR_RESET << std::endl;
         }
 
         std::map<std::string, TObject*>& qaHistograms = qaHistogramsByTrigger[triggerIndex];
@@ -224,39 +236,39 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         /*
          EMCal QA
          */
-        qaHistograms["h2_EMCal_TowerEtaPhi_Weighted_2D_" + std::to_string(triggerIndex)] = create2DHistogram("h2_EMCal_TowerEtaPhi_2D_" + std::to_string(triggerIndex), "EMCal Weighted Tower Energy; #eta; #phi; Energy [GeV]", 96, 0, 96, 256, 0, 256);
-        qaHistograms["hTotalCaloEEMCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEEMCal_" + std::to_string(triggerIndex), "Total EMCal Energy; Energy (GeV)", 100, -50, 100);
-        qaHistograms["hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex), "Total EMCal Energy; Energy (GeV)", 100, 0, 100);
-        qaHistograms["h_emcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_emcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["h_maxTowerEnergy_" + std::to_string(triggerIndex)] = createHistogram("h_maxTowerEnergy_" + std::to_string(triggerIndex), "Max Tower Energy [GeV]; Energy [GeV]", 100, 0, 100);
+        qaHistograms["h2_EMCal_TowerEtaPhi_Weighted_2D_" + triggerName] = create2DHistogram("h2_EMCal_TowerEtaPhi_2D_" + triggerName, "EMCal Weighted Tower Energy; #eta; #phi; Energy [GeV]", 96, 0, 96, 256, 0, 256);
+        qaHistograms["hTotalCaloEEMCal_" + triggerName] = createHistogram("hTotalCaloEEMCal_" + triggerName, "Total EMCal Energy; Energy (GeV)", 100, -50, 100);
+        qaHistograms["hTotalCalo_Negative_EEMCal_" + triggerName] = createHistogram("hTotalCalo_Negative_EEMCal_" + triggerName, "Total EMCal Energy; Energy (GeV)", 100, 0, 100);
+        qaHistograms["h_emcalChi2_" + triggerName] = createHistogram("h_emcalChi2_" + triggerName, "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h_maxTowerEnergy_" + triggerName] = createHistogram("h_maxTowerEnergy_" + triggerName, "Max Tower Energy [GeV]; Energy [GeV]", 100, 0, 100);
         
 
         /*
          Cluster Distributions EMCal
          */
-        qaHistograms["hClusterChi2_" + std::to_string(triggerIndex)] = createHistogram("hClusterChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["hCluster_maxECore_" + std::to_string(triggerIndex)] = createHistogram("hCluster_maxECore_" + std::to_string(triggerIndex), "Max Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
-        qaHistograms["hClusterPt_" + std::to_string(triggerIndex)] = createHistogram("hClusterPt_" + std::to_string(triggerIndex), "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
-        qaHistograms["hVtxZ_" + std::to_string(triggerIndex)] = createHistogram("hVtxZ_" + std::to_string(triggerIndex), "Z-vertex Distribution; z [cm]", 100, -70, 70);
-        qaHistograms["h_ET_" + std::to_string(triggerIndex)] = createHistogram("h_ET_" + std::to_string(triggerIndex), "Cluster Transverse Energy [GeV]; Energy [GeV]", 100, 0, 100);
-        qaHistograms["h2_cluster_iso_Et_unsubtracted_" + std::to_string(triggerIndex)] =
-            create2DHistogram("h2_cluster_iso_Et_unsubtracted_" + std::to_string(triggerIndex),
+        qaHistograms["hClusterChi2_" + triggerName] = createHistogram("hClusterChi2_" + triggerName, "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["hCluster_maxECore_" + triggerName] = createHistogram("hCluster_maxECore_" + triggerName, "Max Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
+        qaHistograms["hClusterPt_" + triggerName] = createHistogram("hClusterPt_" + triggerName, "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
+        qaHistograms["hVtxZ_" + triggerName] = createHistogram("hVtxZ_" + triggerName, "Z-vertex Distribution; z [cm]", 100, -70, 70);
+        qaHistograms["h_ET_" + triggerName] = createHistogram("h_ET_" + triggerName, "Cluster Transverse Energy [GeV]; Energy [GeV]", 100, 0, 100);
+        qaHistograms["h2_cluster_iso_Et_unsubtracted_" + triggerName] =
+            create2DHistogram("h2_cluster_iso_Et_unsubtracted_" + triggerName,
                               "Cluster Isolation Energy vs Cluster Et (Unsubtracted);Cluster Et [GeV];E_{T}^{iso} [GeV]",
                               100, 0, 20, 100, -20, 20);
 
-        qaHistograms["h1_isoEt_unsubtracted_" + std::to_string(triggerIndex)] =
-            createHistogram("h1_isoEt_unsubtracted_" + std::to_string(triggerIndex),
+        qaHistograms["h1_isoEt_unsubtracted_" + triggerName] =
+            createHistogram("h1_isoEt_unsubtracted_" + triggerName,
                             "Isolation Energy Distribution (Unsubtracted);E_{T}^{iso} [GeV];Counts",
                             100, -20, 20);
 
         // Initialize histograms for the subtracted version
-        qaHistograms["h2_cluster_iso_Et_subtracted_" + std::to_string(triggerIndex)] =
-            create2DHistogram("h2_cluster_iso_Et_subtracted_" + std::to_string(triggerIndex),
+        qaHistograms["h2_cluster_iso_Et_subtracted_" + triggerName] =
+            create2DHistogram("h2_cluster_iso_Et_subtracted_" + triggerName,
                               "Cluster Isolation Energy vs Cluster Et (Subtracted);Cluster Et [GeV];E_{T}^{iso} [GeV]",
                               100, 0, 20, 100, -20, 20);
 
-        qaHistograms["h1_isoEt_subtracted_" + std::to_string(triggerIndex)] =
-            createHistogram("h1_isoEt_subtracted_" + std::to_string(triggerIndex),
+        qaHistograms["h1_isoEt_subtracted_" + triggerName] =
+            createHistogram("h1_isoEt_subtracted_" + triggerName,
                             "Isolation Energy Distribution (Subtracted);E_{T}^{iso} [GeV];Counts",
                             100, -20, 20);
 
@@ -265,31 +277,31 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
          HCal QA
          */
         //inner
-        qaHistograms["h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex)] = create2DHistogram("h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex), "HCal Tower Energy; #eta; #phi; Energy [GeV]", 24, 0, 24, 64, 0, 64);
-        qaHistograms["hTotalCaloEIHCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEIHCal_" + std::to_string(triggerIndex), "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
-        qaHistograms["h_ihcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_ihcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h2_IHCal_TowerEnergy_" + triggerName] = create2DHistogram("h2_IHCal_TowerEnergy_" + triggerName, "HCal Tower Energy; #eta; #phi; Energy [GeV]", 24, 0, 24, 64, 0, 64);
+        qaHistograms["hTotalCaloEIHCal_" + triggerName] = createHistogram("hTotalCaloEIHCal_" + triggerName, "Total IHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["h_ihcalChi2_" + triggerName] = createHistogram("h_ihcalChi2_" + triggerName, "Cluster Chi2; Chi2", 100, 0, 100);
         
         //outer
-        qaHistograms["h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex)] = create2DHistogram("h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex), "HCal Tower Energy; #eta; #phi; Energy [GeV]", 24, 0, 24, 64, 0, 64);
-        qaHistograms["hTotalCaloEOHCal_" + std::to_string(triggerIndex)] = createHistogram("hTotalCaloEOHCal_" + std::to_string(triggerIndex), "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
-        qaHistograms["h_ohcalChi2_" + std::to_string(triggerIndex)] = createHistogram("h_ohcalChi2_" + std::to_string(triggerIndex), "Cluster Chi2; Chi2", 100, 0, 100);
+        qaHistograms["h2_OHCal_TowerEnergy_" + triggerName] = create2DHistogram("h2_OHCal_TowerEnergy_" + triggerName, "HCal Tower Energy; #eta; #phi; Energy [GeV]", 24, 0, 24, 64, 0, 64);
+        qaHistograms["hTotalCaloEOHCal_" + triggerName] = createHistogram("hTotalCaloEOHCal_" + triggerName, "Total OHCal Energy; Energy (GeV)", 100, 0, 500);
+        qaHistograms["h_ohcalChi2_" + triggerName] = createHistogram("h_ohcalChi2_" + triggerName, "Cluster Chi2; Chi2", 100, 0, 100);
         
         /*
          Trigger QA Distributions
          */
         //use for turn-on curves
-        qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)] = createHistogram("h8by8TowerEnergySum_" + std::to_string(triggerIndex), "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20); //photon triggers
-        qaHistograms["h_jet_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_energy_" + std::to_string(triggerIndex), "Maximum 0.8x0.8 Energy Sum (EMCAL + HCAL) [GeV]; Events", 50, 0, 50); //jet triggers
+        qaHistograms["h8by8TowerEnergySum_" + triggerName] = createHistogram("h8by8TowerEnergySum_" + triggerName, "Max 8x8 Tower Energy Sum; Energy [GeV]; Events", 40, 0, 20); //photon triggers
+        qaHistograms["h_jet_energy_" + triggerName] = createHistogram("h_jet_energy_" + triggerName, "Maximum 0.8x0.8 Energy Sum (EMCAL + HCAL) [GeV]; Events", 50, 0, 50); //jet triggers
         
         //other possible trigger QA
-        qaHistograms["h_hcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_hcal_energy_" + std::to_string(triggerIndex), "Max HCal Tower Energy Sums; Energy [GeV]; Events", 40, 0, 20);
-        qaHistograms["h_jet_emcal_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_emcal_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
-        qaHistograms["h_jet_hcalin_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalin_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
-        qaHistograms["h_jet_hcalout_energy_" + std::to_string(triggerIndex)] = createHistogram("h_jet_hcalout_energy_" + std::to_string(triggerIndex), "hJetEmcalEnergy [GeV]", 40, 0, 20);
+        qaHistograms["h_hcal_energy_" + triggerName] = createHistogram("h_hcal_energy_" + triggerName, "Max HCal Tower Energy Sums; Energy [GeV]; Events", 40, 0, 20);
+        qaHistograms["h_jet_emcal_energy_" + triggerName] = createHistogram("h_jet_emcal_energy_" + triggerName, "hJetEmcalEnergy [GeV]", 40, 0, 20);
+        qaHistograms["h_jet_hcalin_energy_" + triggerName] = createHistogram("h_jet_hcalin_energy_" + triggerName, "hJetEmcalEnergy [GeV]", 40, 0, 20);
+        qaHistograms["h_jet_hcalout_energy_" + triggerName] = createHistogram("h_jet_hcalout_energy_" + triggerName, "hJetEmcalEnergy [GeV]", 40, 0, 20);
         // Initialize the trigger count histogram
-        qaHistograms["hTriggerCount_" + std::to_string(triggerIndex)] = new TH1F(
-            ("hTriggerCount_" + std::to_string(triggerIndex)).c_str(),
-            ("Trigger Count for Index " + std::to_string(triggerIndex) + "; Count; Entries").c_str(),
+        qaHistograms["hTriggerCount_" + triggerName] = new TH1F(
+            ("hTriggerCount_" + triggerName).c_str(),
+            ("Trigger Count for Index " + triggerName + "; Count; Entries").c_str(),
             1, 0, 1 // Single bin to count occurrences
         );
         
@@ -303,10 +315,10 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             // Create unique names for the unsubtracted histograms based on the pT range
             std::string hist2DName_unsubtracted = "h2_cluster_iso_Et_unsubtracted_pT_" +
                 formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                formatFloatForFilename(pT_max) + "_" + triggerName;
             std::string hist1DName_unsubtracted = "h1_isoEt_unsubtracted_pT_" +
                 formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                formatFloatForFilename(pT_max) + "_" + triggerName;
 
             // Create and store the unsubtracted histograms in the existing map
             qaIsolationHistograms[pT_range][hist2DName_unsubtracted] = create2DHistogram(
@@ -321,10 +333,10 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             // Create unique names for the subtracted histograms
             std::string hist2DName_subtracted = "h2_cluster_iso_Et_subtracted_pT_" +
                 formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                formatFloatForFilename(pT_max) + "_" + triggerName;
             std::string hist1DName_subtracted = "h1_isoEt_subtracted_pT_" +
                 formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                formatFloatForFilename(pT_max) + "_" + triggerName;
 
             // Create and store the subtracted histograms in the same map
             qaIsolationHistograms[pT_range][hist2DName_subtracted] = create2DHistogram(
@@ -354,9 +366,19 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
 
     
     for (int triggerIndex : triggerIndices) {
-        if (verbose) {
-            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating PhotonAnalysis histograms for trigger index: " << triggerIndex << ANSI_COLOR_RESET << std::endl;
+        // Get the trigger name
+        std::string triggerName;
+        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
+            triggerName = activeTriggerNameMap->at(triggerIndex);
+        } else {
+            std::cerr << "[ERROR] Trigger index " << triggerIndex << " not found in active trigger map." << std::endl;
+            continue; // Skip to next triggerIndex
         }
+
+        if (verbose) {
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Creating PhotonAnalysis histograms for trigger: " << triggerName << " (index " << triggerIndex << ")" << ANSI_COLOR_RESET << std::endl;
+        }
+
         
         for (float maxAsym : asymmetry_values) {
             for (float maxChi2 : clus_chi_values) {
@@ -365,7 +387,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                     std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusE) +
                                                   "_Chi" + formatFloatForFilename(maxChi2) +
                                                   "_Asym" + formatFloatForFilename(maxAsym) +
-                                                  "_" + std::to_string(triggerIndex);
+                                                  "_" + triggerName;
                     TH1F* invMassHistName_noBinsOfPt = new TH1F(invMassHistName_noBinsOfPt_name.c_str(), invMassHistName_noBinsOfPt_name.c_str(), 80, 0, 1.0);
                     invMassHistName_noBinsOfPt->SetTitle(";M_{#gamma#gamma};");
                     massAndIsolationHistogramsNoPtBins[triggerIndex][invMassHistName_noBinsOfPt_name] = invMassHistName_noBinsOfPt;
@@ -376,7 +398,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                       "_Chi" + formatFloatForFilename(maxChi2) +
                                                       "_Asym" + formatFloatForFilename(maxAsym) +
                                                       "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                      "_" + std::to_string(triggerIndex);
+                                                      "_" + triggerName;
                         
                         if (verbose) {
                             std::cout << ANSI_COLOR_RED_BOLD << "Creating invariant mass histogram: " << invMassHistName << ANSI_COLOR_RESET << std::endl;
@@ -392,7 +414,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                    "_Chi" + formatFloatForFilename(maxChi2) +
                                                    "_Asym" + formatFloatForFilename(maxAsym) +
                                                    "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                   "_" + std::to_string(triggerIndex);
+                                                   "_" + triggerName;
 
                         TH2F* pionMassVsIsoHist = new TH2F(pionHistName.c_str(),
                                                            "Pion Mass vs Isolation Energy;M_{#pi^{0}} [GeV];E_{T}^{iso} [GeV]",
@@ -404,7 +426,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                   "_Chi" + formatFloatForFilename(maxChi2) +
                                                   "_Asym" + formatFloatForFilename(maxAsym) +
                                                   "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                  "_" + std::to_string(triggerIndex);
+                                                  "_" + triggerName;
 
                         TH2F* etaMassVsIsoHist = new TH2F(etaHistName.c_str(),
                                                           "Eta Mass vs Isolation Energy;M_{#eta} [GeV];E_{T}^{iso} [GeV]",
@@ -419,14 +441,14 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                       "_Asym" + formatFloatForFilename(maxAsym) +
                                                       massWindowLabel +
                                                       "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                      "_" + std::to_string(triggerIndex);
+                                                      "_" + triggerName;
                              
                              std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusE) +
                                                       "_Chi" + formatFloatForFilename(maxChi2) +
                                                       "_Asym" + formatFloatForFilename(maxAsym) +
                                                       massWindowLabel +
                                                       "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                      "_" + std::to_string(triggerIndex);
+                                                      "_" + triggerName;
 
                             // Create and store the 2D histogram (Isolation energy vs Ecore)
                             TH2F* hist2D = new TH2F(hist2DName.c_str(),
@@ -451,7 +473,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                                      massWindowLabel +
                                                                      "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
                                                                      "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                                     "_" + std::to_string(triggerIndex);
+                                                                     "_" + triggerName;
                                 
                                 TH1F* isolatedPhotonHist = new TH1F(isolatedPhotonHistName.c_str(), "Isolated Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
                                 
@@ -464,7 +486,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                             "_Asym" + formatFloatForFilename(maxAsym) +
                                                             massWindowLabel +
                                                             "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                            "_" + std::to_string(triggerIndex);
+                                                            "_" + triggerName;
                             
                             TH1F* allPhotonHist = new TH1F(allPhotonHistName.c_str(), "All Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
 
@@ -474,7 +496,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
                                                            "_Asym" + formatFloatForFilename(maxAsym) +
                                                            massWindowLabel +
                                                            "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                           "_" + std::to_string(triggerIndex);
+                                                           "_" + triggerName;
 
                             TH1F* ptPhotonHist = new TH1F(ptPhotonHistName.c_str(), "pT of Photons; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
                             
@@ -749,6 +771,7 @@ void caloTreeGen::processClusterIsolationHistograms(
     float pT_min,
     float pT_max,
     int triggerIndex,
+    const std::string& triggerName,
     const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
     std::map<std::pair<float, float>, std::map<std::string, TObject*>>& cutHistMap,
     size_t& filledHistogramCount,
@@ -770,7 +793,7 @@ void caloTreeGen::processClusterIsolationHistograms(
             "_Chi" + formatFloatForFilename(maxChi2) +
             "_Asym" + formatFloatForFilename(maxAsym) +
             "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-            "_" + std::to_string(triggerIndex);
+            "_" + triggerName;
             TH2F* pionMassVsIsoHist = dynamic_cast<TH2F*>(cutHistMap[pT_bin][pionHistName]);
             if (pionMassVsIsoHist) {
                 pionMassVsIsoHist->Fill(mesonMass, isoEt_FromMap);
@@ -785,7 +808,7 @@ void caloTreeGen::processClusterIsolationHistograms(
             "_Chi" + formatFloatForFilename(maxChi2) +
             "_Asym" + formatFloatForFilename(maxAsym) +
             "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-            "_" + std::to_string(triggerIndex);
+            "_" + triggerName;
             TH2F* etaMassVsIsoHist = dynamic_cast<TH2F*>(cutHistMap[pT_bin][etaHistName]);
             if (etaMassVsIsoHist) {
                 etaMassVsIsoHist->Fill(mesonMass, isoEt_FromMap);
@@ -804,14 +827,14 @@ void caloTreeGen::processClusterIsolationHistograms(
                                  "_Asym" + formatFloatForFilename(maxAsym) +
                                  massWindowLabel +
                                  "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                 "_" + std::to_string(triggerIndex);
+                                 "_" + triggerName;
 
         std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusEcore) +
                                  "_Chi" + formatFloatForFilename(maxChi2) +
                                  "_Asym" + formatFloatForFilename(maxAsym) +
                                  massWindowLabel +
                                  "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                 "_" + std::to_string(triggerIndex);
+                                 "_" + triggerName;
 
         
         if (verbose) {
@@ -852,6 +875,7 @@ void caloTreeGen::processIsolationRanges(
     float pT_min,
     float pT_max,
     int triggerIndex,
+    const std::string& triggerName,
     const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
     std::map<std::pair<float, float>, std::map<std::string, TObject*>>& cutHistMap,
     bool& filledHistogram,
@@ -888,7 +912,7 @@ void caloTreeGen::processIsolationRanges(
                                                  massWindowLabel +
                                                  "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
                                                  "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                 "_" + std::to_string(triggerIndex);
+                                                 "_" + triggerName;
             if (verbose) {
                 std::cout << "Attempting to fill isolated photon histogram: " << isolatedPhotonHistName << std::endl;
             }
@@ -945,6 +969,16 @@ void caloTreeGen::fillHistogramsForTriggers(
             }
             continue;  // Skip if this trigger bit is not active
         }
+        // Get the trigger name from the active trigger name map
+        std::string triggerName;
+        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
+            triggerName = activeTriggerNameMap->at(triggerIndex);
+        } else {
+            std::cerr << "[ERROR] Trigger index " << triggerIndex << " not found in active trigger map." << std::endl;
+            continue; // Skip to next triggerIndex
+        }
+
+        
         if (verbose) {
             std::cout << "Processing trigger index: " << triggerIndex << std::endl;
         }
@@ -956,7 +990,7 @@ void caloTreeGen::fillHistogramsForTriggers(
         std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusEcore) +
                                "_Chi" + formatFloatForFilename(maxChi2) +
                                "_Asym" + formatFloatForFilename(maxAsym) +
-                               "_" + std::to_string(triggerIndex);
+                               "_" + triggerName;
         
         if (verbose) {
             std::cout << "Attempting to fill histogram: " << invMassHistName_noBinsOfPt_name << std::endl;
@@ -999,7 +1033,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                                               "_Chi" + formatFloatForFilename(maxChi2) +
                                               "_Asym" + formatFloatForFilename(maxAsym) +
                                               "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                              "_" + std::to_string(triggerIndex);
+                                              "_" + triggerName;
 
                 TH1F* invMassHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][invMassHistName]);
                 if (invMassHist) {
@@ -1085,6 +1119,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                          pT_min,
                          pT_max,
                          triggerIndex,
+                         triggerName,
                          clusterEtIsoMap_unsubtracted,
                          cutHistMap,
                          filledHistogramCount,
@@ -1109,6 +1144,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     pT_min,
                     pT_max,
                     triggerIndex,
+                    triggerName,
                     clusterEtIsoMap_unsubtracted,
                     cutHistMap,
                     filledHistogram,
@@ -1121,7 +1157,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                                                 "_Asym" + formatFloatForFilename(maxAsym) +
                                                 massWindowLabel +
                                                 "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                "_" + std::to_string(triggerIndex);
+                                                "_" + triggerName;
 
                 if (verbose) {
                     std::cout << "Attempting to fill all photons histogram: " << allPhotonHistName << std::endl;
@@ -1144,7 +1180,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                                                "_Asym" + formatFloatForFilename(maxAsym) +
                                                massWindowLabel +
                                                "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                               "_" + std::to_string(triggerIndex);
+                                               "_" + triggerName;
 
                 if (verbose) {
                     std::cout << "Attempting to fill pT photon histogram: " << ptPhotonHistName << std::endl;
@@ -1369,10 +1405,18 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         }
     }
     
-    //switched to UE subtracted
-    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC_RETOWER_SUB1");
-    TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN_SUB1");
-    TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT_SUB1");
+    /*switched to UE subtracted
+     use:
+     -TOWERINFO_CALIB_CEMC_RETOWER_SUB1
+     -TOWERINFO_CALIB_HCALIN_SUB1
+     -TOWERINFO_CALIB_HCALOUT_SUB1
+     */
+    /*
+     switch to non retowered emcal -- TOWERINFO_CALIB_CEMC
+     */
+    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC_RETOWER");
+    TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
+    TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
     if (!emcTowerContainer && !ihcTowerContainer && !ohcTowerContainer) {
         std::cout << ANSI_COLOR_RED_BOLD << "No tower containers found, skipping tower processing." << ANSI_COLOR_RESET << std::endl;
         return Fun4AllReturnCodes::ABORTEVENT;  // Return if no tower containers
@@ -1506,7 +1550,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         m_clusTowE.push_back(returnClusterTowE(cluster,emcTowerContainer));
         m_maxTowEnergy.push_back(maxTowerEnergy);
         
-        float et_iso_unsubtracted = cluster->get_et_iso(3, /*subtracted=*/0, /*clusterTower=*/1);
+        float et_iso_unsubtracted = cluster->get_et_iso(3, /*unsubtracted=*/0, /*clusterTower=*/1);
 
         // Retrieve subtracted isolation energy
         float et_iso_subtracted = cluster->get_et_iso(3, /*subtracted=*/1, /*clusterTower=*/1);
@@ -1534,6 +1578,10 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
 
         if (!std::isnan(et_iso_subtracted)) {
             clusterEtIsoMap_subtracted[cluster->get_id()] = std::make_pair(clus_eT, et_iso_subtracted);
+            if (verbose) {
+                std::cout << "Cluster passed isolation cut: ID " << cluster->get_id()
+                          << ", Et = " << clus_eT << ", Subtracted isoEt = " << et_iso_subtracted << std::endl;
+            }
         } else {
             if (verbose) {
                 std::cout << "Warning: UE Subtracted Isolation energy is NaN for cluster ID: " << cluster->get_id() << std::endl;
@@ -1583,11 +1631,19 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         if (!checkTriggerCondition(activeTriggerBits, triggerIndex)) {
             continue;  // Skip if this trigger bit is not active
         }
-        auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
+        std::string triggerName;
+        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
+            triggerName = activeTriggerNameMap->at(triggerIndex);
+        } else {
+            std::cerr << "[ERROR] Trigger index " << triggerIndex << " not found in active trigger map." << std::endl;
+            continue; // Skip to next triggerIndex
+        }
         
+        auto& qaHistograms = qaHistogramsByTrigger[triggerIndex];
+        std::map<std::pair<float, float>, std::map<std::string, TObject*>>& qaIsolationHistograms = qaIsolationHistogramsByTriggerAndPt[triggerIndex];
 
         // Check if the histogram exists before filling it
-        std::string histName = "hVtxZ_" + std::to_string(triggerIndex);
+        std::string histName = "hVtxZ_" + triggerName;
         if (qaHistograms.find(histName) != qaHistograms.end()) {
             // Fill the histogram with the z-coordinate of the vertex
             ((TH1F*)qaHistograms[histName])->Fill(m_vz);
@@ -1599,7 +1655,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         }
 
         // Fill the trigger count histogram to count each time this trigger fires
-        TH1F* hTriggerCount = (TH1F*)qaHistogramsByTrigger[triggerIndex]["hTriggerCount_" + std::to_string(triggerIndex)];
+        TH1F* hTriggerCount = (TH1F*)qaHistogramsByTrigger[triggerIndex]["hTriggerCount_" + triggerName];
         if (hTriggerCount) {
             hTriggerCount->Fill(0.5); // Fill the single bin to count the trigger occurrence
         }
@@ -1611,55 +1667,55 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         // Process towers and fill histograms
         if (emcTowerContainer) {
             for (size_t i = 0; i < m_emcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_EMCal_TowerEtaPhi_Weighted_2D_" + std::to_string(triggerIndex)])->Fill(m_emciEta[i], m_emciPhi[i], m_emcTowE[i]);
+                ((TH2F*)qaHistograms["h2_EMCal_TowerEtaPhi_Weighted_2D_" + triggerName])->Fill(m_emciEta[i], m_emciPhi[i], m_emcTowE[i]);
             }
             // Check if the total EMCal energy is positive or negative and fill the appropriate histogram
             if (totalCaloEEMCal >= 0) {
-                ((TH1F*)qaHistograms["hTotalCaloEEMCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEEMCal);
+                ((TH1F*)qaHistograms["hTotalCaloEEMCal_" + triggerName])->Fill(totalCaloEEMCal);
             } else {
-                ((TH1F*)qaHistograms["hTotalCalo_Negative_EEMCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEEMCal);
+                ((TH1F*)qaHistograms["hTotalCalo_Negative_EEMCal_" + triggerName])->Fill(totalCaloEEMCal);
             }
             //maximum chi2 of all the towers fill the histograms for EMCAL chi2 for this event -- similar for other calos
             if (!m_emcChi2.empty()) {
                 float max_emcalChi2 = *std::max_element(m_emcChi2.begin(), m_emcChi2.end());
-                ((TH1F*)qaHistograms["h_emcalChi2_" + std::to_string(triggerIndex)])->Fill(max_emcalChi2);
+                ((TH1F*)qaHistograms["h_emcalChi2_" + triggerName])->Fill(max_emcalChi2);
             }
 
         }
         if (ihcTowerContainer) {
             for (size_t i = 0; i < m_ihcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_IHCal_TowerEnergy_" + std::to_string(triggerIndex)])->Fill(m_ihciTowEta[i], m_ihciTowPhi[i], m_ihcTowE[i]);
+                ((TH2F*)qaHistograms["h2_IHCal_TowerEnergy_" + triggerName])->Fill(m_ihciTowEta[i], m_ihciTowPhi[i], m_ihcTowE[i]);
             }
-            ((TH1F*)qaHistograms["hTotalCaloEIHCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEIHCal);
+            ((TH1F*)qaHistograms["hTotalCaloEIHCal_" + triggerName])->Fill(totalCaloEIHCal);
             if (!m_ihcChi2.empty()) {
                 float max_ihcalChi2 = *std::max_element(m_ihcChi2.begin(), m_ihcChi2.end());
-                ((TH1F*)qaHistograms["h_ihcalChi2_" + std::to_string(triggerIndex)])->Fill(max_ihcalChi2);
+                ((TH1F*)qaHistograms["h_ihcalChi2_" + triggerName])->Fill(max_ihcalChi2);
             }
         }
         
         if (ohcTowerContainer) {
             for (size_t i = 0; i < m_ohcTowE.size(); ++i) {
-                ((TH2F*)qaHistograms["h2_OHCal_TowerEnergy_" + std::to_string(triggerIndex)])->Fill(m_ohciTowEta[i], m_ohciTowPhi[i], m_ohcTowE[i]);
+                ((TH2F*)qaHistograms["h2_OHCal_TowerEnergy_" + triggerName])->Fill(m_ohciTowEta[i], m_ohciTowPhi[i], m_ohcTowE[i]);
             }
-            ((TH1F*)qaHistograms["hTotalCaloEOHCal_" + std::to_string(triggerIndex)])->Fill(totalCaloEOHCal);
+            ((TH1F*)qaHistograms["hTotalCaloEOHCal_" + triggerName])->Fill(totalCaloEOHCal);
             if (!m_ohcChi2.empty()) {
                 float max_ohcalChi2 = *std::max_element(m_ohcChi2.begin(), m_ohcChi2.end());
-                ((TH1F*)qaHistograms["h_ohcalChi2_" + std::to_string(triggerIndex)])->Fill(max_ohcalChi2);
+                ((TH1F*)qaHistograms["h_ohcalChi2_" + triggerName])->Fill(max_ohcalChi2);
             }
         }
         
-        ((TH1F*)qaHistograms["h8by8TowerEnergySum_" + std::to_string(triggerIndex)])->Fill(energyMaps.max_8by8energy_emcal);
-        ((TH1F*)qaHistograms["h_hcal_energy_" + std::to_string(triggerIndex)])->Fill(energyMaps.max_energy_hcal);
-        ((TH1F*)qaHistograms["h_jet_energy_" + std::to_string(triggerIndex)])->Fill(energyMaps.max_energy_jet);
+        ((TH1F*)qaHistograms["h8by8TowerEnergySum_" + triggerName])->Fill(energyMaps.max_8by8energy_emcal);
+        ((TH1F*)qaHistograms["h_hcal_energy_" + triggerName])->Fill(energyMaps.max_energy_hcal);
+        ((TH1F*)qaHistograms["h_jet_energy_" + triggerName])->Fill(energyMaps.max_energy_jet);
 
-        ((TH1F*)qaHistograms["h_jet_emcal_energy_" + std::to_string(triggerIndex)])->Fill(energyMaps.energymap_jet_emcal[energyMaps.jet_ebin][energyMaps.jet_pbin]);
-        ((TH1F*)qaHistograms["h_jet_hcalin_energy_" + std::to_string(triggerIndex)])->Fill(energyMaps.energymap_jet_hcalin[energyMaps.jet_ebin][energyMaps.jet_pbin]);
-        ((TH1F*)qaHistograms["h_jet_hcalout_energy_" + std::to_string(triggerIndex)])->Fill(energyMaps.energymap_jet_hcalout[energyMaps.jet_ebin][energyMaps.jet_pbin]);
+        ((TH1F*)qaHistograms["h_jet_emcal_energy_" + triggerName])->Fill(energyMaps.energymap_jet_emcal[energyMaps.jet_ebin][energyMaps.jet_pbin]);
+        ((TH1F*)qaHistograms["h_jet_hcalin_energy_" + triggerName])->Fill(energyMaps.energymap_jet_hcalin[energyMaps.jet_ebin][energyMaps.jet_pbin]);
+        ((TH1F*)qaHistograms["h_jet_hcalout_energy_" + triggerName])->Fill(energyMaps.energymap_jet_hcalout[energyMaps.jet_ebin][energyMaps.jet_pbin]);
         
         
         for (size_t i = 0; i < m_clusterIds.size(); ++i) {
             // Fill the eT histogram
-            TH1F* h_ET = (TH1F*)qaHistograms["h_ET_" + std::to_string(triggerIndex)];
+            TH1F* h_ET = (TH1F*)qaHistograms["h_ET_" + triggerName];
             if (!h_ET) {
                 std::cerr << "Error: h_ET_" << triggerIndex << " histogram is null!" << std::endl;
             } else {
@@ -1667,7 +1723,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             }
             
             // Check if histograms exist and fill them
-            TH1F* h_maxTowE = (TH1F*)qaHistograms["h_maxTowerEnergy_" + std::to_string(triggerIndex)];
+            TH1F* h_maxTowE = (TH1F*)qaHistograms["h_maxTowerEnergy_" + triggerName];
             if (!h_maxTowE) {
                 std::cerr << "Error: h_maxTowerEnergy_" << triggerIndex << " histogram is null!" << std::endl;
             } else {
@@ -1675,8 +1731,8 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
             }
             
             // Access histograms from the map
-            TH1F* hPt = (TH1F*)qaHistograms["hClusterPt_" + std::to_string(triggerIndex)];
-            TH1F* hChi2 = (TH1F*)qaHistograms["hClusterChi2_" + std::to_string(triggerIndex)];
+            TH1F* hPt = (TH1F*)qaHistograms["hClusterPt_" + triggerName];
+            TH1F* hChi2 = (TH1F*)qaHistograms["hClusterChi2_" + triggerName];
 
             // Check if histograms exist and fill them
             if (!hPt) {
@@ -1700,8 +1756,8 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                 float isoEt_FromMap = entry.second.second;
 
                 // Unsubtracted histogram names
-                std::string hist2DName = "h2_cluster_iso_Et_unsubtracted_" + std::to_string(triggerIndex);
-                std::string hist1DName = "h1_isoEt_unsubtracted_" + std::to_string(triggerIndex);
+                std::string hist2DName = "h2_cluster_iso_Et_unsubtracted_" + triggerName;
+                std::string hist1DName = "h1_isoEt_unsubtracted_" + triggerName;
 
                 // Error checking for histogram existence before filling
                 auto hist2D = qaHistograms[hist2DName];
@@ -1740,10 +1796,10 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                             // Unsubtracted histogram names
                             std::string hist2DName = "h2_cluster_iso_Et_unsubtracted_pT_" +
                                 formatFloatForFilename(pT_min) + "to" +
-                                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                                formatFloatForFilename(pT_max) + "_" + triggerName;
                             std::string hist1DName = "h1_isoEt_unsubtracted_pT_" +
                                 formatFloatForFilename(pT_min) + "to" +
-                                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                                formatFloatForFilename(pT_max) + "_" + triggerName;
 
                             // Retrieve the histograms from the existing map
                             auto& hist2D_pT = qaIsolationHistograms[pT_range][hist2DName];
@@ -1782,8 +1838,8 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                 float isoEt_FromMap = entry.second.second;
 
                 // Subtracted histogram names
-                std::string hist2DName = "h2_cluster_iso_Et_subtracted_" + std::to_string(triggerIndex);
-                std::string hist1DName = "h1_isoEt_subtracted_" + std::to_string(triggerIndex);
+                std::string hist2DName = "h2_cluster_iso_Et_subtracted_" + triggerName;
+                std::string hist1DName = "h1_isoEt_subtracted_" + triggerName;
 
                 // Error checking for histogram existence before filling
                 auto hist2D = qaHistograms[hist2DName];
@@ -1822,10 +1878,10 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
                             // Subtracted histogram names
                             std::string hist2DName = "h2_cluster_iso_Et_subtracted_pT_" +
                                 formatFloatForFilename(pT_min) + "to" +
-                                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                                formatFloatForFilename(pT_max) + "_" + triggerName;
                             std::string hist1DName = "h1_isoEt_subtracted_pT_" +
                                 formatFloatForFilename(pT_min) + "to" +
-                                formatFloatForFilename(pT_max) + "_" + std::to_string(triggerIndex);
+                                formatFloatForFilename(pT_max) + "_" + triggerName;
 
                             // Retrieve the histograms from the existing map
                             auto& hist2D_pT = qaIsolationHistograms[pT_range][hist2DName];
@@ -1857,7 +1913,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         }
         
         // Fill the histogram with the maximum cluster energy core value
-        TH1F* h_maxECore = (TH1F*)qaHistograms["hCluster_maxECore_" + std::to_string(triggerIndex)];
+        TH1F* h_maxECore = (TH1F*)qaHistograms["hCluster_maxECore_" + triggerName];
 
         if (!h_maxECore) {
             std::cerr << "Error: Histogram hCluster_maxECore_" << triggerIndex << " is null and cannot be filled." << std::endl;
@@ -1955,9 +2011,9 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
 
                 int writeResult = hist->Write();
                 if (writeResult == 0) {
-                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write QA histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
                 } else if (verbose) {
-                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote QA histogram " << name << " to directory " << qaDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote QA histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
                 }
 
                 delete hist; // Clean up after writing
@@ -1980,9 +2036,9 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
 
                     int writeResult = hist->Write();
                     if (writeResult == 0) {
-                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
+                        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write isolation histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
                     } else if (verbose) {
-                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote isolation histogram " << name << " to directory " << isolationDir << "." << ANSI_COLOR_RESET << std::endl;
+                        std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote isolation histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
                     }
 
                     delete hist; // Clean up after writing
@@ -2051,9 +2107,9 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
 
                 int writeResult = hist->Write();
                 if (writeResult == 0) {
-                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write no-pT-bin mass histogram " << histName << "." << ANSI_COLOR_RESET << std::endl;
                 } else if (verbose) {
-                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote no-pT-bin mass histogram " << histName << " to the directory " << invMassDir << "." << ANSI_COLOR_RESET << std::endl;
+                    std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote no-pT-bin mass histogram " << histName << "." << ANSI_COLOR_RESET << std::endl;
                 }
 
                 delete hist;  // Clean up after writing
