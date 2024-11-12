@@ -508,9 +508,9 @@ int ClusterIso::process_event(PHCompositeNode *topNode)
         if (Verbosity() >= VERBOSITY_MAX) std::cout << "\t after outerHCal isoEt:" << isoEt << '\n';
         // Subtract cluster eT from isoET
         isoEt -= et;
-        cluster->identify();
+        //cluster->identify();
 
-        cluster->set_et_iso(isoEt, (int) (10 * m_coneSize), /*subtracted=*/0, /*clusterTower=*/1);
+        cluster->set_et_iso(isoEt, (int) (10 * m_coneSize), /*unsubtracted=*/0, /*clusterTower=*/1);
         }
       }
     }
