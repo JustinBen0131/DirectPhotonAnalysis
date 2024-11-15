@@ -346,6 +346,178 @@ void analyzeTriggersAndWriteCombinedCSV(
     csvFile.close();
 }
 
+void analyzeCombinationsFromCSV(const std::string& csvFilePath) {
+    // List of trigger names we're interested in
+    std::vector<std::string> triggersOfInterest = {
+        "MBD_NandS_geq_1",
+        "Photon_1_GeV_plus_MBD_NS_geq_1",
+        "Photon_2_GeV_plus_MBD_NS_geq_1",
+        "Photon_3_GeV_plus_MBD_NS_geq_1",
+        "Photon_4_GeV_plus_MBD_NS_geq_1",
+        "Photon_5_GeV_plus_MBD_NS_geq_1"
+    };
+
+    // Map from trigger name to column index
+    std::map<std::string, int> triggerToIndex;
+
+    // List of runs
+    std::vector<int> runNumbers;
+
+    // Map from run number to trigger status
+    std::map<int, std::map<std::string, std::string>> runTriggerStatus;
+
+    // Open the CSV file
+    std::ifstream file(csvFilePath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << csvFilePath << std::endl;
+        return;
+    }
+
+    // Read the header line
+    std::string line;
+    if (!std::getline(file, line)) {
+        std::cerr << "Failed to read header from CSV file." << std::endl;
+        return;
+    }
+
+    // Parse the header to get the indices of the triggers
+    std::vector<std::string> headers;
+    std::istringstream headerStream(line);
+    std::string header;
+    int colIndex = 0;
+    while (std::getline(headerStream, header, ',')) {
+        // Trim whitespace
+        header.erase(0, header.find_first_not_of(" \t\r\n"));
+        header.erase(header.find_last_not_of(" \t\r\n") + 1);
+
+        headers.push_back(header);
+        // If header is in triggersOfInterest, store its index
+        if (std::find(triggersOfInterest.begin(), triggersOfInterest.end(), header) != triggersOfInterest.end()) {
+            triggerToIndex[header] = colIndex;
+        } else if (header == "runNumber") {
+            triggerToIndex[header] = colIndex;
+        }
+        colIndex++;
+    }
+
+    // Read each line of the CSV
+    while (std::getline(file, line)) {
+        // Parse the line into cells
+        std::vector<std::string> cells;
+        std::istringstream lineStream(line);
+        std::string cell;
+        while (std::getline(lineStream, cell, ',')) {
+            // Trim whitespace and carriage returns
+            cell.erase(0, cell.find_first_not_of(" \t\r\n"));
+            cell.erase(cell.find_last_not_of(" \t\r\n") + 1);
+
+            cells.push_back(cell);
+        }
+
+        // Ensure that the number of cells matches the number of headers
+        if (cells.size() != headers.size()) {
+            std::cerr << "Mismatch between number of cells and headers in line: " << line << std::endl;
+            continue;
+        }
+
+        // Get run number
+        int runNumber = std::stoi(cells[triggerToIndex["runNumber"]]);
+
+        // Store the status of triggers of interest for this run
+        for (const auto& trigger : triggersOfInterest) {
+            if (triggerToIndex.find(trigger) != triggerToIndex.end()) {
+                int idx = triggerToIndex[trigger];
+                std::string status = cells[idx];
+                // Trim whitespace
+                status.erase(0, status.find_first_not_of(" \t\r\n"));
+                status.erase(status.find_last_not_of(" \t\r\n") + 1);
+
+                runTriggerStatus[runNumber][trigger] = status;
+            } else {
+                // If trigger not found in headers, assume 'OFF'
+                runTriggerStatus[runNumber][trigger] = "OFF";
+            }
+        }
+        // Keep track of run numbers
+        runNumbers.push_back(runNumber);
+    }
+
+    file.close();
+
+    // Generate all combinations of triggers of interest
+    int n = triggersOfInterest.size();
+    int totalCombinations = 1 << n; // 2^n combinations
+
+    // Map from combination (set of triggers) to vector of run numbers
+    std::map<std::set<std::string>, std::vector<int>> combinationToRuns;
+
+    // For each combination
+    for (int mask = 1; mask < totalCombinations; ++mask) {
+        std::set<std::string> combination;
+        // Build the combination based on the bits in mask
+        for (int i = 0; i < n; ++i) {
+            if (mask & (1 << i)) {
+                combination.insert(triggersOfInterest[i]);
+            }
+        }
+
+        // For each run, check if all triggers in the combination are 'ON'
+        for (const auto& runNumber : runNumbers) {
+            bool allOn = true;
+            for (const auto& trigger : combination) {
+                if (runTriggerStatus[runNumber][trigger] != "ON") {
+                    allOn = false;
+                    break;
+                }
+            }
+            if (allOn) {
+                combinationToRuns[combination].push_back(runNumber);
+            }
+        }
+    }
+
+    // Output the results
+    std::cout << "\nSummary of Trigger Combinations:\n";
+    // Sort combinations based on size and triggers
+    std::vector<std::pair<std::set<std::string>, std::vector<int>>> sortedCombinations(
+        combinationToRuns.begin(), combinationToRuns.end());
+
+    std::sort(sortedCombinations.begin(), sortedCombinations.end(),
+              [](const auto& a, const auto& b) {
+                  // Compare based on the number of triggers active
+                  int countA = a.first.size();
+                  int countB = b.first.size();
+                  if (countA != countB) {
+                      return countA < countB;
+                  } else {
+                      // If same number of triggers, sort alphabetically
+                      return a.first < b.first;
+                  }
+              });
+
+    for (const auto& kv : sortedCombinations) {
+        const std::set<std::string>& triggers = kv.first;
+        const std::vector<int>& runs = kv.second;
+
+        // Output the combination and counts
+        std::cout << "Combination: ";
+        for (const std::string& t : triggers) {
+            std::cout << t << " ";
+        }
+        std::cout << "\n";
+        std::cout << "Number of runs: " << runs.size() << "\n";
+        std::cout << "Run numbers: ";
+        for (size_t i = 0; i < runs.size(); ++i) {
+            std::cout << runs[i];
+            if ((i + 1) % 10 == 0) {
+                std::cout << "\n             ";
+            } else {
+                std::cout << " ";
+            }
+        }
+        std::cout << "\n-------------------------------------\n";
+    }
+}
 void AnalyzeTriggerOnOrOff() {
     // First set: Using triggerNameMap1 and runListTriggerLUTv1.txt
     {
@@ -420,5 +592,7 @@ void AnalyzeTriggerOnOrOff() {
          analyzeTriggersAndWriteCombinedCSV(runNumbers1, runNumbers2, triggerNameMap1, triggerNameMap2, combinedCsvOutputFile);
 
          std::cout << "Combined CSV file saved to: " << combinedCsvOutputFile << std::endl;
+        
+         analyzeCombinationsFromCSV(combinedCsvOutputFile);
      }
 }
