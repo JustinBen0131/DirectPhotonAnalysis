@@ -103,11 +103,11 @@ private:
     // Define the map to store mass windows by trigger, Ecore, Chi2, Asym, pTMin, and pTMax
     std::map<std::tuple<int, float, float, float, float, float>, MesonMassWindow> mesonMassWindowsMap;
     
-    bool verbose = true;
-    bool m_limitEvents = true;   // Enable event limiting by default
+    bool verbose = false;
+    bool m_limitEvents = false;   // Enable event limiting by default
     int m_eventLimit = 2000;    // Maximum number of events to process (10,000 by default)
     
-    std::vector<int> triggerIndices = {10, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31};
+    std::vector<int> triggerIndices = {10, 24, 25, 26, 27, 28, 29, 30, 31};
     std::vector<float> asymmetry_values = {0.5, 0.7};
     std::vector<float> clus_chi_values = {4};
     std::vector<float> clus_Ecore_values = {1.0, 1.5};
@@ -133,7 +133,7 @@ private:
         {9, "MBD_N_geq_1"},
         {10, "MBD_NandS_geq_1"},
         {11, "MBD_NandS_geq_2"},
-        {12, "MBD_NandS_geq_1_vtx_lessTehn_10_cm"},
+        {12, "MBD_NandS_geq_1_vtx_lessThen_10_cm"},
         {13, "MBD_NandS_geq_1_vtx_lessThen_30_cm"},
         {14, "MBD_NandS_geq_1_vtx_lessThen_60_cm"},
         {15, "HCAL_Singles_plus_MBD_NS_geq_1"},
@@ -187,6 +187,8 @@ private:
         {30, "Photon_4_GeV"},
         {31, "Photon_5_GeV"}
     };
+    
+    
     std::vector<int>  runNumbersForMap1 = { 44477,44478,44482,44483,44495,44498,44499,44503,44505,44506,44507,44509,44510,44511,44512,44513,44533,44534,44604,44608,44611,
         44616,44618,44619,44621,44631,44638,44642,45034,45035,45036,45038,45041,45048,45051,45052,45090,45100,45103,45105,45106,45107,
         45150,45151,45153,45154,45155,45157,45159,45160,45161,45162,45164,45166,45167,45170,45172,45176,45177,45178,45181,45183,45186,
