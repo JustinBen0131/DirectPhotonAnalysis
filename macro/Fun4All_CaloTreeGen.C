@@ -45,8 +45,6 @@ R__LOAD_LIBRARY(libjetbase.so)
 R__LOAD_LIBRARY(/sphenix/user/patsfan753/install/lib/libclusteriso.so)
 
 
-//R__LOAD_LIBRARY(libclusteriso.so)
-
 namespace Enable
 {
   bool HIJETS = true;
@@ -65,7 +63,7 @@ namespace HIJETS
 
 #endif
 
-void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO_run2pp_ana430_2024p007-00049070-00057.root", const char *inName = "commissioning.root") {
+void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "input_files.list", const char *inName = "commissioning.root") {
     std::cout << "[INFO] Starting Fun4All_CaloTreeGen..." << std::endl;
 
     Fun4AllServer *se = Fun4AllServer::instance();
@@ -91,10 +89,22 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
 
     rc->set_StringFlag("CDB_GLOBALTAG", "ProdA_2024");
     
-    pair<int, int> runseg = Fun4AllUtils::GetRunSegment(listFile);
+    // Read the first filename to extract the run number
+    std::ifstream infile(listFile);
+    std::string firstFilename;
+    if (!infile.is_open()) {
+        std::cerr << "[ERROR] Could not open input file list: " << listFile << std::endl;
+        return;
+    }
+    if (!std::getline(infile, firstFilename)) {
+        std::cerr << "[ERROR] Input file list is empty: " << listFile << std::endl;
+        return;
+    }
+    // Extract run number from the first filename
+    pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
     int runnumber = runseg.first;
     if (runnumber <= 0) {
-        std::cerr << "[ERROR] Invalid run number extracted: " << runnumber << ". Exiting..." << std::endl;
+        std::cerr << "[ERROR] Invalid run number extracted from first file: " << runnumber << ". Exiting..." << std::endl;
         return;
     }
     rc->set_uint64Flag("TIMESTAMP", runnumber);
@@ -104,7 +114,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusEMC->set_detector_type(CaloTowerDefs::CEMC);
     statusEMC->set_time_cut(1);
     statusEMC->set_inputNodePrefix("TOWERINFO_CALIB_");
-    statusEMC->Verbosity(Fun4AllBase::VERBOSITY_MORE);
+    statusEMC->Verbosity(0);
     std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
     se->registerSubsystem(statusEMC);
     
@@ -112,7 +122,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusHCalIn->set_detector_type(CaloTowerDefs::HCALIN);
     statusHCalIn->set_time_cut(2);
     statusHCalIn->set_inputNodePrefix("TOWERINFO_CALIB_");
-    statusHCalIn->Verbosity(Fun4AllBase::VERBOSITY_MORE);
+    statusHCalIn->Verbosity(0);
     std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
     se->registerSubsystem(statusHCalIn);
 
@@ -120,7 +130,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     statusHCALOUT->set_detector_type(CaloTowerDefs::HCALOUT);
     statusHCALOUT->set_time_cut(2);
     statusHCALOUT->set_inputNodePrefix("TOWERINFO_CALIB_");
-    statusHCALOUT->Verbosity(Fun4AllBase::VERBOSITY_MORE);
+    statusHCALOUT->Verbosity(0);
     se->registerSubsystem(statusHCALOUT);
     
     RetowerCEMC *rcemc = new RetowerCEMC();
@@ -133,7 +143,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     /*
      Relevent code from Calo_Calib.C since production p007 do not contain the TOWERS_CEMCnode that the Process_Calo_Calib() call needs
      */
-    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
+    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate(dst_calo_run2pp-000"EmcRawClusterBuilderTemplate");
     ClusterBuilder->Detector("CEMC");
     ClusterBuilder->set_threshold_energy(0.030);  // for when using basic calibration
     std::string emc_prof = getenv("CALIBRATIONROOT");
@@ -198,7 +208,19 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "DST_CALO
     se -> registerSubsystem(eval);
     
     Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTcalo");
-    in->AddFile(listFile);    // condor
+     
+    // Reset the file stream to read all filenames from the beginning
+    infile.clear();
+    infile.seekg(0, std::ios::beg);
+
+    // Read all filenames and add them to the input manager
+    std::string filename;
+    while (std::getline(infile, filename)) {
+         if (filename.empty()) continue;
+         in->AddFile(filename.c_str());
+         std::cout << "[INFO] Added input file: " << filename << std::endl;
+    }
+    infile.close();
     se->registerInputManager(in);
     
     se->run(nEvents);
