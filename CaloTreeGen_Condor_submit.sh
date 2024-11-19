@@ -1,114 +1,91 @@
 #!/usr/bin/env bash
 
-# Function to ensure necessary directories exist
+# Ensure necessary directories exist
 setup_directories() {
-  mkdir -p /tmp/patsfan753_condor_logs || { echo "Failed to create log directory"; exit 1; }
-  mkdir -p /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/stdout || { echo "Failed to create stdout directory"; exit 1; }
-  mkdir -p /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error || { echo "Failed to create error directory"; exit 1; }
+  mkdir -p /tmp/patsfan753_condor_logs
+  mkdir -p /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/stdout
+  mkdir -p /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error
 }
 
-# Function to submit a job to Condor using local disk
-submit_condor_job() {
+run_local_job() {
   local runNumber=$1
-  local filename=$2
-  local fileBaseName=$(basename "$filename")
 
-  # Create a Condor submission file for each job
-  cat > isoCondor_single_${fileBaseName%.*}.sub <<EOL
-universe                = vanilla
-executable              = CaloTreeGen_Condor.sh
-arguments               = ${runNumber} ${filename} \$(Cluster)
-log                     = /tmp/patsfan753_condor_logs/job_single.\$(Cluster).\$(Process).log
-output                  = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/stdout/job_single.\$(Cluster).\$(Process).out
-error                   = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error/job_single.\$(Cluster).\$(Process).err
-request_memory          = 1.5GB
-PeriodicHold            = (NumJobStarts>=1 && JobStatus == 1)
-concurrency_limits      = CONCURRENCY_LIMIT_DEFAULT:100
-should_transfer_files   = NO
-queue
-EOL
-
-  # Submit the job to Condor
-  condor_submit isoCondor_single_${fileBaseName%.*}.sub || { echo "Failed to submit job for ${filename}"; exit 1; }
-}
-
-# Function to run the ROOT macro in $_CONDOR_SCRATCH_DIR
-run_condor_job() {
-  local runNumber=$1
-  local filename=$2
-
-  # Set up environment
-  source /opt/sphenix/core/bin/sphenix_setup.sh -n || { echo "Failed to source sphenix setup"; exit 1; }
-
-  # Use local scratch directory for job execution
-  if [[ -n "$_CONDOR_SCRATCH_DIR" && -d "$_CONDOR_SCRATCH_DIR" ]]; then
-    cd "$_CONDOR_SCRATCH_DIR" || { echo "Failed to change directory to $_CONDOR_SCRATCH_DIR"; exit 1; }
-    rsync -av "$(dirname "$0")/" . || { echo "Failed to rsync files to local scratch"; exit 1; }
-
-    # Copy input file to local scratch
-    cp "$filename" . || { echo "Failed to copy input file to local scratch"; exit 1; }
-
-    # Define output file name
-    local fileBaseName=$(basename "$filename")
-    local treeOutName="CaloTreeGen_${fileBaseName%.*}.root"
-
-    # Run the ROOT macro from local scratch
-    root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileBaseName\", \"$treeOutName\")" || { echo "ROOT macro execution failed"; exit 1; }
-
-    # Copy output back to central storage
-    cp "$treeOutName" "/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/${runNumber}/" || { echo "Failed to copy output file back to central storage"; exit 1; }
-
-  else
-    echo "condor scratch NOT set or not found"
-    exit 1
+  if [ -z "$runNumber" ]; then
+    runNumbers=($(cat RunCondorJobsOnTheseRuns.txt))
+    runNumber="${runNumbers[0]}"
   fi
-}
 
-# Function to submit the first 100 jobs for memory testing
-test_condor_memory() {
-  echo "Submitting the first 100 jobs..."
+  echo "Running locally with run number: $runNumber"
 
-  # Read run numbers from file
-  local runNumbers=($(cat GoldenRunNumbers_afterRun46619_part1.txt))
-  local runNumber=${runNumbers[0]}
-
-  # Ensure directories are set up
-  setup_directories
-
-  # Define the destination list file
+  # Create a temporary paired list for the given run number
   local dst_list="dst_list/dst_calo_run2pp-000${runNumber}.list"
+  local fileList="dst_list/dst_calo_run2pp-${runNumber}_input.list"
 
-  if [ -f "$dst_list" ]; then
-    total_lines=$(wc -l < "$dst_list")
-    job_limit=$(( total_lines < 100 ? total_lines : 100 ))
+  mapfile -t files < "$dst_list"
 
-    echo "Submitting $job_limit jobs..."
-
-    # Loop through the first `job_limit` lines of the destination list
-    head -n $job_limit "$dst_list" | while read -r filename; do
-      if [ -n "$filename" ]; then
-        submit_condor_job "$runNumber" "$filename"
-      fi
-    done
-
-  else
-    echo "File $dst_list does not exist. Exiting."
+  if [ ${#files[@]} -lt 2 ]; then
+    echo "Insufficient files for pairing in $dst_list."
     exit 1
   fi
+
+  # Create a text file containing two ROOT files
+  echo -e "${files[0]}\n${files[1]}" > "$fileList"
+
+  local outputDir="/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/${runNumber}"
+  mkdir -p ${outputDir}
+
+  fileBaseName=$(basename "${files[0]}")
+  treeOutName="${outputDir}/CaloTreeGen_${fileBaseName%.*}.root"
+
+  root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\")"
 }
 
-# Function to submit all jobs for all run numbers
+
 submit_all_jobs() {
   echo "Submitting all jobs..."
 
-  # Read run numbers from file
-  local runNumbers=($(cat GoldenRunNumbers_afterRun46619_part1.txt))
-
+  local runNumbers=($(cat RunCondorJobsOnTheseRuns.txt))
+  
   # Ensure directories are set up
   setup_directories
 
-  # Loop over each run number to create and submit Condor submission files
+  # Loop over each run number and create custom submission files
   for runNumber in "${runNumbers[@]}"; do
+    # Read the list of filenames for this run number
+    local dst_list="dst_list/dst_calo_run2pp-000${runNumber}.list"
+    local paired_list="dst_list/dst_calo_run2pp-000${runNumber}_paired.list"
+    
+    if [ ! -f "$dst_list" ]; then
+      echo "[ERROR] File not found: $dst_list"
+      continue
+    fi
+
+    # Clear or create the paired list file
+    > "$paired_list"
+
+    # Read all filenames into an array
+    mapfile -t filenames < "$dst_list"
+    local total_files=${#filenames[@]}
+
+    # Pair the files and write to the paired list
+    local i=0
+    while [ $i -lt $total_files ]; do
+      local file1="${filenames[$i]}"
+      i=$((i + 1))
+      
+      if [ $i -lt $total_files ]; then
+        local file2="${filenames[$i]}"
+        i=$((i + 1))
+        echo -e "$file1\n$file2" > "input_files_${runNumber}_${i}.list"
+        echo "input_files_${runNumber}_${i}.list" >> "$paired_list"
+      else
+        # Handle the odd file separately
+        echo -e "$file1" > "input_files_${runNumber}_${i}.list"
+        echo "input_files_${runNumber}_${i}.list" >> "$paired_list"
+      fi
+    done
+
+    # Create the Condor submission file for the paired lists
     cat > isoCondor_${runNumber}.sub <<EOL
 universe                = vanilla
 executable              = CaloTreeGen_Condor.sh
@@ -116,27 +93,24 @@ arguments               = ${runNumber} \$(filename) \$(Cluster)
 log                     = /tmp/patsfan753_condor_logs/job.\$(Cluster).\$(Process).log
 output                  = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/stdout/job.\$(Cluster).\$(Process).out
 error                   = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error/job.\$(Cluster).\$(Process).err
-request_memory          = 1.5GB
+request_memory          = 800MB
 PeriodicHold            = (NumJobStarts>=1 && JobStatus == 1)
 concurrency_limits      = CONCURRENCY_LIMIT_DEFAULT:100
-queue filename from dst_list/dst_calo_run2pp-000${runNumber}.list
+queue filename from $paired_list
 EOL
 
-    # Submit the job to Condor
-    condor_submit isoCondor_${runNumber}.sub || { echo "Failed to submit job for run number ${runNumber}"; exit 1; }
+    # Submit the job
+    condor_submit isoCondor_${runNumber}.sub
   done
 }
+
 
 # Main entry point for the script
 main() {
   case "$1" in
     "local")
-      echo "Running locally on the first file of the first run number..."
-      runNumbers=($(cat GoldenRunNumbers_afterRun46619_part2.txt))
-      run_condor_job "${runNumbers[0]}" || { echo "Failed to run job locally"; exit 1; }
-      ;;
-    "test_condor_memory")
-      test_condor_memory
+      runNumber=$2
+      run_local_job "$runNumber"
       ;;
     *)
       submit_all_jobs
