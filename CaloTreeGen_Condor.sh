@@ -9,25 +9,26 @@ source /opt/sphenix/core/bin/setup_local.sh $MYINSTALL
 
 # Capture command line arguments
 runNumber=$1
-filename=$2
+fileList=$2
 clusterID=$3
 events=0  # Default number of events
 
 # Create a directory based on the run number
 outputDir="/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/${runNumber}"
-mkdir -p ${outputDir}  # Ensure the directory exists
+mkdir -p ${outputDir}
 
-# Get just the base name of the file (strip the directory part)
-fileBaseName=$(basename "$filename")
-
-# Construct the output filename with the base name
-treeOutName="${outputDir}/CaloTreeGen_${fileBaseName%.*}.root"
-
-# Check if filename is provided
-if [ -z "$filename" ]; then
-  echo "Error: Filename is not provided."
+# Check if the file list is provided
+if [ ! -f "$fileList" ]; then
+  echo "[ERROR] File list not provided or does not exist: $fileList"
   exit 1
 fi
 
-# Run the ROOT macro with dynamically generated output paths and log the output
-root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$filename\", \"$treeOutName\")"
+# Read the list of files from the text file
+mapfile -t rootFiles < "$fileList"
+
+# Construct the output filename using the first file in the list
+fileBaseName=$(basename "${rootFiles[0]}")
+treeOutName="${outputDir}/CaloTreeGen_${fileBaseName%.*}.root"
+
+# Run the ROOT macro with the list of input files
+root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\")"
