@@ -207,8 +207,48 @@ std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvaila
             }
         }
     }
-    return combinationToRuns;
+    // Now, identify combinations with identical run lists
+    // Map from sorted run lists to sets of trigger combinations
+    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinations;
+
+    for (const auto& entry : combinationToRuns) {
+        const std::set<std::string>& combination = entry.first;
+        std::vector<int> runList = entry.second;
+        std::sort(runList.begin(), runList.end()); // Ensure run list is sorted for comparison
+
+        runListToCombinations[runList].push_back(combination);
+    }
+
+    // For each run list, find the largest combination(s) and remove subsets
+    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRuns;
+
+    for (const auto& entry : runListToCombinations) {
+        const std::vector<int>& runList = entry.first;
+        const std::vector<std::set<std::string>>& combinations = entry.second;
+
+        // Find the combination(s) with the maximum size (most triggers)
+        size_t maxSize = 0;
+        for (const auto& combo : combinations) {
+            if (combo.size() > maxSize) {
+                maxSize = combo.size();
+            }
+        }
+
+        // Collect combinations with maximum size
+        for (const auto& combo : combinations) {
+            if (combo.size() == maxSize) {
+                // Add to the filtered map
+                filteredCombinationToRuns[combo] = runList;
+            }
+        }
+    }
+
+    // Now 'filteredCombinationToRuns' contains only the largest combinations per unique run list
+    // You can return this map instead of 'combinationToRuns'
+    return filteredCombinationToRuns;
 }
+
+
 
 void PrintSortedCombinations(const std::map<std::set<std::string>, std::vector<int>>& combinationToRuns) {
     // Sort combinations based on size and triggers
@@ -732,8 +772,8 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
 
     // If pT range is available, add it to the legend
     if (!ptRangeLabel.str().empty()) {
-        labelText.DrawLatex(0.5, 0.70, "pT Range:");
-        valueText.DrawLatex(0.62, 0.70, ptRangeLabel.str().c_str());
+        labelText.DrawLatex(0.45, 0.70, "pT Range:");
+        valueText.DrawLatex(0.65, 0.70, ptRangeLabel.str().c_str());
     }
 
     // Second column: Pi0 and Eta information
@@ -2568,11 +2608,10 @@ void ProcessIsolationData(
         graph->Draw("AP");
         
         // Overlay the reference data
-        // Reference data provided by user
         std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
         std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
         std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
-        
+
         std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
         std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
         std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
@@ -2958,7 +2997,7 @@ void PlotCombinedHistograms(
                         ratioHist->SetTitle(("Turn-On Curve for " + combinationName).c_str());
                         ratioHist->GetXaxis()->SetTitle("Maximum 8x8 Energy Sum (EMCal) [GeV]");
                         ratioHist->GetYaxis()->SetTitle("Ratio to Minbias");
-                        ratioHist->GetYaxis()->SetRangeUser(0, 1.5);
+                        ratioHist->GetYaxis()->SetRangeUser(0, 1.75);
                         
                         if (firstDrawTurnOn) {
                             ratioHist->Draw("E1"); // Draw with error bars
