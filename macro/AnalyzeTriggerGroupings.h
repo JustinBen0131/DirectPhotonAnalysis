@@ -15,7 +15,11 @@ namespace TriggerConfig {
         "Photon_2_GeV_plus_MBD_NS_geq_1",
         "Photon_3_GeV_plus_MBD_NS_geq_1",
         "Photon_4_GeV_plus_MBD_NS_geq_1",
-        "Photon_5_GeV_plus_MBD_NS_geq_1"
+        "Photon_5_GeV_plus_MBD_NS_geq_1",
+        "Photon_2_GeV",
+        "Photon_3_GeV",
+        "Photon_4_GeV",
+        "Photon_5_GeV"
     };
 
     // List of Photon triggers (excluding MBD_NandS_geq_1)
@@ -23,7 +27,11 @@ namespace TriggerConfig {
         "Photon_2_GeV_plus_MBD_NS_geq_1",
         "Photon_3_GeV_plus_MBD_NS_geq_1",
         "Photon_4_GeV_plus_MBD_NS_geq_1",
-        "Photon_5_GeV_plus_MBD_NS_geq_1"
+        "Photon_5_GeV_plus_MBD_NS_geq_1",
+        "Photon_2_GeV",
+        "Photon_3_GeV",
+        "Photon_4_GeV",
+        "Photon_5_GeV"
     };
 
     // Map of triggers to colors for plotting
@@ -32,7 +40,11 @@ namespace TriggerConfig {
         {"Photon_2_GeV_plus_MBD_NS_geq_1", kRed},
         {"Photon_3_GeV_plus_MBD_NS_geq_1", kBlue},
         {"Photon_4_GeV_plus_MBD_NS_geq_1", kGreen + 2},
-        {"Photon_5_GeV_plus_MBD_NS_geq_1", kMagenta}
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", kMagenta},
+        {"Photon_2_GeV", kRed},
+        {"Photon_3_GeV", kBlue},
+        {"Photon_4_GeV", kGreen + 2},
+        {"Photon_5_GeV", kMagenta}
     };
 
     // Map of triggers to human-readable names
@@ -42,11 +54,16 @@ namespace TriggerConfig {
         {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + Minbias"},
         {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + Minbias"},
         {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + Minbias"},
+        {"Photon_2_GeV", "Photon 2 GeV"},
+        {"Photon_3_GeV", "Photon 3 GeV"},
+        {"Photon_4_GeV", "Photon 4 GeV"},
+        {"Photon_5_GeV", "Photon 5 GeV"}
+        
     };
 
     const std::map<std::pair<float, float>, int> isoEtRangeColorMap = {
         {{-100, 6}, kRed + 1},
-        {{-100, 10}, kViolet + 1},
+        {{-100, 10}, kRed + 1},
         {{-10, 0}, kGreen + 2},
         {{0, 10}, kMagenta + 2}
     };
@@ -67,6 +84,16 @@ namespace TriggerCombinationNames {
         {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4, 5 GeV"},
         {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
         {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV", "Minbias and Photon 2 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV", "Minbias and Photon 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV", "Minbias and Photon 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_5_GeV", "Minbias and Photon 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_Photon_3_GeV", "Minbias and Photon 2, 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_Photon_4_GeV", "Minbias and Photon 2, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_Photon_4_GeV", "Minbias and Photon 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV_Photon_5_GeV", "Minbias and Photon 4, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_Photon_3_GeV_Photon_4_GeV", "Minbias and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_Photon_4_GeV_Photon_5_GeV", "Minbias and Photon 3, 4, 5 GeV"}
     };
 }
 
