@@ -1704,7 +1704,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             TMultiGraph* mgEta = new TMultiGraph();
 
             // Create legend
-            TLegend* legendEta = new TLegend(0.6, 0.7, 0.9, 0.9);
+            TLegend* legendEta = new TLegend(0.6, 0.68, 0.9, 0.88);
             legendEta->SetTextSize(0.035);
 
             // Offset per trigger to avoid overlapping points
@@ -2504,28 +2504,33 @@ void ProcessIsolationData(
     bool drawRefA = false,
     bool drawRefB = false) {
     
-    // Reference data
+    // -----------------------------
+    // ** Reference Data Setup **
+    // -----------------------------
     std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
     std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
     std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
 
-    // Reference data for Reference Two
+    // Define second reference data (from the second table - Reference Two)
     std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
     std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
     std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
 
-    // Prepare isoEtRanges and their colors from the header file
+    // -----------------------------
+    // ** isoEtRange Setup **
+    // -----------------------------
     const auto& isoEtRangeColorMap = TriggerConfig::isoEtRangeColorMap;
 
-    // Convert isoEtRangeColorMap to vectors for ordered access
     std::vector<std::pair<float, float>> isoEtRanges;
     std::vector<int> isoEtColors;
     for (const auto& entry : isoEtRangeColorMap) {
         isoEtRanges.push_back(entry.first);
         isoEtColors.push_back(entry.second);
     }
-    
-    // Maps to group data
+
+    // -----------------------------
+    // ** Data Grouping **
+    // -----------------------------
     using GroupKey = std::tuple<
         std::string, // TriggerGroupName
         std::string, // TriggerName
@@ -2534,13 +2539,13 @@ void ProcessIsolationData(
         float,       // Asymmetry
         std::string  // MassWindowLabel
     >;
-    
-    // Map to hold grouped data
+
+    // Map to hold grouped data: GroupKey -> (isoEtRange -> vector of IsolationDataWithPt)
     std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>> groupedData;
-    
+
     std::cout << "\033[33m[INFO]\033[0m Starting to process isolation data..." << std::endl;
 
-    // Populate the grouped data map
+    // Populate the groupedData map
     for (const auto& entry : dataMap) {
         const auto& key = entry.first;
         const auto& isoData = entry.second;
@@ -2600,132 +2605,217 @@ void ProcessIsolationData(
 
     std::cout << "\033[33m[INFO]\033[0m Total number of groups to process: " << groupedData.size() << std::endl;
     
-    // Add a new dataset for combined trigger
-    std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>> combinedTriggerData;
+    // -----------------------------
+    // ** Combined Plot Generation **
+    // -----------------------------
+    // Create a map for isoEtRange to selected trigger data based on efficiency
+    std::map<std::pair<float, float>, DataStructures::IsolationDataWithPt> combinedTriggerDataMap;
 
-    for (const auto& groupEntry : groupedData) {
-        const auto& groupKey = groupEntry.first;
-        const auto& isoEtDataMap = groupEntry.second;
-
-        // Extract trigger group and mass window details
-        std::string triggerGroupName = std::get<0>(groupKey);
-        std::string massWindowLabel = std::get<5>(groupKey);
-
-        // Check if isoEtDataMap is empty
-        if (isoEtDataMap.empty()) {
-            continue;
-        }
-
-        for (const auto& isoEtEntry : isoEtDataMap) {
-            const auto& isoEtRange = isoEtEntry.first;
-            const auto& isoDataList = isoEtEntry.second;
-
+    for (const auto& [groupKey, isoEtMap] : groupedData) {
+        const std::string& triggerName = std::get<1>(groupKey);
+        for (const auto& [isoEtRange, isoDataList] : isoEtMap) {
             for (const auto& isoData : isoDataList) {
                 double pTCenter = (isoData.ptMin + isoData.ptMax) / 2.0;
-
-                // Decide which trigger's data to use for combined output
-                std::string selectedTrigger = "MBD_NandS_geq_1"; // Default to minbias
-                for (const auto& [trigger, efficiencyThreshold] : triggerEfficiencyPoints) {
+                
+                // Determine if this trigger should be used based on efficiency
+                auto effIt = triggerEfficiencyPoints.find(triggerName);
+                if (effIt != triggerEfficiencyPoints.end()) {
+                    double efficiencyThreshold = effIt->second;
                     if (pTCenter >= efficiencyThreshold) {
-                        selectedTrigger = trigger;
-                        break; // Use the first trigger that becomes 99% efficient
+                        // Assign this trigger's data to the combined map
+                        // Assuming higher triggers override lower triggers
+                        // Adjust logic if multiple triggers can be active
+                        combinedTriggerDataMap[isoEtRange] = isoData;
+                    } else {
+                        // If no higher trigger is active, ensure Minbias is used
+                        // Replace with logic as per your trigger naming conventions
+                        // For example, assume "Minbias" is the default trigger
+                        if (triggerName.find("Minbias") != std::string::npos) {
+                            combinedTriggerDataMap[isoEtRange] = isoData;
+                        }
                     }
-                }
-
-                if (selectedTrigger == std::get<1>(groupKey)) {
-                    combinedTriggerData[isoEtRange].push_back(isoData);
                 }
             }
         }
     }
 
-    // Generate the combined trigger plot
-    if (!combinedTriggerData.empty()) {
-        std::string combinedDirPath = basePlotDirectory + "/CombinedTrigger";
-        gSystem->mkdir(combinedDirPath.c_str(), true);
+    // Now, generate combined plots for each isoEtRange
+    for (size_t i = 0; i < isoEtRanges.size(); ++i) {
+        const auto& isoEtRange = isoEtRanges[i];
+        const float isoMin = isoEtRange.first;
+        const float isoMax = isoEtRange.second;
 
-        // Create a TCanvas
-        TCanvas combinedCanvas("combinedCanvas", "Combined Trigger Data", 800, 600);
+        // Check if this isoEtRange has data
+        auto dataIt = combinedTriggerDataMap.find(isoEtRange);
+        if (dataIt == combinedTriggerDataMap.end()) {
+            std::cerr << "\033[31m[WARNING]\033[0m No combined data for isoEtRange ["
+                      << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
+            continue;
+        }
+
+        const DataStructures::IsolationDataWithPt& combinedData = dataIt->second;
+
+        GroupKey associatedGroupKey;
+        bool foundGroup = false;
+        for (const auto& [groupKey, isoEtMap] : groupedData) {
+            auto isoIt = isoEtMap.find(isoEtRange);
+            if (isoIt != isoEtMap.end()) {
+                associatedGroupKey = groupKey;
+                foundGroup = true;
+                break;
+            }
+        }
+
+        if (!foundGroup) {
+            std::cerr << "\033[31m[ERROR]\033[0m Could not find associated group for isoEtRange ["
+                      << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
+            continue;
+        }
+
+        // Unpack the group key
+        std::string triggerGroupName = std::get<0>(associatedGroupKey);
+        std::string triggerName = std::get<1>(associatedGroupKey);
+        float eCore = std::get<2>(associatedGroupKey);
+        float chi = std::get<3>(associatedGroupKey);
+        float asym = std::get<4>(associatedGroupKey);
+        std::string massWindowLabel = std::get<5>(associatedGroupKey);
+
+        // Map triggerGroupName and triggerName to human-readable names
+        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+            triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+        
+        std::string readableTriggerName = triggerName;
+        auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
+        if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
+            readableTriggerName = triggerNameIt->second;
+        }
+
+        // Create output directories if not already created
+        std::ostringstream dirStream;
+        dirStream << basePlotDirectory << "/" << triggerGroupName
+                  << "/E" << Utils::formatToThreeSigFigs(eCore)
+                  << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                  << "_Asym" << Utils::formatToThreeSigFigs(asym);
+        std::string dirPath = dirStream.str();
+        gSystem->mkdir(dirPath.c_str(), true);
+        
+        std::string isolationDir = dirPath + "/isolationEnergies";
+        gSystem->mkdir(isolationDir.c_str(), true);
+        
+        // Create a folder for mass window type
+        std::string massWindowDir = isolationDir + "/" + massWindowLabel;
+        gSystem->mkdir(massWindowDir.c_str(), true);
+
+        // Create a TCanvas for the combined plot
+        std::ostringstream canvasNameStream;
+        canvasNameStream << "CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax;
+        TCanvas combinedCanvas(canvasNameStream.str().c_str(), "Combined Trigger Data", 800, 600);
+
+        // Create a TMultiGraph for the combined data
         TMultiGraph* combinedMultiGraph = new TMultiGraph();
+
+        // Create a legend
         TLegend combinedLegend(0.18, 0.75, 0.48, 0.9); // Adjust as needed
         combinedLegend.SetBorderSize(0);
         combinedLegend.SetTextSize(0.024);
 
-        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-            const auto& isoEtRange = isoEtRanges[i];
-            auto it = combinedTriggerData.find(isoEtRange);
-            if (it == combinedTriggerData.end()) {
-                continue;
-            }
+        // Prepare data vectors for plotting
+        std::vector<double> weightedPts = {combinedData.weightedPt};
+        std::vector<double> ratios = {combinedData.ratio};
+        std::vector<double> errors = {combinedData.error};
 
-            const auto& isoDataList = it->second;
-            int color = isoEtColors[i];
+        // Create a TGraphErrors for the combined data point
+        TGraphErrors* combinedGraph = new TGraphErrors(weightedPts.size(),
+                                                        weightedPts.data(),
+                                                        ratios.data(),
+                                                        nullptr,
+                                                        errors.data());
+        combinedGraph->SetMarkerStyle(20);
+        combinedGraph->SetMarkerColor(isoEtColors[i]);
+        combinedGraph->SetLineColor(isoEtColors[i]);
+        combinedGraph->SetLineWidth(2);
 
-            // Prepare data vectors for plotting
-            std::vector<double> weightedPts;
-            std::vector<double> ratios;
-            std::vector<double> errors;
+        // Add to the multigraph
+        combinedMultiGraph->Add(combinedGraph, "P");
 
-            for (const auto& isoData : isoDataList) {
-                if (isoData.weightedPt > 0) {
-                    weightedPts.push_back(isoData.weightedPt);
-                    ratios.push_back(isoData.ratio);
-                    errors.push_back(isoData.error);
-                }
-            }
+        // Add entry to legend
+        std::ostringstream legendEntry;
+        legendEntry << "Run 24 sPHENIX pp: " << isoMin << " #leq E_{T, iso} < " << isoMax << " GeV";
+        combinedLegend.AddEntry(combinedGraph, legendEntry.str().c_str(), "p");
 
-            // Skip if no valid data points
-            if (weightedPts.empty()) {
-                continue;
-            }
-
-            // Sort the data for better plotting
-            std::vector<size_t> indices(weightedPts.size());
-            std::iota(indices.begin(), indices.end(), 0);
-            std::sort(indices.begin(), indices.end(), [&](size_t i1, size_t i2) {
-                return weightedPts[i1] < weightedPts[i2];
-            });
-
-            std::vector<double> sortedWeightedPts, sortedRatios, sortedErrors;
-            for (size_t idx : indices) {
-                sortedWeightedPts.push_back(weightedPts[idx]);
-                sortedRatios.push_back(ratios[idx]);
-                sortedErrors.push_back(errors[idx]);
-            }
-
-            // Create a TGraphErrors
-            TGraphErrors* graph = new TGraphErrors(sortedWeightedPts.size(),
-                                                   sortedWeightedPts.data(),
-                                                   sortedRatios.data(),
-                                                   nullptr,
-                                                   sortedErrors.data());
-            graph->SetMarkerStyle(20);
-            graph->SetMarkerColor(color);
-            graph->SetLineColor(color);
-            graph->SetLineWidth(2);
-            combinedMultiGraph->Add(graph, "P");
-
-            // Add to legend
-            std::ostringstream legendEntry;
-            legendEntry << isoEtRange.first << " #leq E_{T, iso} < " << isoEtRange.second << " GeV";
-            combinedLegend.AddEntry(graph, legendEntry.str().c_str(), "p");
-        }
-
-        // Set titles and draw the combined graph
-        combinedMultiGraph->SetTitle("Combined Trigger: Isolation Ratio vs pT");
+        // Set titles
+        std::string plotTitle = "Isolation Ratio vs pT (" + massWindowLabel + ")";
+        combinedMultiGraph->SetTitle(plotTitle.c_str());
         combinedMultiGraph->GetXaxis()->SetTitle("Weighted p_{T} of Leading Cluster [GeV]");
-        combinedMultiGraph->GetYaxis()->SetTitle("#frac{Isolated Prompt Photons}{All Prompt Photons}");
+        const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
+            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
+            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+        
+        combinedMultiGraph->GetYaxis()->SetTitle(yAxisTitle.c_str());
         combinedMultiGraph->GetYaxis()->SetRangeUser(0, 2.0);
+
+        // Draw multigraph
         combinedMultiGraph->Draw("A");
+
+        // Draw a dashed line at y = 1
+        TLine* combinedLine = new TLine(0, 1, 20, 1);
+        combinedLine->SetLineStyle(2); // Dashed line
+        combinedLine->Draw();
+
+        // Draw the legend
         combinedLegend.Draw();
 
-        // Save the combined plot
-        std::string combinedOutputPath = combinedDirPath + "/CombinedIsolationRatio_vs_pT.png";
+        // Add labels using TLatex in the top-left corner
+        TLatex labelText;
+        labelText.SetNDC();
+        labelText.SetTextSize(0.04);       // Adjust text size as needed
+        labelText.SetTextColor(kBlack);    // Ensure text color is black
+        
+        double xStart = 0.15; // Starting x-coordinate (left side)
+        double yStartLabel = 0.85; // Starting y-coordinate
+        double yStepLabel = 0.05;  // Vertical spacing between lines
+        
+        // Prepare label strings
+        std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
+        std::string triggerNameLabel = "Trigger: " + readableTriggerName;
+        std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
+        std::string chiLabel = "Chi2/NDF < " + Utils::formatToThreeSigFigs(chi);
+        std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
+        std::string massWindowLabelStr = "Mass Window: " + massWindowLabel;
+        
+        // Draw labels
+        labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, triggerNameLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, eCoreLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, chiLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, asymLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, massWindowLabelStr.c_str());
+        
+        // Force canvas update before saving
+        combinedCanvas.Modified();
+        combinedCanvas.Update();
+
+        // Save the combined canvas
+        std::ostringstream combinedOutputPathStream;
+        combinedOutputPathStream << massWindowDir << "/CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax << ".png";
+        std::string combinedOutputPath = combinedOutputPathStream.str();
         combinedCanvas.SaveAs(combinedOutputPath.c_str());
+        std::cout << "\033[33m[INFO]\033[0m Saved combined plot to " << combinedOutputPath << std::endl;
+
+        // Clean up
+        delete combinedMultiGraph;
+        delete combinedLine;
+        delete combinedGraph;
     }
-    
-    // Now, for each group, create the plot
-    int groupCounter = 0;
+
+    // -----------------------------
+    // ** Existing Per-Trigger Plot Generation **
+    // -----------------------------
+    // The following code remains unchanged to ensure existing functionality.
+    // It generates isolation ratio plots for each trigger group.
+    int groupCounter = 0;  // Initialize groupCounter
+
+    // Now, generate standard plots for each trigger group
     for (const auto& groupEntry : groupedData) {
         groupCounter++;
         const auto& groupKey = groupEntry.first;
@@ -2759,7 +2849,7 @@ void ProcessIsolationData(
                   << "Chi: " << chi << ", "
                   << "Asymmetry: " << asym << ", "
                   << "MassWindowLabel: " << massWindowLabel << std::endl;
-
+    
         // Check if isoEtDataMap is empty
         if (isoEtDataMap.empty()) {
             std::cerr << "\033[31m[WARNING]\033[0m Group " << groupCounter << " has no data. Skipping." << std::endl;
@@ -2880,10 +2970,10 @@ void ProcessIsolationData(
             
             // Debugging output
             std::cout << "\033[32m[DEBUG]\033[0m Data points for isoEt range [" << isoEtRange.first << ", " << isoEtRange.second << "] in group " << groupCounter << ":" << std::endl;
-            for (size_t i = 0; i < sortedWeightedPts.size(); ++i) {
-                std::cout << "\033[32m[DEBUG]\033[0m   weightedPt: " << sortedWeightedPts[i]
-                          << ", ratio: " << sortedRatios[i]
-                          << ", error: " << sortedErrors[i] << std::endl;
+            for (size_t j = 0; j < sortedWeightedPts.size(); ++j) { // Changed loop variable to 'j' to avoid shadowing
+                std::cout << "\033[32m[DEBUG]\033[0m   weightedPt: " << sortedWeightedPts[j]
+                          << ", ratio: " << sortedRatios[j]
+                          << ", error: " << sortedErrors[j] << std::endl;
             }
 
             // Create a TGraphErrors
@@ -2901,9 +2991,9 @@ void ProcessIsolationData(
             // Add to the multigraph
             multiGraph->Add(graph, "P");
 
-            // Add entry to legend in the desired format
+            // Add entry to legend with the desired prefix
             std::ostringstream legendEntry;
-            legendEntry << isoEtRange.first << " #leq E_{T, iso} < " << isoEtRange.second << " GeV";
+            legendEntry << "Run 24 sPHENIX pp: " << isoEtRange.first << " #leq E_{T, iso} < " << isoEtRange.second << " GeV";
             legend.AddEntry(graph, legendEntry.str().c_str(), "p");
         }
         
@@ -2939,47 +3029,41 @@ void ProcessIsolationData(
         // Draw legend
         legend.Draw();
         
-        // Add labels using TLatex in the top-right corner
+        // Add labels using TLatex in the top-left corner
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.024); // Base text size
-        double xStart = 0.58; // Starting x-coordinate
-        double yStart = 0.9;  // Starting y-coordinate
-        double yStep = 0.05;  // Vertical spacing between lines
+        labelText.SetTextSize(0.04);       // Adjusted text size
+        labelText.SetTextColor(kBlack);    // Ensured text color is black
+        double xStart = 0.15; // Starting x-coordinate (left side)
+        double yStartLabel = 0.85; // Starting y-coordinate
+        double yStepLabel = 0.05;  // Vertical spacing between lines
 
-        std::string triggerGroupLabel = "Trigger Group: ";
-        std::string triggerNameLabel = "Trigger: ";
-        std::string eCoreLabel = "ECore > ";
-        std::string chiLabel = "Chi2/NDF < ";
-        std::string asymLabel = "Asymmetry < ";
-        std::string massWindowLabelText = "Mass Window: ";
+        // Prepare label strings
+        std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
+        std::string triggerNameLabel = "Trigger: " + readableTriggerName;
+        std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
+        std::string chiLabel = "Chi2/NDF < " + Utils::formatToThreeSigFigs(chi);
+        std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
+        std::string massWindowLabelStr = "Mass Window: " + massWindowLabel;
+        std::string coneRadiusLabel = "#Delta R_{cone} < 0.3";
 
-        // Debugging output
-        std::cout << "Drawing labels on canvas:" << std::endl;
-        std::cout << triggerGroupLabel + Utils::getTriggerCombinationName(triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap) << std::endl;
-        std::cout << triggerNameLabel + readableTriggerName << std::endl;
+        // Draw labels
+        labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, triggerNameLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, eCoreLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, chiLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, asymLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, massWindowLabelStr.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, coneRadiusLabel.c_str());
 
-        // Draw bold labels
-        labelText.SetTextFont(62); // Bold font
-        labelText.DrawLatex(xStart, yStart, (triggerGroupLabel).c_str());
-        labelText.DrawLatex(xStart, yStart - yStep, (triggerNameLabel).c_str());
-        labelText.DrawLatex(xStart, yStart - 2 * yStep, (eCoreLabel).c_str());
-        labelText.DrawLatex(xStart, yStart - 3 * yStep, (chiLabel).c_str());
-        labelText.DrawLatex(xStart, yStart - 4 * yStep, (asymLabel).c_str());
-        labelText.DrawLatex(xStart, yStart - 5 * yStep, (massWindowLabelText).c_str());
-
-        // Draw values in normal font
-        labelText.SetTextFont(42); // Normal font
-        labelText.DrawLatex(xStart + 0.15, yStart, Utils::getTriggerCombinationName(triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap).c_str());
-        labelText.DrawLatex(xStart + 0.15, yStart - yStep, readableTriggerName.c_str());
-        labelText.DrawLatex(xStart + 0.15, yStart - 2 * yStep, Utils::formatToThreeSigFigs(eCore).c_str());
-        labelText.DrawLatex(xStart + 0.15, yStart - 3 * yStep, Utils::formatToThreeSigFigs(chi).c_str());
-        labelText.DrawLatex(xStart + 0.15, yStart - 4 * yStep, Utils::formatToThreeSigFigs(asym).c_str());
-        labelText.DrawLatex(xStart + 0.15, yStart - 5 * yStep, massWindowLabel.c_str());
-
+        // Force canvas update before saving
+        canvas.Modified();
+        canvas.Update();
 
         // Save the canvas
-        std::string outputFilePath = massWindowDir + "/IsolationRatio_vs_pT_" + triggerName + ".png";
+        std::ostringstream outputFilePathStream;
+        outputFilePathStream << massWindowDir << "/IsolationRatio_vs_pT_" << triggerName << ".png";
+        std::string outputFilePath = outputFilePathStream.str();
         canvas.SaveAs(outputFilePath.c_str());
         std::cout << "\033[33m[INFO]\033[0m Saved plot to " << outputFilePath << std::endl;
 
@@ -2990,10 +3074,9 @@ void ProcessIsolationData(
         if (refGraphTwo) delete refGraphTwo;
         // Note: graphs added to multiGraph are owned by it and will be deleted automatically
     }
+
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
 }
-
-
 
 void PlotCombinedHistograms(
     const std::string& outputDirectory,
@@ -3462,7 +3545,8 @@ void PlotCombinedHistograms(
     
     std::vector<std::pair<float, float>> exclusionRanges = {
         {-10, 0},  // Exclude isoEt range from -10 to 0
-        {0, 10}    // Exclude isoEt range from 0 to 10
+        {0, 10},    // Exclude isoEt range from 0 to 10
+        {-100, 6}
     };
 
     ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, false, true);
