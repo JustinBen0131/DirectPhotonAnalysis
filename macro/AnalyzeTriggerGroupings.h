@@ -87,6 +87,38 @@ namespace Utils {
         out << std::fixed << std::setprecision(3) << value;
         return out.str();
     }
+
+    // Function to check if a string ends with another string
+    bool EndsWith(const std::string& fullString, const std::string& ending) {
+        if (fullString.length() >= ending.length()) {
+            return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
+        } else {
+            return false;
+        }
+    }
+
+    TF1* sigmoidFit(const std::string& name, double xmin, double xmax,
+                    double amplitude, double slope, double xOffset,
+                    double amplitudeMin, double amplitudeMax,
+                    double slopeMin, double slopeMax,
+                    double xOffsetMin, double xOffsetMax) {
+        // Define a sigmoid function for fitting
+        TF1* fitFunc = new TF1(name.c_str(), "[0]/(1+exp(-[1]*(x-[2])))", xmin, xmax);
+        fitFunc->SetParNames("Amplitude", "Slope", "XOffset");
+
+        // Set initial parameters
+        fitFunc->SetParameter(0, amplitude);  // Amplitude
+        fitFunc->SetParameter(1, slope);      // Slope
+        fitFunc->SetParameter(2, xOffset);    // XOffset
+
+        // Set parameter limits
+        fitFunc->SetParLimits(0, amplitudeMin, amplitudeMax);  // Amplitude limits
+        fitFunc->SetParLimits(1, slopeMin, slopeMax);          // Slope limits
+        fitFunc->SetParLimits(2, xOffsetMin, xOffsetMax);      // XOffset limits
+
+        return fitFunc;
+    }
+
 }
 
 // Define CutValues, FitParameters, and HistogramData within a dedicated namespace
@@ -140,6 +172,72 @@ namespace DataStructures {
         double pi0FitResolutionError;
         double etaFitResolution;
         double etaFitResolutionError;
+    };
+
+    struct FitParameters {
+        double amplitudeEstimate;
+        double slopeEstimate;
+        double xOffsetEstimate;
+        double amplitudeMin;
+        double amplitudeMax;
+        double slopeMin;
+        double slopeMax;
+        double xOffsetMin;
+        double xOffsetMax;
+    };
+
+    struct IsolatedPhotonLog {
+        std::string triggerGroupName;
+        std::string triggerName;
+        float clusECore;
+        float chi;
+        float asymmetry;
+        float pTMin;
+        float pTMax;
+        float isoMin;
+        float isoMax;
+        int isolatedEntries;
+        std::string massWindowLabel;
+    };
+
+    struct TotalPhotonLog {
+        std::string triggerGroupName;
+        std::string triggerName;
+        float clusECore;
+        float chi;
+        float asymmetry;
+        float pTMin;
+        float pTMax;
+        int totalEntries;
+        std::string massWindowLabel;
+    };
+
+    struct PtWeightingLog {
+        std::string triggerGroupName;
+        std::string triggerName;
+        float clusECore;
+        float chi;
+        float asymmetry;
+        float pTMin;
+        float pTMax;
+        double weightedAveragePt;
+        std::string massWindowLabel;
+    };
+
+    struct IsolationData {
+        int isolatedCounts;
+        int totalCounts;
+        double ratio;
+        double error;
+        double weightedPt;
+    };
+
+    struct IsolationDataWithPt {
+        float ptMin;
+        float ptMax;
+        double weightedPt;
+        double ratio;
+        double error;
     };
 
 } // namespace DataStructures
