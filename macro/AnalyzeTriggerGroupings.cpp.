@@ -24,19 +24,7 @@
 
 bool enableFits = true; // Set to true if you want to enable the fits
 
-struct FitParameters {
-    double amplitudeEstimate;
-    double slopeEstimate;
-    double xOffsetEstimate;
-    double amplitudeMin;
-    double amplitudeMax;
-    double slopeMin;
-    double slopeMax;
-    double xOffsetMin;
-    double xOffsetMax;
-};
-
-std::map<std::string, FitParameters> triggerFitParameters = {
+std::map<std::string, DataStructures::FitParameters> triggerFitParameters = {
     { "Photon_2_GeV_plus_MBD_NS_geq_1", {
         1.25,   // amplitudeEstimate (closer to 1 for convergence)
         0.7,  // slopeEstimate (increased for sharper rise)
@@ -726,8 +714,8 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     valueText.SetTextFont(42);          // Normal font for values
 
     // Add the 'Active Trigger Group' label above the current trigger label
-    labelText.DrawLatex(0.5, 0.9, "Active Trigger Group:");
-    valueText.DrawLatex(0.7, 0.9, triggerGroupName.c_str());
+    labelText.DrawLatex(0.45, 0.9, "Active Trigger Group:");
+    valueText.DrawLatex(0.65, 0.9, triggerGroupName.c_str());
 
     // First column: Trigger information
     labelText.DrawLatex(0.5, 0.85, "Trigger:");
@@ -1851,6 +1839,16 @@ void AddLabelsToCanvas_isoHistsWithCuts(
     float isoEtMin,
     float isoEtMax) {
 
+    // Map triggerGroupName and triggerName to human-readable names
+    std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+        triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+
+    std::string readableTriggerName = triggerName;
+    auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
+    if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
+        readableTriggerName = triggerNameIt->second;
+    }
+
     TLatex labelText, valueText;
     labelText.SetNDC();
     labelText.SetTextSize(0.027);
@@ -1863,10 +1861,10 @@ void AddLabelsToCanvas_isoHistsWithCuts(
     valueText.SetTextFont(42);
 
     labelText.DrawLatex(0.18, 0.9, "Active Trigger Group:");
-    valueText.DrawLatex(0.37, 0.9, triggerGroupName.c_str());
+    valueText.DrawLatex(0.37, 0.9, readableTriggerGroupName.c_str());
 
     labelText.DrawLatex(0.18, 0.85, "Trigger:");
-    valueText.DrawLatex(0.3, 0.85, triggerName.c_str());
+    valueText.DrawLatex(0.3, 0.85, readableTriggerName.c_str());
 
     labelText.DrawLatex(0.18, 0.8, "p_{T} Range:");
     std::string pTRangeText = Utils::formatToThreeSigFigs(pTMin) + " to " + Utils::formatToThreeSigFigs(pTMax) + " GeV";
@@ -1894,9 +1892,42 @@ void AddLabelsToCanvas_isoHistsWithCuts(
 }
 
 
-std::map<std::tuple<std::string, std::string, float, float, float, float, float, float, std::string>, DataStructures::IsolatedPhotonLog> isolatedPhotonMap;
-std::map<std::tuple<std::string, std::string, float, float, float, float, float, std::string>, DataStructures::TotalPhotonLog> totalPhotonMap;
-std::map<std::tuple<std::string, std::string, float, float, float, float, float, std::string>, DataStructures::PtWeightingLog> pTweightingMap;
+// Map declarations at global scope
+std::map<std::tuple<
+    std::string, // triggerGroupName (raw name)
+    std::string, // triggerName (raw name)
+    float,       // clusECore
+    float,       // chi
+    float,       // asymmetry
+    float,       // pTMin
+    float,       // pTMax
+    float,       // isoEtMin
+    float,       // isoEtMax
+    std::string  // massWindowLabel
+>, DataStructures::IsolatedPhotonLog> isolatedPhotonMap;
+
+std::map<std::tuple<
+    std::string, // triggerGroupName (raw name)
+    std::string, // triggerName (raw name)
+    float,       // clusECore
+    float,       // chi
+    float,       // asymmetry
+    float,       // pTMin
+    float,       // pTMax
+    std::string  // massWindowLabel
+>, DataStructures::TotalPhotonLog> totalPhotonMap;
+
+std::map<std::tuple<
+    std::string, // triggerGroupName (raw name)
+    std::string, // triggerName (raw name)
+    float,       // clusECore
+    float,       // chi
+    float,       // asymmetry
+    float,       // pTMin
+    float,       // pTMax
+    std::string  // massWindowLabel
+>, DataStructures::PtWeightingLog> pTweightingMap;
+
 
 void ProcessIsolationEnergyHistogramsWithCuts(
     TFile* inputFile,
@@ -1904,8 +1935,8 @@ void ProcessIsolationEnergyHistogramsWithCuts(
     const std::vector<std::string>& triggers,
     const std::string& combinationName) {
     
-    std::string triggerGroupName = Utils::getTriggerCombinationName(
-        combinationName, TriggerCombinationNames::triggerCombinationNameMap);
+    // Use the raw combinationName as triggerGroupName in map keys
+    std::string triggerGroupName = combinationName;
 
     auto parseIsolationHistNameWithCuts = [](const std::string& histName)
         -> std::tuple<DataStructures::CutValues, std::string, float, float, std::string, std::string, bool, float, float> {
@@ -2046,12 +2077,10 @@ void ProcessIsolationEnergyHistogramsWithCuts(
                 std::cout << "Saved: " << outputFilePath << std::endl;
                 
                 
-                // **Logging and Map Filling**
-
                 // Common keys for maps
                 auto totalKey = std::make_tuple(
-                    triggerGroupName,
-                    triggerName,
+                    triggerGroupName,  // raw name
+                    triggerName,       // raw name
                     cuts.clusECore,
                     cuts.chi,
                     cuts.asymmetry,
@@ -2063,8 +2092,8 @@ void ProcessIsolationEnergyHistogramsWithCuts(
                 if (histType == "isolatedPhotonCount" && hasIsoEtRange) {
                     // Key includes isoEtMin and isoEtMax
                     auto isoKey = std::make_tuple(
-                        triggerGroupName,
-                        triggerName,
+                        triggerGroupName,  // raw name
+                        triggerName,       // raw name
                         cuts.clusECore,
                         cuts.chi,
                         cuts.asymmetry,
@@ -2077,8 +2106,8 @@ void ProcessIsolationEnergyHistogramsWithCuts(
 
                     // Fill IsolatedPhotonLog
                     DataStructures::IsolatedPhotonLog isoLog;
-                    isoLog.triggerGroupName = triggerGroupName;
-                    isoLog.triggerName = triggerName;
+                    isoLog.triggerGroupName = triggerGroupName; // raw name
+                    isoLog.triggerName = triggerName;           // raw name
                     isoLog.clusECore = cuts.clusECore;
                     isoLog.chi = cuts.chi;
                     isoLog.asymmetry = cuts.asymmetry;
@@ -2089,12 +2118,13 @@ void ProcessIsolationEnergyHistogramsWithCuts(
                     isoLog.isolatedEntries = static_cast<int>(hist->GetEntries());
                     isoLog.massWindowLabel = massWindowLabel;
 
+                    // Store in the map
                     isolatedPhotonMap[isoKey] = isoLog;
                 } else if (histType == "allPhotonCount") {
                     // Fill TotalPhotonLog
                     DataStructures::TotalPhotonLog totalLog;
-                    totalLog.triggerGroupName = triggerGroupName;
-                    totalLog.triggerName = triggerName;
+                    totalLog.triggerGroupName = triggerGroupName; // raw name
+                    totalLog.triggerName = triggerName;           // raw name
                     totalLog.clusECore = cuts.clusECore;
                     totalLog.chi = cuts.chi;
                     totalLog.asymmetry = cuts.asymmetry;
@@ -2119,8 +2149,8 @@ void ProcessIsolationEnergyHistogramsWithCuts(
 
                     // Fill PtWeightingLog
                     DataStructures::PtWeightingLog ptLog;
-                    ptLog.triggerGroupName = triggerGroupName;
-                    ptLog.triggerName = triggerName;
+                    ptLog.triggerGroupName = triggerGroupName; // raw name
+                    ptLog.triggerName = triggerName;           // raw name
                     ptLog.clusECore = cuts.clusECore;
                     ptLog.chi = cuts.chi;
                     ptLog.asymmetry = cuts.asymmetry;
@@ -2131,8 +2161,6 @@ void ProcessIsolationEnergyHistogramsWithCuts(
 
                     pTweightingMap[totalKey] = ptLog;
                 }
-
-                // **End of Logging**
             }
 
             delete obj;
@@ -2176,6 +2204,17 @@ void WriteIsolationDataToCSV(const std::string& outputFilePath) {
         if (totalEntry != totalPhotonMap.end() && pTweightingEntry != pTweightingMap.end()) {
             const DataStructures::TotalPhotonLog& totalLog = totalEntry->second;
             const DataStructures::PtWeightingLog& pTLog = pTweightingEntry->second;
+
+            // Map triggerGroupName and triggerName to human-readable names
+            std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+                isoLog.triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+
+            std::string readableTriggerName = isoLog.triggerName;
+            auto triggerNameIt = TriggerConfig::triggerNameMap.find(isoLog.triggerName);
+            if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
+                readableTriggerName = triggerNameIt->second;
+            }
+
             // Calculate the ratio (isolated / total)
             double ratio = (totalLog.totalEntries > 0) ? static_cast<double>(isoLog.isolatedEntries) / totalLog.totalEntries : 0.0;
 
@@ -2190,8 +2229,9 @@ void WriteIsolationDataToCSV(const std::string& outputFilePath) {
                 );
             }
 
-            outFile << isoLog.triggerGroupName << ","
-                    << isoLog.triggerName << ","
+            // Write CSV row
+            outFile << readableTriggerGroupName << ","
+                    << readableTriggerName << ","
                     << isoLog.clusECore << ","
                     << isoLog.chi << ","
                     << isoLog.asymmetry << ","
@@ -2213,6 +2253,384 @@ void WriteIsolationDataToCSV(const std::string& outputFilePath) {
     outFile.close();
     std::cout << "CSV file successfully written to " << outputFilePath << "\n";
 }
+void readDataFromCSV(
+    const std::string& filename,
+    std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap_inMassWindow,
+    std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap_outsideMassWindow) {
+
+    std::ifstream file(filename);
+    std::string line;
+    if (!file.is_open()) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return;
+    }
+
+    // Skip the header line
+    std::getline(file, line);
+    std::cout << "Skipping header: " << line << std::endl;
+
+    // Read CSV data
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        std::string token, massWindowLabel;
+        std::string triggerGroupName, triggerName;
+        float eCore, chi, asym, ptMin, ptMax, isoMin, isoMax;
+        int isolatedCounts, totalCounts;
+        double ratio = 0, error = 0, weightedPt;
+
+        // Parse values from CSV
+        std::getline(ss, triggerGroupName, ',');
+        std::getline(ss, triggerName, ',');
+
+        std::getline(ss, token, ',');
+        eCore = std::stof(token);
+
+        std::getline(ss, token, ',');
+        chi = std::stof(token);
+
+        std::getline(ss, token, ',');
+        asym = std::stof(token);
+
+        std::getline(ss, token, ',');
+        ptMin = std::stof(token);
+
+        std::getline(ss, token, ',');
+        ptMax = std::stof(token);
+
+        std::getline(ss, token, ',');
+        isoMin = std::stof(token);
+
+        std::getline(ss, token, ',');
+        isoMax = std::stof(token);
+
+        // Parse the "Isolated Counts" and "Total Counts" columns
+        std::getline(ss, token, ',');
+        isolatedCounts = std::stoi(token);
+
+        std::getline(ss, token, ',');
+        totalCounts = std::stoi(token);
+
+        // Parse the ratio (Isolated/Total)
+        std::getline(ss, token, ',');
+        ratio = std::stod(token);
+
+        // Parse the statistical error
+        std::getline(ss, token, ',');
+        error = std::stod(token);
+
+        // Parse the weighted pT value
+        std::getline(ss, token, ',');
+        weightedPt = std::stod(token);
+
+        // Parse the MassWindowLabel
+        std::getline(ss, massWindowLabel, ',');
+
+        // Create the key tuple
+        auto key = std::make_tuple(
+            triggerGroupName,
+            triggerName,
+            eCore,
+            chi,
+            asym,
+            ptMin,
+            ptMax,
+            isoMin,
+            isoMax,
+            massWindowLabel
+        );
+
+        // Create an IsolationData struct to hold the data
+        DataStructures::IsolationData isoData;
+        isoData.isolatedCounts = isolatedCounts;
+        isoData.totalCounts = totalCounts;
+        isoData.ratio = ratio;
+        isoData.error = error;
+        isoData.weightedPt = weightedPt;
+
+        // Add data to the appropriate map based on MassWindowLabel
+        if (massWindowLabel == "inMassWindow") {
+            dataMap_inMassWindow[key] = isoData;
+        } else if (massWindowLabel == "outsideMassWindow") {
+            dataMap_outsideMassWindow[key] = isoData;
+        }
+    }
+    file.close();
+}
+
+
+// Global maps to store data
+std::map<std::tuple<
+    std::string, // TriggerGroupName
+    std::string, // TriggerName
+    float,       // ECore
+    float,       // Chi
+    float,       // Asymmetry
+    float,       // pT Min
+    float,       // pT Max
+    float,       // isoMin
+    float,       // isoMax
+    std::string  // MassWindowLabel
+>, DataStructures::IsolationData> dataMap_inMassWindow;
+
+std::map<std::tuple<
+    std::string, // TriggerGroupName
+    std::string, // TriggerName
+    float,       // ECore
+    float,       // Chi
+    float,       // Asymmetry
+    float,       // pT Min
+    float,       // pT Max
+    float,       // isoMin
+    float,       // isoMax
+    std::string  // MassWindowLabel
+>, DataStructures::IsolationData> dataMap_outsideMassWindow;
+
+
+void ProcessIsolationData(
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap,
+    const std::string& basePlotDirectory) {
+    
+    // Maps to group data
+    using GroupKey = std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >;
+    
+    // Map to hold grouped data
+    std::map<GroupKey, std::vector<DataStructures::IsolationDataWithPt>> groupedData;
+    
+    // Populate the grouped data map
+    for (const auto& entry : dataMap) {
+        const auto& key = entry.first;
+        const auto& isoData = entry.second;
+        
+        // Unpack the key
+        std::string triggerGroupName = std::get<0>(key);
+        std::string triggerName = std::get<1>(key);
+        float eCore = std::get<2>(key);
+        float chi = std::get<3>(key);
+        float asym = std::get<4>(key);
+        float ptMin = std::get<5>(key);
+        float ptMax = std::get<6>(key);
+        float isoMin = std::get<7>(key);
+        float isoMax = std::get<8>(key);
+        std::string massWindowLabel = std::get<9>(key);
+        
+        // Create the group key
+        GroupKey groupKey = std::make_tuple(
+            triggerGroupName,
+            triggerName,
+            eCore,
+            chi,
+            asym,
+            isoMin,
+            isoMax,
+            massWindowLabel
+        );
+        
+        // Create a data structure that includes pT info
+        DataStructures::IsolationDataWithPt isoDataWithPt;
+        isoDataWithPt.ptMin = ptMin;
+        isoDataWithPt.ptMax = ptMax;
+        isoDataWithPt.weightedPt = isoData.weightedPt;
+        isoDataWithPt.ratio = isoData.ratio;
+        isoDataWithPt.error = isoData.error;
+        
+        // Add to the grouped data
+        groupedData[groupKey].push_back(isoDataWithPt);
+    }
+    
+    // Now, for each group, create the plot
+    for (const auto& groupEntry : groupedData) {
+        const auto& groupKey = groupEntry.first;
+        const auto& isoDataList = groupEntry.second;
+        
+        // Unpack the group key
+        std::string triggerGroupName = std::get<0>(groupKey);
+        std::string triggerName = std::get<1>(groupKey);
+        float eCore = std::get<2>(groupKey);
+        float chi = std::get<3>(groupKey);
+        float asym = std::get<4>(groupKey);
+        float isoMin = std::get<5>(groupKey);
+        float isoMax = std::get<6>(groupKey);
+        std::string massWindowLabel = std::get<7>(groupKey);
+        
+        // Map triggerGroupName and triggerName to human-readable names
+        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+            triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+        
+        std::string readableTriggerName = triggerName;
+        auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
+        if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
+            readableTriggerName = triggerNameIt->second;
+        }
+        
+        // Create output directories
+        std::ostringstream cutDirStream;
+        cutDirStream << basePlotDirectory << "/E" << Utils::formatToThreeSigFigs(eCore)
+                     << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                     << "_Asym" << Utils::formatToThreeSigFigs(asym);
+        std::string cutDirPath = cutDirStream.str();
+        gSystem->mkdir(cutDirPath.c_str(), true);
+        
+        std::string isolationDir = cutDirPath + "/isolationEnergies";
+        gSystem->mkdir(isolationDir.c_str(), true);
+        
+        std::ostringstream isoEtDirStream;
+        isoEtDirStream << isolationDir << "/isoEt_" << Utils::formatToThreeSigFigs(isoMin)
+                       << "_to_" << Utils::formatToThreeSigFigs(isoMax);
+        std::string isoEtDirPath = isoEtDirStream.str();
+        gSystem->mkdir(isoEtDirPath.c_str(), true);
+        
+        // Prepare data vectors for plotting
+        std::vector<double> weightedPts;
+        std::vector<double> ratios;
+        std::vector<double> errors;
+        
+        for (const auto& isoData : isoDataList) {
+            weightedPts.push_back(isoData.weightedPt);
+            ratios.push_back(isoData.ratio);
+            errors.push_back(isoData.error);
+        }
+        
+        // Sort the data by weightedPt for better plotting
+        std::vector<size_t> indices(weightedPts.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        std::sort(indices.begin(), indices.end(), [&](size_t i1, size_t i2) {
+            return weightedPts[i1] < weightedPts[i2];
+        });
+        
+        std::vector<double> sortedWeightedPts, sortedRatios, sortedErrors;
+        for (size_t idx : indices) {
+            sortedWeightedPts.push_back(weightedPts[idx]);
+            sortedRatios.push_back(ratios[idx]);
+            sortedErrors.push_back(errors[idx]);
+        }
+        
+        // Create a TGraphErrors
+        TGraphErrors* graph = new TGraphErrors(sortedWeightedPts.size(),
+                                               sortedWeightedPts.data(),
+                                               sortedRatios.data(),
+                                               nullptr,
+                                               sortedErrors.data());
+        graph->SetTitle(("Isolation Ratio vs pT (" + massWindowLabel + ")").c_str());
+        graph->GetXaxis()->SetTitle("Weighted p_{T} [GeV/c]");
+        graph->GetYaxis()->SetTitle("Isolated/Total Ratio");
+        graph->SetMarkerStyle(20);
+        graph->SetMarkerColor(kBlue);
+        graph->SetLineColor(kBlue);
+        graph->SetLineWidth(2);
+        
+        // Create a TCanvas
+        TCanvas canvas("canvas", "Isolation Data", 800, 600);
+        canvas.SetGrid();
+        
+        // Draw the graph
+        graph->Draw("AP");
+        
+        // Overlay the reference data
+        // Reference data provided by user
+        std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
+        std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
+        std::vector<double> referenceStatError = {0.014, 0.028, 0.043, 0.061, 0.113, 0.130, 0.120, 0.190, 0.290};
+        
+        std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
+        std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
+        std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
+        
+        // Create graphs for reference data
+        TGraphErrors* refGraph = new TGraphErrors(referencePTGamma.size(),
+                                                  referencePTGamma.data(),
+                                                  referenceRatio.data(),
+                                                  nullptr,
+                                                  referenceStatError.data());
+        refGraph->SetMarkerStyle(21);
+        refGraph->SetMarkerColor(kRed);
+        refGraph->SetLineColor(kRed);
+        refGraph->SetLineWidth(2);
+        refGraph->Draw("P SAME");
+        
+        TGraphErrors* refGraphTwo = new TGraphErrors(referenceTwoPTGamma.size(),
+                                                     referenceTwoPTGamma.data(),
+                                                     referenceTwoRatio.data(),
+                                                     nullptr,
+                                                     referenceTwoStatError.data());
+        refGraphTwo->SetMarkerStyle(22);
+        refGraphTwo->SetMarkerColor(kGreen+2);
+        refGraphTwo->SetLineColor(kGreen+2);
+        refGraphTwo->SetLineWidth(2);
+        refGraphTwo->Draw("P SAME");
+        
+        // Add legend
+        TLegend legend(0.15, 0.65, 0.45, 0.85);
+        legend.AddEntry(graph, "Current Analysis", "pl");
+        legend.AddEntry(refGraph, "Reference Data 1", "pl");
+        legend.AddEntry(refGraphTwo, "Reference Data 2", "pl");
+        legend.Draw();
+        
+        // Add labels using TLatex
+        TLatex labelText;
+        labelText.SetNDC();
+        labelText.SetTextSize(0.03);
+        labelText.DrawLatex(0.15, 0.60, ("Trigger Group: " + readableTriggerGroupName).c_str());
+        labelText.DrawLatex(0.15, 0.55, ("Trigger: " + readableTriggerName).c_str());
+        labelText.DrawLatex(0.15, 0.50, ("ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV").c_str());
+        labelText.DrawLatex(0.15, 0.45, ("Chi2/NDF < " + Utils::formatToThreeSigFigs(chi)).c_str());
+        labelText.DrawLatex(0.15, 0.40, ("Asymmetry < " + Utils::formatToThreeSigFigs(asym)).c_str());
+        labelText.DrawLatex(0.15, 0.35, ("IsoEt: " + Utils::formatToThreeSigFigs(isoMin) + " - " + Utils::formatToThreeSigFigs(isoMax) + " GeV").c_str());
+        labelText.DrawLatex(0.15, 0.30, ("Mass Window: " + massWindowLabel).c_str());
+        
+        // Save the canvas
+        std::string outputFilePath = isoEtDirPath + "/IsolationRatio_vs_pT_" + massWindowLabel + ".png";
+        canvas.SaveAs(outputFilePath.c_str());
+        std::cout << "Saved plot to " << outputFilePath << std::endl;
+        
+        // Clean up
+        delete graph;
+        delete refGraph;
+        delete refGraphTwo;
+    }
+}
+
 
 
 void PlotCombinedHistograms(
@@ -2567,7 +2985,7 @@ void PlotCombinedHistograms(
                         
                         // Perform the fit and append the parameters to the legend entry
                         if (enableFits && triggerFitParameters.find(photonTrigger) != triggerFitParameters.end()) {
-                            FitParameters params = triggerFitParameters[photonTrigger];
+                            DataStructures::FitParameters params = triggerFitParameters[photonTrigger];
                             TF1* fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
                                                       params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
                                                       params.amplitudeMin, params.amplitudeMax,
@@ -2680,6 +3098,10 @@ void PlotCombinedHistograms(
     // After processing all histograms, write the CSV file
     std::string csvOutputPath = "/Users/patsfan753/Desktop/isolation_data.csv";
     WriteIsolationDataToCSV(csvOutputPath);
+    readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
+    
+    ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory);
+    ProcessIsolationData(dataMap_outsideMassWindow, basePlotDirectory);
 }
 
 void AddLabelsToCanvas(
