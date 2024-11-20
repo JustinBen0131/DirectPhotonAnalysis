@@ -43,6 +43,13 @@ namespace TriggerConfig {
         {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + Minbias"},
         {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + Minbias"},
     };
+
+    const std::map<std::pair<float, float>, int> isoEtRangeColorMap = {
+        {{-100, 6}, kRed + 1},
+        {{-100, 10}, kViolet + 1},
+        {{-10, 0}, kGreen + 2},
+        {{0, 10}, kMagenta + 2}
+    };
 }
 
 
@@ -58,6 +65,8 @@ namespace TriggerCombinationNames {
         {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 4 GeV"},
         {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4 GeV"},
         {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4, 5 GeV"},
     };
 }
 
@@ -238,6 +247,8 @@ namespace DataStructures {
         double weightedPt;
         double ratio;
         double error;
+        float isoMin;  // Added isoMin
+        float isoMax;  // Added isoMax
     };
 
 } // namespace DataStructures
