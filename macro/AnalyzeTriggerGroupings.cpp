@@ -27,47 +27,47 @@ bool enableFits = true; // Set to true if you want to enable the fits
 std::map<std::string, DataStructures::FitParameters> triggerFitParameters = {
     { "Photon_2_GeV_plus_MBD_NS_geq_1", {
         1.25,   // amplitudeEstimate (closer to 1 for convergence)
-        0.7,  // slopeEstimate (increased for sharper rise)
-        4.55,   // xOffsetEstimate (shifted left to match flatter region)
+        0.72,  // slopeEstimate (increased for sharper rise)
+        4.65,   // xOffsetEstimate (shifted left to match flatter region)
         1.0,  // amplitudeMin
         1.3,  // amplitudeMax
-        0.69,   // slopeMin
-        0.71,   // slopeMax
-        4.45,   // xOffsetMin
-        4.65    // xOffsetMax
+        0.71,   // slopeMin
+        0.73,   // slopeMax
+        4.55,   // xOffsetMin
+        4.75    // xOffsetMax
     } },
     { "Photon_3_GeV_plus_MBD_NS_geq_1", {
         1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
-        0.56,   // slopeEstimate (slightly increased for better rise)
-        6.3,   // xOffsetEstimate (shifted for alignment)
+        0.6,   // slopeEstimate (slightly increased for better rise)
+        6.8,   // xOffsetEstimate (shifted for alignment)
         1.0,  // amplitudeMin
         1.3,  // amplitudeMax
-        0.55,   // slopeMin
-        0.57,  // slopeMax
-        6.2,   // xOffsetMin
-        6.4    // xOffsetMax
+        0.59,   // slopeMin
+        0.61,  // slopeMax
+        6.7,   // xOffsetMin
+        6.9    // xOffsetMax
     } },
     { "Photon_4_GeV_plus_MBD_NS_geq_1", {
         1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
-        0.5,   // slopeEstimate (slightly increased for better rise)
-        8.3,   // xOffsetEstimate (shifted for alignment)
+        0.53,   // slopeEstimate (slightly increased for better rise)
+        8.35,   // xOffsetEstimate (shifted for alignment)
         1.0,  // amplitudeMin
         1.3,  // amplitudeMax
-        0.49,   // slopeMin
-        0.51,  // slopeMax
-        8.2,   // xOffsetMin
-        8.4    // xOffsetMax
+        0.52,   // slopeMin
+        0.54,  // slopeMax
+        8.34,   // xOffsetMin
+        8.36    // xOffsetMax
     } },
     { "Photon_5_GeV_plus_MBD_NS_geq_1", {
         1.0,   // amplitudeEstimate
-        0.55,  // slopeEstimate (reduced for smoother rise)
-        8.1,   // xOffsetEstimate (slightly adjusted)
+        0.49,  // slopeEstimate (reduced for smoother rise)
+        12,   // xOffsetEstimate (slightly adjusted)
         0.98,  // amplitudeMin
         1.05,  // amplitudeMax
-        0.5,   // slopeMin
-        0.6,   // slopeMax
-        7.8,   // xOffsetMin
-        8.4    // xOffsetMax
+        0.48,   // slopeMin
+        0.5,   // slopeMax
+        11.8,   // xOffsetMin
+        12.4    // xOffsetMax
     } }
 };
 
@@ -1660,9 +1660,9 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             mg->SetTitle(("Mean #pi^{0} Mass vs p_{T} (" + cutCombination + ")").c_str());
             mg->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
             mg->GetYaxis()->SetTitle("Mean #pi^{0} Mass [GeV]");
-            mg->GetXaxis()->SetLimits(2.0, 8.0);
+            mg->GetXaxis()->SetLimits(2.0, 6.0);
             mg->GetXaxis()->SetNdivisions(505);
-            mg->GetYaxis()->SetRangeUser(0.14, 0.22);
+            mg->GetYaxis()->SetRangeUser(0.14, 0.19);
 
             // Draw legend
             legend->Draw();
@@ -1774,7 +1774,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             mgEta->SetTitle(("Mean #eta Mass vs p_{T} (" + cutCombination + ")").c_str());
             mgEta->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
             mgEta->GetYaxis()->SetTitle("Mean #eta Mass [GeV]");
-            mgEta->GetXaxis()->SetLimits(2.0, 8.0);
+            mgEta->GetXaxis()->SetLimits(2.0, 6.0);
             mgEta->GetXaxis()->SetNdivisions(505);
             mgEta->GetYaxis()->SetRangeUser(0.45, 0.75);
 
@@ -2572,22 +2572,45 @@ void SortAndCombineTriggers(
         }
     }
 
-    // Step 3: Sort triggers within each group based on their priority
-    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on priority...\n";
+    // Step 3: Sort triggers within each group based on their efficiency thresholds in descending order
+    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on efficiency thresholds...\n";
+    // Assign default efficiency thresholds to triggers missing them
     for (auto& [triggerGroupName, triggerList] : sortedTriggersByGroupName) {
+        for (const auto& triggerName : triggerList) {
+            if (triggerEfficiencyPoints.find(triggerName) == triggerEfficiencyPoints.end()) {
+                if (triggerName == "MBD_NandS_geq_1") {
+                    triggerEfficiencyPoints[triggerName] = 0.0; // Minbias trigger
+                } else {
+                    // Assign a high default threshold to other triggers without a calculated threshold
+                    triggerEfficiencyPoints[triggerName] = 9999.0;
+                }
+                std::cerr << "\033[33m[WARNING]\033[0m Efficiency threshold missing for trigger '"
+                          << triggerName << "'. Assigning default value.\n";
+            }
+        }
+        
+        // Now proceed to sort
         std::sort(triggerList.begin(), triggerList.end(),
                   [&](const std::string& a, const std::string& b) -> bool {
-                      return triggerPriorityMap[a] < triggerPriorityMap[b];
+                      double effA = triggerEfficiencyPoints.at(a);
+                      double effB = triggerEfficiencyPoints.at(b);
+                      if (effA != effB)
+                          return effA > effB; // Higher efficiency threshold first
+                      else
+                          return triggerPriorityMap[a] < triggerPriorityMap[b]; // Higher priority
                   });
         
         // Debugging output
         std::cout << "\033[1;32mTrigger Group Name\033[0m: " << triggerGroupName << "\n";
         std::cout << "\033[1;32mSorted Trigger List\033[0m: ";
         for (const auto& trigger : triggerList) {
-            std::cout << trigger << ", ";
+            std::cout << trigger << " (Eff Threshold: " << triggerEfficiencyPoints.at(trigger) << "), ";
         }
         std::cout << "\n";
     }
+
+
+
 
     // Step 4: Combine triggers for each group and isoEtRange
     std::cout << "\033[34m[INFO]\033[0m Combining triggers within each group...\n";
@@ -2656,6 +2679,7 @@ void SortAndCombineTriggers(
             // Iterate over each pT bin and select appropriate trigger data
             std::vector<DataStructures::IsolationDataWithPt> selectedDataPoints;
 
+            // Iterate over each pT bin and select appropriate trigger data
             for (const auto& ptBin : allPtBins) {
                 std::cout << "\033[32m[DEBUG]\033[0m Processing pT bin: [" << ptBin.first
                           << ", " << ptBin.second << "]\n";
@@ -2663,12 +2687,22 @@ void SortAndCombineTriggers(
                 bool triggerAssigned = false;
                 DataStructures::IsolationDataWithPt selectedIsoData;
 
-                // Iterate triggers in sorted order
+                std::cout << "\033[32m[DEBUG]\033[0m pTCenter: " << pTCenter << " GeV\n";
+
+                // Iterate triggers in sorted order (now descending efficiency thresholds)
                 for (const auto& triggerName : sortedTriggerList) {
                     // Check if this trigger has an efficiency threshold
                     auto effIt = triggerEfficiencyPoints.find(triggerName);
-                    if (effIt == triggerEfficiencyPoints.end()) continue;
+                    if (effIt == triggerEfficiencyPoints.end()) {
+                        std::cout << "\033[31m[WARNING]\033[0m No efficiency threshold for trigger '"
+                                  << triggerName << "'\n";
+                        continue;
+                    }
                     double efficiencyThreshold = effIt->second;
+
+                    std::cout << "\033[32m[DEBUG]\033[0m Evaluating trigger '" << triggerName
+                              << "' with efficiency threshold " << efficiencyThreshold
+                              << " GeV against pTCenter " << pTCenter << " GeV\n";
 
                     if (pTCenter >= efficiencyThreshold) {
                         // Find the isoData for this trigger and pT bin
@@ -2681,15 +2715,19 @@ void SortAndCombineTriggers(
                                 break;
                             }
                         }
-                        if (!foundGroupKey) continue;
+                        if (!foundGroupKey) {
+                            std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
+                                      << triggerName << "'\n";
+                            continue;
+                        }
 
                         // Get the isoDataList for this isoEtRange
                         auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
                         if (isoIt != groupedData.at(currentGroupKey).end()) {
-                            // Find the isoData with this pT bin
+                            // Find the isoData that contains pTCenter
                             auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
                                 [&](const DataStructures::IsolationDataWithPt& id) {
-                                    return std::abs(id.ptMin - ptBin.first) < 1e-6 && std::abs(id.ptMax - ptBin.second) < 1e-6;
+                                    return id.ptMin <= pTCenter && pTCenter < id.ptMax;
                                 });
                             if (dataIt != isoIt->second.end()) {
                                 selectedIsoData = *dataIt;
@@ -2697,11 +2735,17 @@ void SortAndCombineTriggers(
                                 std::cout << "\033[32m[DEBUG]\033[0m Assigned to trigger '"
                                           << triggerName << "'\n";
                                 break; // Trigger selected for this pT bin
+                            } else {
+                                std::cout << "\033[31m[DEBUG]\033[0m Data not found for trigger '"
+                                          << triggerName << "' with pT bin ["
+                                          << ptBin.first << ", " << ptBin.second << "]\n";
                             }
                         }
+                    } else {
+                        std::cout << "\033[33m[DEBUG]\033[0m pTCenter " << pTCenter
+                                  << " GeV is below threshold for trigger '" << triggerName << "'\n";
                     }
                 }
-
                 // If no trigger met the efficiency threshold, use "Minbias" if available
                 if (!triggerAssigned) {
                     const std::string minbiasTrigger = "MBD_NandS_geq_1";
@@ -3178,8 +3222,8 @@ void GeneratePerTriggerIsoPlots(
                                            nullptr,
                                            ReferenceData::referenceStatError.data());
             refGraphOne->SetMarkerStyle(20);
-            refGraphOne->SetMarkerColor(kBlue);
-            refGraphOne->SetLineColor(kBlue);
+            refGraphOne->SetMarkerColor(kOrange);
+            refGraphOne->SetLineColor(kOrange);
             refGraphOne->SetLineWidth(2);
             legend.AddEntry(refGraphOne, "#font[62]{PHENIX 2003 pp Run:} #frac{Isolated Direct}{All Direct}", "p");
         }
@@ -3191,8 +3235,8 @@ void GeneratePerTriggerIsoPlots(
                                            nullptr,
                                            ReferenceData::referenceTwoStatError.data());
             refGraphTwo->SetMarkerStyle(20);
-            refGraphTwo->SetMarkerColor(kBlue);
-            refGraphTwo->SetLineColor(kBlue);
+            refGraphTwo->SetMarkerColor(kOrange);
+            refGraphTwo->SetLineColor(kOrange);
             refGraphTwo->SetLineWidth(2);
             legend.AddEntry(refGraphTwo, "#font[62]{PHENIX 2003 pp Run:} #frac{Isolated #pi^{0} Decay}{All #pi^{0} Decay}", "p");
         }
@@ -3292,13 +3336,13 @@ void GeneratePerTriggerIsoPlots(
         
         multiGraph->GetYaxis()->SetTitle(yAxisTitle.c_str());
         multiGraph->GetYaxis()->SetRangeUser(0, 2.0);
-        multiGraph->GetXaxis()->SetLimits(2.0, 30.0);
+        multiGraph->GetXaxis()->SetLimits(2.0, 25.0);
         
         // Draw multigraph
         multiGraph->Draw("A");
         
         // Draw a dashed line at y = 1
-        TLine* line = new TLine(2, 1, 16, 1);
+        TLine* line = new TLine(2, 1, 25, 1);
         line->SetLineStyle(2); // Dashed line
         line->Draw();
 
@@ -3317,11 +3361,11 @@ void GeneratePerTriggerIsoPlots(
         // Add labels using TLatex in the top-left corner
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.04);       // Adjusted text size
+        labelText.SetTextSize(0.024);       // Adjusted text size
         labelText.SetTextColor(kBlack);    // Ensured text color is black
-        double xStart = 0.15; // Starting x-coordinate (left side)
-        double yStartLabel = 0.85; // Starting y-coordinate
-        double yStepLabel = 0.05;  // Vertical spacing between lines
+        double xStart = 0.7; // Starting x-coordinate (left side)
+        double yStartLabel = 0.9; // Starting y-coordinate
+        double yStepLabel = 0.035;  // Vertical spacing between lines
 
         // Prepare label strings
         std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
@@ -3509,13 +3553,13 @@ void GenerateCombinedRatioPlot(
             
             combinedMultiGraph->GetYaxis()->SetTitle(yAxisTitle.c_str());
             combinedMultiGraph->GetYaxis()->SetRangeUser(0, 2.0);
-            combinedMultiGraph->GetXaxis()->SetLimits(2.0, 30.0);
+            combinedMultiGraph->GetXaxis()->SetLimits(2.0, 25.0);
 
             // Draw multigraph
             combinedMultiGraph->Draw("A P");
 
             // Draw a dashed line at y = 1
-            TLine* combinedLine = new TLine(2, 1, 15, 1);
+            TLine* combinedLine = new TLine(2, 1, 25, 1);
             combinedLine->SetLineStyle(2); // Dashed line
             combinedLine->Draw();
 
@@ -3525,12 +3569,12 @@ void GenerateCombinedRatioPlot(
             // Add labels using TLatex in the top-left corner
             TLatex labelText;
             labelText.SetNDC();
-            labelText.SetTextSize(0.022);       // Adjust text size as needed
+            labelText.SetTextSize(0.026);       // Adjust text size as needed
             labelText.SetTextColor(kBlack);    // Ensure text color is black
             
-            double xStart = 0.85; // Starting x-coordinate (left side)
+            double xStart = 0.55; // Starting x-coordinate (left side)
             double yStartLabel = 0.9; // Starting y-coordinate
-            double yStepLabel = 0.01;  // Vertical spacing between lines
+            double yStepLabel = 0.04;  // Vertical spacing between lines
             
             // Prepare label strings
             std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
@@ -3796,16 +3840,16 @@ void PlotCombinedHistograms(
         }
 
         // Define a separate font size for the header
-        double headerTextSize = 0.035;
+        double headerTextSize = 0.045;
 
         // Draw the header with a different font size
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
-        headerText << "Run Numbers (" << runNumbers.size() << " runs):";
-        runNumbersLatex.DrawLatex(0.5, 0.92, headerText.str().c_str());
+        headerText << "Run Numbers (" << runNumbers.size() << " runs)";
+        runNumbersLatex.DrawLatex(0.5, 0.9, headerText.str().c_str());
 
         // Skip plotting run numbers for specific size
-        if (runNumbers.size() == 692) {
+        if (runNumbers.size() == 697 || runNumbers.size() == 700 || runNumbers.size() == 585 || runNumbers.size() == 728 || runNumbers.size() == 104) {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
             return;
         }
@@ -3890,8 +3934,8 @@ void PlotCombinedHistograms(
         // -------------------- Overlay Plot --------------------
         // Create a canvas
         TCanvas* canvas = new TCanvas("canvas", "Overlay Plot", 800, 600);
-        TLegend* legend = new TLegend(0.18, 0.2, 0.48, 0.45);
-        legend->SetTextSize(0.035);
+        TLegend* legend = new TLegend(0.65, 0.53, 0.85, 0.88);
+        legend->SetTextSize(0.03);
         canvas->SetLogy();
 
         bool firstDraw = true;
@@ -4039,7 +4083,7 @@ void PlotCombinedHistograms(
                         ratioHist->SetTitle(("Turn-On Curve for " + combinationName).c_str());
                         ratioHist->GetXaxis()->SetTitle("Maximum 8x8 Energy Sum (EMCal) [GeV]");
                         ratioHist->GetYaxis()->SetTitle("Ratio to Minbias");
-                        ratioHist->GetYaxis()->SetRangeUser(0, 1.75);
+                        ratioHist->GetYaxis()->SetRangeUser(0, 2.0);
                         
                         if (firstDrawTurnOn) {
                             ratioHist->Draw("E1"); // Draw with error bars
