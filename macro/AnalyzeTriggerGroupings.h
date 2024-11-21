@@ -21,150 +21,6 @@ namespace ReferenceData {
 
 }
 
-
-// Namespace for trigger configurations
-namespace TriggerConfig {
-    // List of all triggers we're interested in
-    const std::vector<std::string> allTriggers = {
-        "MBD_NandS_geq_1",
-        "Photon_2_GeV_plus_MBD_NS_geq_1",
-        "Photon_3_GeV_plus_MBD_NS_geq_1",
-        "Photon_4_GeV_plus_MBD_NS_geq_1",
-        "Photon_5_GeV_plus_MBD_NS_geq_1",
-//        "Photon_2_GeV",
-//        "Photon_3_GeV",
-//        "Photon_4_GeV",
-//        "Photon_5_GeV"
-    };
-
-    // List of Photon triggers (excluding MBD_NandS_geq_1)
-    const std::vector<std::string> photonTriggers = {
-        "Photon_2_GeV_plus_MBD_NS_geq_1",
-        "Photon_3_GeV_plus_MBD_NS_geq_1",
-        "Photon_4_GeV_plus_MBD_NS_geq_1",
-        "Photon_5_GeV_plus_MBD_NS_geq_1",
-//        "Photon_2_GeV",
-//        "Photon_3_GeV",
-//        "Photon_4_GeV",
-//        "Photon_5_GeV"
-    };
-
-    // Map of triggers to colors for plotting
-    const std::map<std::string, int> triggerColorMap = {
-        {"MBD_NandS_geq_1", kBlack},
-        {"Photon_2_GeV_plus_MBD_NS_geq_1", kRed},
-        {"Photon_3_GeV_plus_MBD_NS_geq_1", kBlue},
-        {"Photon_4_GeV_plus_MBD_NS_geq_1", kGreen + 2},
-        {"Photon_5_GeV_plus_MBD_NS_geq_1", kMagenta},
-//        {"Photon_2_GeV", kRed},
-//        {"Photon_3_GeV", kBlue},
-//        {"Photon_4_GeV", kGreen + 2},
-//        {"Photon_5_GeV", kMagenta}
-    };
-
-    // Map of triggers to human-readable names
-    const std::map<std::string, std::string> triggerNameMap = {
-        {"MBD_NandS_geq_1", "Minbias"},
-        {"Photon_2_GeV_plus_MBD_NS_geq_1", "Photon 2 GeV + Minbias"},
-        {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + Minbias"},
-        {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + Minbias"},
-        {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + Minbias"},
-//        {"Photon_2_GeV", "Photon 2 GeV"},
-//        {"Photon_3_GeV", "Photon 3 GeV"},
-//        {"Photon_4_GeV", "Photon 4 GeV"},
-//        {"Photon_5_GeV", "Photon 5 GeV"}
-        
-    };
-
-    const std::map<std::pair<float, float>, int> isoEtRangeColorMap = {
-        {{-100, 6}, kRed + 1},
-        {{-100, 10}, kRed + 1},
-        {{-10, 0}, kGreen + 2},
-        {{0, 10}, kMagenta + 2}
-    };
-}
-
-
-// Namespace for trigger combination names
-namespace TriggerCombinationNames {
-    const std::map<std::string, std::string> triggerCombinationNameMap = {
-        {"MBD_NandS_geq_1", "Minbias"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3 GeV"},
-        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4, 5 GeV"},
-    };
-}
-
-namespace Utils {
-    // Helper function to normalize the trigger combination string for case-insensitive and whitespace-insensitive comparison
-    std::string normalizeString(const std::string& str) {
-        std::string normalized = str;
-        std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
-        normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
-        return normalized;
-    }
-
-    // Function to retrieve the human-readable combination name
-    std::string getTriggerCombinationName(const std::string& dirName, const std::map<std::string, std::string>& nameMap) {
-        std::string normalizedDir = normalizeString(dirName);
-        for (const auto& entry : nameMap) {
-            if (normalizeString(entry.first) == normalizedDir) {
-                return entry.second;
-            }
-        }
-        return dirName; // Default to directory name if not found
-    }
-
-    // Function to format a double to three significant figures as a string
-    std::string formatToThreeSigFigs(double value) {
-        std::ostringstream out;
-        out << std::fixed << std::setprecision(3) << value;
-        return out.str();
-    }
-
-    // Function to check if a string ends with another string
-    bool EndsWith(const std::string& fullString, const std::string& ending) {
-        if (fullString.length() >= ending.length()) {
-            return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
-        } else {
-            return false;
-        }
-    }
-
-    TF1* sigmoidFit(const std::string& name, double xmin, double xmax,
-                    double amplitude, double slope, double xOffset,
-                    double amplitudeMin, double amplitudeMax,
-                    double slopeMin, double slopeMax,
-                    double xOffsetMin, double xOffsetMax) {
-        // Define a sigmoid function for fitting
-        TF1* fitFunc = new TF1(name.c_str(), "[0]/(1+exp(-[1]*(x-[2])))", xmin, xmax);
-        fitFunc->SetParNames("Amplitude", "Slope", "XOffset");
-
-        // Set initial parameters
-        fitFunc->SetParameter(0, amplitude);  // Amplitude
-        fitFunc->SetParameter(1, slope);      // Slope
-        fitFunc->SetParameter(2, xOffset);    // XOffset
-
-        // Set parameter limits
-        fitFunc->SetParLimits(0, amplitudeMin, amplitudeMax);  // Amplitude limits
-        fitFunc->SetParLimits(1, slopeMin, slopeMax);          // Slope limits
-        fitFunc->SetParLimits(2, xOffsetMin, xOffsetMax);      // XOffset limits
-
-        return fitFunc;
-    }
-
-}
-
 // Define CutValues, FitParameters, and HistogramData within a dedicated namespace
 namespace DataStructures {
 
@@ -296,5 +152,263 @@ namespace DataStructures {
 
 
 } // namespace DataStructures
+
+
+// Namespace for trigger configurations
+namespace TriggerConfig {
+    // List of all triggers we're interested in
+    const std::vector<std::string> allTriggers = {
+        "MBD_NandS_geq_1",
+        "Photon_2_GeV_plus_MBD_NS_geq_1",
+        "Photon_3_GeV_plus_MBD_NS_geq_1",
+        "Photon_4_GeV_plus_MBD_NS_geq_1",
+        "Photon_5_GeV_plus_MBD_NS_geq_1",
+//        "Photon_2_GeV",
+//        "Photon_3_GeV",
+//        "Photon_4_GeV",
+//        "Photon_5_GeV"
+    };
+
+    // List of Photon triggers (excluding MBD_NandS_geq_1)
+    const std::vector<std::string> photonTriggers = {
+        "Photon_2_GeV_plus_MBD_NS_geq_1",
+        "Photon_3_GeV_plus_MBD_NS_geq_1",
+        "Photon_4_GeV_plus_MBD_NS_geq_1",
+        "Photon_5_GeV_plus_MBD_NS_geq_1",
+//        "Photon_2_GeV",
+//        "Photon_3_GeV",
+//        "Photon_4_GeV",
+//        "Photon_5_GeV"
+    };
+
+    // Map of triggers to colors for plotting
+    const std::map<std::string, int> triggerColorMap = {
+        {"MBD_NandS_geq_1", kBlack},
+        {"Photon_2_GeV_plus_MBD_NS_geq_1", kRed},
+        {"Photon_3_GeV_plus_MBD_NS_geq_1", kBlue},
+        {"Photon_4_GeV_plus_MBD_NS_geq_1", kGreen + 2},
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", kMagenta},
+//        {"Photon_2_GeV", kRed},
+//        {"Photon_3_GeV", kBlue},
+//        {"Photon_4_GeV", kGreen + 2},
+//        {"Photon_5_GeV", kMagenta}
+    };
+
+    // Map of triggers to human-readable names
+    const std::map<std::string, std::string> triggerNameMap = {
+        {"MBD_NandS_geq_1", "Minbias"},
+        {"Photon_2_GeV_plus_MBD_NS_geq_1", "Photon 2 GeV + Minbias"},
+        {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + Minbias"},
+        {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + Minbias"},
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + Minbias"},
+//        {"Photon_2_GeV", "Photon 2 GeV"},
+//        {"Photon_3_GeV", "Photon 3 GeV"},
+//        {"Photon_4_GeV", "Photon 4 GeV"},
+//        {"Photon_5_GeV", "Photon 5 GeV"}
+        
+    };
+
+    const std::map<std::pair<float, float>, int> isoEtRangeColorMap = {
+        {{-100, 6}, kRed + 1},
+        {{-100, 10}, kRed + 1},
+        {{-10, 0}, kGreen + 2},
+        {{0, 10}, kMagenta + 2}
+    };
+
+    const std::map<std::pair<std::string, std::string>, DataStructures::FitParameters> triggerFitParameters = {
+        { {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Photon_2_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (closer to 1 for convergence)
+            0.72,  // slopeEstimate (increased for sharper rise)
+            4.65,   // xOffsetEstimate (shifted left to match flatter region)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.71,   // slopeMin
+            0.73,   // slopeMax
+            4.55,   // xOffsetMin
+            4.75    // xOffsetMax
+        } },
+        { {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.64,   // slopeEstimate (slightly increased for better rise)
+            7.2,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.62,   // slopeMin
+            0.66,  // slopeMax
+            7.0,   // xOffsetMin
+            7.5    // xOffsetMax
+        } },
+        { {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.64,   // slopeEstimate (slightly increased for better rise)
+            7.2,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.62,   // slopeMin
+            0.66,  // slopeMax
+            7.0,   // xOffsetMin
+            7.5    // xOffsetMax
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.64,   // slopeEstimate (slightly increased for better rise)
+            7.2,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.62,   // slopeMin
+            0.66,  // slopeMax
+            7.0,   // xOffsetMin
+            7.5    // xOffsetMax
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.64,   // slopeEstimate (slightly increased for better rise)
+            7.2,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.62,   // slopeMin
+            0.66,  // slopeMax
+            7.0,   // xOffsetMin
+            7.5    // xOffsetMax
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
+            1.0,   // amplitudeEstimate
+            0.48,  // slopeEstimate (reduced for smoother rise)
+            10.5,   // xOffsetEstimate (slightly adjusted)
+            0.98,  // amplitudeMin
+            1.05,  // amplitudeMax
+            0.46,   // slopeMin
+            0.5,   // slopeMax
+            10.4,   // xOffsetMin
+            10.6    // xOffsetMax
+        } },
+        { {"", "Photon_2_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (closer to 1 for convergence)
+            0.72,  // slopeEstimate (increased for sharper rise)
+            4.65,   // xOffsetEstimate (shifted left to match flatter region)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.71,   // slopeMin
+            0.73,   // slopeMax
+            4.55,   // xOffsetMin
+            4.75    // xOffsetMax
+        } },
+        { {"", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.64,   // slopeEstimate (slightly increased for better rise)
+            7.2,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.62,   // slopeMin
+            0.66,  // slopeMax
+            7.0,   // xOffsetMin
+            7.5    // xOffsetMax
+        } },
+        { {"", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
+            0.55,   // slopeEstimate (slightly increased for better rise)
+            8.5,   // xOffsetEstimate (shifted for alignment)
+            1.0,  // amplitudeMin
+            1.3,  // amplitudeMax
+            0.53,   // slopeMin
+            0.57,  // slopeMax
+            8.4,   // xOffsetMin
+            8.6    // xOffsetMax
+        } },
+        { {"", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
+            1.0,   // amplitudeEstimate
+            0.48,  // slopeEstimate (reduced for smoother rise)
+            10.5,   // xOffsetEstimate (slightly adjusted)
+            0.98,  // amplitudeMin
+            1.05,  // amplitudeMax
+            0.46,   // slopeMin
+            0.5,   // slopeMax
+            10.4,   // xOffsetMin
+            10.6    // xOffsetMax
+        } }
+    };
+
+}
+
+
+// Namespace for trigger combination names
+namespace TriggerCombinationNames {
+    const std::map<std::string, std::string> triggerCombinationNameMap = {
+        {"MBD_NandS_geq_1", "Minbias"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4, 5 GeV"},
+    };
+}
+
+namespace Utils {
+    // Helper function to normalize the trigger combination string for case-insensitive and whitespace-insensitive comparison
+    std::string normalizeString(const std::string& str) {
+        std::string normalized = str;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::tolower);
+        normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
+        return normalized;
+    }
+
+    // Function to retrieve the human-readable combination name
+    std::string getTriggerCombinationName(const std::string& dirName, const std::map<std::string, std::string>& nameMap) {
+        std::string normalizedDir = normalizeString(dirName);
+        for (const auto& entry : nameMap) {
+            if (normalizeString(entry.first) == normalizedDir) {
+                return entry.second;
+            }
+        }
+        return dirName; // Default to directory name if not found
+    }
+
+    // Function to format a double to three significant figures as a string
+    std::string formatToThreeSigFigs(double value) {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3) << value;
+        return out.str();
+    }
+
+    // Function to check if a string ends with another string
+    bool EndsWith(const std::string& fullString, const std::string& ending) {
+        if (fullString.length() >= ending.length()) {
+            return (0 == fullString.compare(fullString.length() - ending.length(), ending.length(), ending));
+        } else {
+            return false;
+        }
+    }
+
+    TF1* sigmoidFit(const std::string& name, double xmin, double xmax,
+                    double amplitude, double slope, double xOffset,
+                    double amplitudeMin, double amplitudeMax,
+                    double slopeMin, double slopeMax,
+                    double xOffsetMin, double xOffsetMax) {
+        // Define a sigmoid function for fitting
+        TF1* fitFunc = new TF1(name.c_str(), "[0]/(1+exp(-[1]*(x-[2])))", xmin, xmax);
+        fitFunc->SetParNames("Amplitude", "Slope", "XOffset");
+
+        // Set initial parameters
+        fitFunc->SetParameter(0, amplitude);  // Amplitude
+        fitFunc->SetParameter(1, slope);      // Slope
+        fitFunc->SetParameter(2, xOffset);    // XOffset
+
+        // Set parameter limits
+        fitFunc->SetParLimits(0, amplitudeMin, amplitudeMax);  // Amplitude limits
+        fitFunc->SetParLimits(1, slopeMin, slopeMax);          // Slope limits
+        fitFunc->SetParLimits(2, xOffsetMin, xOffsetMax);      // XOffset limits
+
+        return fitFunc;
+    }
+
+}
 
 #endif // ANALYZE_TRIGGER_GROUPINGS_H
