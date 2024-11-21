@@ -24,52 +24,6 @@
 
 bool enableFits = true; // Set to true if you want to enable the fits
 
-std::map<std::string, DataStructures::FitParameters> triggerFitParameters = {
-    { "Photon_2_GeV_plus_MBD_NS_geq_1", {
-        1.25,   // amplitudeEstimate (closer to 1 for convergence)
-        0.72,  // slopeEstimate (increased for sharper rise)
-        4.65,   // xOffsetEstimate (shifted left to match flatter region)
-        1.0,  // amplitudeMin
-        1.3,  // amplitudeMax
-        0.71,   // slopeMin
-        0.73,   // slopeMax
-        4.55,   // xOffsetMin
-        4.75    // xOffsetMax
-    } },
-    { "Photon_3_GeV_plus_MBD_NS_geq_1", {
-        1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
-        0.6,   // slopeEstimate (slightly increased for better rise)
-        6.8,   // xOffsetEstimate (shifted for alignment)
-        1.0,  // amplitudeMin
-        1.3,  // amplitudeMax
-        0.59,   // slopeMin
-        0.61,  // slopeMax
-        6.7,   // xOffsetMin
-        6.9    // xOffsetMax
-    } },
-    { "Photon_4_GeV_plus_MBD_NS_geq_1", {
-        1.25,   // amplitudeEstimate (adjusted for y = 1 convergence)
-        0.53,   // slopeEstimate (slightly increased for better rise)
-        8.35,   // xOffsetEstimate (shifted for alignment)
-        1.0,  // amplitudeMin
-        1.3,  // amplitudeMax
-        0.52,   // slopeMin
-        0.54,  // slopeMax
-        8.34,   // xOffsetMin
-        8.36    // xOffsetMax
-    } },
-    { "Photon_5_GeV_plus_MBD_NS_geq_1", {
-        1.0,   // amplitudeEstimate
-        0.49,  // slopeEstimate (reduced for smoother rise)
-        12,   // xOffsetEstimate (slightly adjusted)
-        0.98,  // amplitudeMin
-        1.05,  // amplitudeMax
-        0.48,   // slopeMin
-        0.5,   // slopeMax
-        11.8,   // xOffsetMin
-        12.4    // xOffsetMax
-    } }
-};
 
 std::map<std::tuple<
     std::string, // triggerGroupName (raw name)
@@ -2896,15 +2850,20 @@ void SortAndCombineSpectraData(
     const std::vector<std::pair<float, float>>& exclusionRanges,
     std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>>& combinedSpectraDataMap
 ) {
+    std::cout << "\033[1;34m[INFO]\033[0m Starting SortAndCombineSpectraData function.\n";
+
     // Step 1: Map each trigger to its priority based on TriggerConfig::allTriggers
     std::map<std::string, int> triggerPriorityMap;
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
     for (size_t i = 0; i < allTriggers.size(); ++i) {
         triggerPriorityMap[allTriggers[i]] = static_cast<int>(i);
     }
+    std::cout << "\033[1;34m[INFO]\033[0m Mapped triggers to their priorities based on TriggerConfig::allTriggers.\n";
 
     // Organize data into groups
     std::map<SpectraGroupKey, std::map<float, std::vector<std::tuple<std::string, float, DataStructures::IsolationData, DataStructures::IsolationData>>>> groupedData;
+
+    std::cout << "\033[1;34m[INFO]\033[0m Organizing data into groups.\n";
 
     for (const auto& entry : dataMap_inMassWindow) {
         const auto& key = entry.first;
@@ -2924,6 +2883,7 @@ void SortAndCombineSpectraData(
         // Check for exclusion ranges
         std::pair<float, float> isoEtRange = {isoMin, isoMax};
         if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtRange) != exclusionRanges.end()) {
+            std::cout << "\033[1;33m[WARNING]\033[0m Excluding isoEtRange [" << isoMin << ", " << isoMax << "] due to exclusionRanges.\n";
             continue; // Exclude this isoEtRange
         }
 
@@ -2935,15 +2895,23 @@ void SortAndCombineSpectraData(
 
         auto it_outside = dataMap_outsideMassWindow.find(outsideKey);
         if (it_outside == dataMap_outsideMassWindow.end()) {
+            std::cout << "\033[1;31m[ERROR]\033[0m No outsideMassWindow data found for key. Skipping this entry.\n";
             continue;
         }
         const auto& isoData_out = it_outside->second;
 
+        // Add data to groupedData
         groupedData[spectraGroupKey][pTCenter].emplace_back(triggerName, pTCenter, isoData_in, isoData_out);
     }
 
+    std::cout << "\033[1;34m[INFO]\033[0m Data organized into " << groupedData.size() << " groups.\n";
+
     // Now, for each group, sort triggers and combine data
     for (const auto& [spectraGroupKey, ptDataMap] : groupedData) {
+        std::cout << "\033[1;34m[INFO]\033[0m Processing group: TriggerGroupName=" << spectraGroupKey.triggerGroupName
+                  << ", ECore=" << spectraGroupKey.eCore << ", Chi=" << spectraGroupKey.chi
+                  << ", Asymmetry=" << spectraGroupKey.asymmetry << "\n";
+
         // Get list of triggers in this group
         std::set<std::string> triggerSet;
         for (const auto& [pTCenter, dataVec] : ptDataMap) {
@@ -2976,10 +2944,19 @@ void SortAndCombineSpectraData(
                 }
             });
 
+        std::cout << "\033[1;34m[INFO]\033[0m Sorted triggers in group: ";
+        for (const auto& triggerName : triggerList) {
+            std::cout << triggerName << " ";
+        }
+        std::cout << "\n";
+
         // For each pT bin, select appropriate trigger data
         for (const auto& [pTCenter, dataVec] : ptDataMap) {
             bool triggerAssigned = false;
             CombinedSpectraData combinedData;
+
+            std::cout << "\033[1;34m[INFO]\033[0m Processing pT bin centered at " << pTCenter << " GeV.\n";
+
             for (const auto& triggerName : triggerList) {
                 // Check efficiency threshold
                 double efficiencyThreshold = 0.0;
@@ -3000,22 +2977,33 @@ void SortAndCombineSpectraData(
                         combinedData.isolatedYield_out = std::get<3>(*dataIt).isolatedYield;
                         combinedData.isolatedYieldError_out = std::get<3>(*dataIt).isolatedYieldError;
                         triggerAssigned = true;
+                        std::cout << "\033[1;34m[INFO]\033[0m Assigned trigger '" << triggerName << "' for pT bin " << pTCenter << " GeV.\n";
                         break;
+                    } else {
+                        std::cout << "\033[1;33m[WARNING]\033[0m No data found for trigger '" << triggerName << "' at pT bin " << pTCenter << " GeV.\n";
                     }
+                } else {
+                    std::cout << "\033[1;33m[WARNING]\033[0m pT bin " << pTCenter << " GeV is below efficiency threshold " << efficiencyThreshold << " GeV for trigger '" << triggerName << "'.\n";
                 }
             }
             if (triggerAssigned) {
                 combinedSpectraDataMap[spectraGroupKey][pTCenter] = combinedData;
+            } else {
+                std::cout << "\033[1;31m[ERROR]\033[0m No suitable trigger assigned for pT bin " << pTCenter << " GeV in group '" << spectraGroupKey.triggerGroupName << "'.\n";
             }
         }
     }
+    std::cout << "\033[1;34m[INFO]\033[0m Finished SortAndCombineSpectraData function.\n";
 }
+
 
 void GenerateCombinedSpectraPlots(
     const std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>>& combinedSpectraDataMap,
     const std::string& basePlotDirectory,
     const std::map<std::string, std::string>& triggerCombinationNameMap
 ) {
+    std::cout << "\033[1;34m[INFO]\033[0m Starting GenerateCombinedSpectraPlots function.\n";
+
     for (const auto& [spectraGroupKey, ptDataMap] : combinedSpectraDataMap) {
         const std::string& triggerGroupName = spectraGroupKey.triggerGroupName;
         float eCore = spectraGroupKey.eCore;
@@ -3026,6 +3014,9 @@ void GenerateCombinedSpectraPlots(
         std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
             triggerGroupName, triggerCombinationNameMap);
 
+        std::cout << "\033[1;34m[INFO]\033[0m Processing plot for Trigger Group: " << readableTriggerGroupName
+                  << ", ECore > " << eCore << " GeV, Chi2/NDF < " << chi << ", Asymmetry < " << asym << ".\n";
+
         // Define output directory (same as per-trigger spectra plots)
         std::ostringstream dirStream;
         dirStream << basePlotDirectory << "/" << triggerGroupName
@@ -3034,7 +3025,12 @@ void GenerateCombinedSpectraPlots(
                   << "_Asym" << Utils::formatToThreeSigFigs(asym)
                   << "/Spectra/Overlay";
         std::string dirPath = dirStream.str();
-        gSystem->mkdir(dirPath.c_str(), true);
+        if (gSystem->mkdir(dirPath.c_str(), true) != 0) {
+            std::cout << "\033[1;31m[ERROR]\033[0m Failed to create directory: " << dirPath << "\n";
+            continue;
+        } else {
+            std::cout << "\033[1;34m[INFO]\033[0m Created directory: " << dirPath << "\n";
+        }
 
         // Create a TCanvas
         TCanvas* canvas = new TCanvas("canvas", "Combined Isolated Photon Spectra", 800, 600);
@@ -3050,6 +3046,12 @@ void GenerateCombinedSpectraPlots(
             isolatedYieldsError_in.push_back(combinedData.isolatedYieldError_in);
             isolatedYields_out.push_back(combinedData.isolatedYield_out);
             isolatedYieldsError_out.push_back(combinedData.isolatedYieldError_out);
+        }
+
+        if (pTValues.empty()) {
+            std::cout << "\033[1;31m[ERROR]\033[0m No data points available for plotting in group '" << readableTriggerGroupName << "'. Skipping plot.\n";
+            delete canvas;
+            continue;
         }
 
         // Create TGraphErrors
@@ -3085,8 +3087,19 @@ void GenerateCombinedSpectraPlots(
         multiGraph->GetYaxis()->SetTitle("Yield");
 
         // Set Y-axis range
-        double globalMaxY = std::max(*std::max_element(isolatedYields_in.begin(), isolatedYields_in.end()),
-                                     *std::max_element(isolatedYields_out.begin(), isolatedYields_out.end()));
+        double globalMaxY_in = *std::max_element(isolatedYields_in.begin(), isolatedYields_in.end());
+        double globalMaxY_out = *std::max_element(isolatedYields_out.begin(), isolatedYields_out.end());
+        double globalMaxY = std::max(globalMaxY_in, globalMaxY_out);
+
+        if (globalMaxY <= 0.0) {
+            std::cout << "\033[1;31m[ERROR]\033[0m Maximum Y value is non-positive for group '" << readableTriggerGroupName << "'. Skipping plot.\n";
+            delete graphIn;
+            delete graphOut;
+            delete multiGraph;
+            delete canvas;
+            continue;
+        }
+
         multiGraph->SetMinimum(1e-1);
         multiGraph->SetMaximum(globalMaxY * 1.5);
 
@@ -3130,14 +3143,19 @@ void GenerateCombinedSpectraPlots(
 
         std::string outputFilePath = dirPath + "/CombinedOverlaySpectra.png";
         canvas->SaveAs(outputFilePath.c_str());
-        std::cout << "\033[33m[INFO]\033[0m Saved combined overlay spectra plot to " << outputFilePath << std::endl;
+        std::cout << "\033[1;34m[INFO]\033[0m Saved combined overlay spectra plot to " << outputFilePath << std::endl;
 
         // Clean up
-        delete multiGraph;
         delete legend;
+        delete graphIn;
+        delete graphOut;
+        delete multiGraph;
         delete canvas;
     }
+
+    std::cout << "\033[1;34m[INFO]\033[0m Finished GenerateCombinedSpectraPlots function.\n";
 }
+
 
 
 // Helper Function to Generate Per-Trigger Plots
@@ -3920,7 +3938,7 @@ void ProcessIsolationData(
     const std::map<std::string, double>& triggerEfficiencyPoints = {},
     bool drawRefA = false,
     bool drawRefB = false) {
-    
+    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
 
     // -----------------------------
     // ** isoEtRange Setup **
@@ -4040,13 +4058,21 @@ void ProcessIsolationData(
         triggerNameMap,
         exclusionRanges
     );
-    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
+
+    // Sort and combine spectra data
     SortAndCombineSpectraData(
         dataMap_inMassWindow,
         dataMap_outsideMassWindow,
         triggerEfficiencyPoints,
         exclusionRanges,
         combinedSpectraDataMap
+    );
+
+    // Call GenerateCombinedSpectraPlots
+    GenerateCombinedSpectraPlots(
+        combinedSpectraDataMap,
+        basePlotDirectory,
+        TriggerCombinationNames::triggerCombinationNameMap
     );
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
 }
@@ -4408,8 +4434,16 @@ void PlotCombinedHistograms(
                         legendEntry << displayPhotonTriggerName;
                         
                         // Perform the fit and append the parameters to the legend entry
-                        if (enableFits && triggerFitParameters.find(photonTrigger) != triggerFitParameters.end()) {
-                            DataStructures::FitParameters params = triggerFitParameters[photonTrigger];
+                        std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
+                        auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
+                            // Try with empty combinationName
+                            key = std::make_pair("", photonTrigger);
+                            it_fitParams = TriggerConfig::triggerFitParameters.find(key);
+                        }
+
+                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
+                            DataStructures::FitParameters params = it_fitParams->second;
                             TF1* fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
                                                       params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
                                                       params.amplitudeMin, params.amplitudeMax,
@@ -4525,9 +4559,6 @@ void PlotCombinedHistograms(
     readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
     
     std::vector<std::pair<float, float>> exclusionRanges = {
-        {-10, 0},  // Exclude isoEt range from -10 to 0
-        {0, 10},    // Exclude isoEt range from 0 to 10
-        {-100, 10}
     };
 
     ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, false, true);
