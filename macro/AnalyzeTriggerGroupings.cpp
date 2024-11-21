@@ -4082,7 +4082,8 @@ void ProcessIsolationData(
 void PlotCombinedHistograms(
     const std::string& outputDirectory,
     const std::vector<std::string>& combinedRootFiles,
-    const std::map<std::string, std::vector<int>>& combinationToValidRuns) {
+    const std::map<std::string, std::vector<int>>& combinationToValidRuns,
+    const std::string& fitFunctionType = "sigmoid") {
     
     // List of all triggers
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
@@ -4163,14 +4164,10 @@ void PlotCombinedHistograms(
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
-
-        // Define a separate font size for the header
         double headerTextSize = 0.045;
-
-        // Draw the header with a different font size
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
-        headerText << "Run Numbers (" << runNumbers.size() << " runs)";
+        headerText << "Includes " << runNumbers.size() << " runs";
         runNumbersLatex.DrawLatex(0.5, 0.9, headerText.str().c_str());
 
         // Skip plotting run numbers for specific size
@@ -4179,10 +4176,8 @@ void PlotCombinedHistograms(
             return;
         }
 
-        // Reset the text size for the run numbers
         runNumbersLatex.SetTextSize(textSize);
 
-        // Calculate the number of rows based on columns
         int numRows = (runNumbers.size() + numColumns - 1) / numColumns;
 
         // Create a grid to arrange run numbers
@@ -4214,8 +4209,6 @@ void PlotCombinedHistograms(
             }
         }
     };
-
-
     // Loop over combined ROOT files
     for (const auto& rootFileName : combinedRootFiles) {
         std::string rootFilePath = outputDirectory + "/" + rootFileName;
@@ -4230,7 +4223,6 @@ void PlotCombinedHistograms(
         }
         std::cout << std::endl;
 
-        // Create a combination name for the folder
         std::string combinationName;
         for (const auto& trigger : triggers) {
             combinationName += trigger + "_";
@@ -4239,24 +4231,20 @@ void PlotCombinedHistograms(
         if (!combinationName.empty()) {
             combinationName.pop_back();
         }
-
         // Sanitize combinationName for use as a directory name
         std::string sanitizedCombinationName = combinationName;
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), '/', '_');
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), ' ', '_');
-
         // Create the subdirectory for this trigger combination
         std::string plotDirectory = basePlotDirectory + "/" + sanitizedCombinationName;
         gSystem->mkdir(plotDirectory.c_str(), true);
-
         // Open the ROOT file
         TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
         if (!inputFile || inputFile->IsZombie()) {
             std::cerr << "Error: Could not open file " << rootFilePath << std::endl;
             continue;
         }
-
-        // -------------------- Overlay Plot --------------------
+        // -------------------- Overlay 8x8 Tower NRG --------------------
         // Create a canvas
         TCanvas* canvas = new TCanvas("canvas", "Overlay Plot", 800, 600);
         TLegend* legend = new TLegend(0.65, 0.53, 0.85, 0.88);
@@ -4367,8 +4355,8 @@ void PlotCombinedHistograms(
                 } else {
                     // Create a canvas for the turn-on plot
                     TCanvas* canvasTurnOn = new TCanvas("canvasTurnOn", "Turn-On Plot", 800, 600);
-                    TLegend* legendTurnOn = new TLegend(0.18, 0.75, 0.45, 0.9);
-                    legendTurnOn->SetTextSize(0.025);
+                    TLegend* legendTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
+                    legendTurnOn->SetTextSize(0.028);
                     bool firstDrawTurnOn = true;
                     
                     // Loop over photon triggers and plot ratios
@@ -4433,92 +4421,141 @@ void PlotCombinedHistograms(
                         std::ostringstream legendEntry;
                         legendEntry << displayPhotonTriggerName;
                         
-                        // Perform the fit and append the parameters to the legend entry
+                        // Prepare the key
                         std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
+
+                        // Try to find the fit parameters for the combination and trigger
                         auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
-                            // Try with empty combinationName
+                            // If not found, try with empty combinationName
                             key = std::make_pair("", photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
 
                         if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
                             DataStructures::FitParameters params = it_fitParams->second;
-                            TF1* fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
-                                                      params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
-                                                      params.amplitudeMin, params.amplitudeMax,
-                                                      params.slopeMin, params.slopeMax,
-                                                      params.xOffsetMin, params.xOffsetMax);
+
+                            TF1* fitFunc = nullptr;
+                            if (fitFunctionType == "sigmoid") {
+                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
+                                                            params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
+                                                            params.amplitudeMin, params.amplitudeMax,
+                                                            params.slopeMin, params.slopeMax,
+                                                            params.xOffsetMin, params.xOffsetMax);
+                            } else if (fitFunctionType == "erf") {
+                                fitFunc = Utils::erfFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
+                                                        params.amplitudeEstimate, params.xOffsetEstimate, params.sigmaEstimate,
+                                                        params.amplitudeMin, params.amplitudeMax,
+                                                        params.xOffsetMin, params.xOffsetMax,
+                                                        params.sigmaMin, params.sigmaMax);
+                            } else {
+                                // Default to sigmoid if unrecognized fitFunctionType
+                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
+                                                            params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
+                                                            params.amplitudeMin, params.amplitudeMax,
+                                                            params.slopeMin, params.slopeMax,
+                                                            params.xOffsetMin, params.xOffsetMax);
+                            }
+
                             fitFunc->SetLineColor(color);
                             ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
                             ratioHist->Fit(fitFunc, "R");
                             fitFunc->Draw("SAME");
-                            
+
                             // Retrieve the fit parameters regardless of convergence
                             double A = fitFunc->GetParameter(0);
-                            double k = fitFunc->GetParameter(1);
-                            double x0 = fitFunc->GetParameter(2);
-                            
-                            double A_error = fitFunc->GetParError(0); // Error on Amplitude
-                            double k_error = fitFunc->GetParError(1); // Error on Slope
-                            double x0_error = fitFunc->GetParError(2); // Error on XOffset
-                            
-                            // Calculate the 99% efficiency point and its error
-                            double x99 = x0 + (std::log(99) / k);
-                            
-                            // Propagate error for x99 using partial derivatives
-                            double x99_error = std::sqrt(
-                                                         (x0_error * x0_error) +
-                                                         (std::pow((std::log(99) / (k * k)), 2) * k_error * k_error)
-                                                         );
-                            
+                            double A_error = fitFunc->GetParError(0);
+
+                            double x99 = 0;
+                            double x99_error = 0;
+
+                            if (fitFunctionType == "sigmoid") {
+                                double k = fitFunc->GetParameter(1);
+                                double x0 = fitFunc->GetParameter(2);
+                                double k_error = fitFunc->GetParError(1);
+                                double x0_error = fitFunc->GetParError(2);
+
+                                // Calculate the 99% efficiency point for sigmoid
+                                x99 = x0 + (std::log(99) / k);
+
+                                // Propagate error for x99 using partial derivatives
+                                x99_error = std::sqrt(
+                                    (x0_error * x0_error) +
+                                    (std::pow((std::log(99) / (k * k)), 2) * k_error * k_error)
+                                );
+
+                                // Debugging output
+                                std::cout << "Sigmoid Fit for " << photonTrigger
+                                          << ": A = " << A << " ± " << A_error
+                                          << ", k = " << k << " ± " << k_error
+                                          << ", x0 = " << x0 << " ± " << x0_error
+                                          << ", x99 = " << x99 << " ± " << x99_error << " GeV" << std::endl;
+
+                            } else if (fitFunctionType == "erf") {
+                                double x0 = fitFunc->GetParameter(1);
+                                double sigma = fitFunc->GetParameter(2);
+                                double x0_error = fitFunc->GetParError(1);
+                                double sigma_error = fitFunc->GetParError(2);
+
+                                // Calculate the 99% efficiency point for erf
+                                double erfInvValue = TMath::ErfInverse(0.98); // erfInv(0.98)
+                                x99 = x0 + sqrt(2) * sigma * erfInvValue;
+
+                                // Propagate error for x99
+                                x99_error = std::sqrt(
+                                    x0_error * x0_error +
+                                    (sqrt(2) * erfInvValue * sigma_error) * (sqrt(2) * erfInvValue * sigma_error)
+                                );
+
+                                // Debugging output
+                                std::cout << "Erf Fit for " << photonTrigger
+                                          << ": A = " << A << " ± " << A_error
+                                          << ", x0 = " << x0 << " ± " << x0_error
+                                          << ", sigma = " << sigma << " ± " << sigma_error
+                                          << ", x99 = " << x99 << " ± " << x99_error << " GeV" << std::endl;
+                            }
+
                             // Store the 99% efficiency point
                             triggerEfficiencyPoints[photonTrigger] = x99;
-                            
+
                             // Append fit parameters to the legend entry with errors
-                            legendEntry << ", Amp = " << std::fixed << std::setprecision(2) << A
-                            << ", x(y = 0.99) = " << std::fixed << std::setprecision(2) << x99 << " GeV";
-                            
-                            // Debugging output to confirm correct parameter retrieval
-                            std::cout << "Fit for " << photonTrigger
-                            << ": A = " << A << " ± " << A_error
-                            << ", k = " << k << " ± " << k_error
-                            << ", x0 = " << x0 << " ± " << x0_error
-                            << ", x99 = " << x99 << " ± " << x99_error << " GeV" << std::endl;
-                            
-                            
+                            legendEntry << ", 99% efficiency = " << std::fixed << std::setprecision(2) << x99 << " GeV";
+
                             // Draw a dashed vertical line at x99
                             if (x99 > ratioHist->GetXaxis()->GetXmin() && x99 < ratioHist->GetXaxis()->GetXmax()) {
                                 TLine* verticalLine = new TLine(x99, 0, x99, 1); // Draw line up to y = 1
                                 verticalLine->SetLineStyle(2); // Dashed line
                                 verticalLine->SetLineColor(color); // Use the color of the current trigger
-                                verticalLine->SetLineWidth(2); // Set the line width (3 is thicker)
+                                verticalLine->SetLineWidth(3); // Set the line width
                                 verticalLine->Draw("SAME");
                             }
+                        } else {
+                            std::cerr << "No fit parameters found for trigger " << photonTrigger << " in combination " << combinationName << std::endl;
                         }
-                        
+
                         // Add the updated legend entry with the fit parameters
                         legendTurnOn->AddEntry(ratioHist, legendEntry.str().c_str(), "p");
-                        std::cout << "Legend Entry Added: " << legendEntry.str() << std::endl;  // Debugging statement
+                        std::cout << "Legend Entry Added: " << legendEntry.str() << std::endl;
                     }
                     
                     // Draw the legend
                     legendTurnOn->Draw();
                     
                     // Add a separate legend for the 99% efficiency line
-                    TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72); // Adjust position as needed
+                    TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72);
                     legendEfficiencyLine->SetTextSize(0.03);
                     legendEfficiencyLine->SetBorderSize(0);
                     legendEfficiencyLine->SetFillStyle(0);
                     
                     // Create a dummy line for the 99% efficiency point
-                    TLine* dummyLine = new TLine(0, 0, 0, 0); // The coordinates do not matter since it is a dummy
+                    TLine* dummyLine = new TLine(0, 0, 0, 0); // The coordinates do not matter since it is a dummy :(
                     dummyLine->SetLineStyle(2); // Dashed line
                     dummyLine->SetLineColor(kGray + 1); // Gray color
                     dummyLine->SetLineWidth(2);
                     
                     // Add the dummy line to the legend
                     legendEfficiencyLine->AddEntry(dummyLine, "99% Efficiency Point", "l"); // "l" for line
+                    legendEfficiencyLine->SetLineWidth(2);
                     legendEfficiencyLine->Draw();
                     
                     canvasTurnOn->Modified();
