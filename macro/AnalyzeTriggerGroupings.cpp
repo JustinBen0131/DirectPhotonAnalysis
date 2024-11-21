@@ -2537,274 +2537,6 @@ void readDataFromCSV(
 }
 
 
-void SortAndCombineTriggers(
-    const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
-    const std::map<std::string, double>& triggerEfficiencyPoints,
-    std::map<std::string, std::vector<std::string>>& sortedTriggersByGroupName,
-    std::map<std::string, std::map<std::pair<float, float>,
-    std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap) {
-    
-    // Step 1: Map each trigger to its priority based on TriggerConfig::allTriggers
-    std::map<std::string, int> triggerPriorityMap;
-    const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
-    for (size_t i = 0; i < allTriggers.size(); ++i) {
-        triggerPriorityMap[allTriggers[i]] = static_cast<int>(i);
-    }
-
-    // Step 2: Populate sortedTriggersByGroupName without duplication
-    std::cout << "\033[34m[INFO]\033[0m Populating sortedTriggersByGroupName...\n";
-    for (const auto& [groupKey, isoEtMap] : groupedData) {
-        const std::string& triggerGroupName = std::get<0>(groupKey);
-        const std::string& triggerName = std::get<1>(groupKey);
-
-        // Initialize the group if it doesn't exist
-        if (sortedTriggersByGroupName.find(triggerGroupName) == sortedTriggersByGroupName.end()) {
-            sortedTriggersByGroupName[triggerGroupName] = {};
-        }
-
-        // Add the trigger to the group if it's not already present
-        if (std::find(sortedTriggersByGroupName[triggerGroupName].begin(),
-                      sortedTriggersByGroupName[triggerGroupName].end(),
-                      triggerName) == sortedTriggersByGroupName[triggerGroupName].end()) {
-            sortedTriggersByGroupName[triggerGroupName].push_back(triggerName);
-            std::cout << "\033[34m[INFO]\033[0m Added trigger '" << triggerName
-                      << "' to group '" << triggerGroupName << "'\n";
-        }
-    }
-
-    // Step 3: Sort triggers within each group based on their efficiency thresholds in descending order
-    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on efficiency thresholds...\n";
-    // Assign default efficiency thresholds to triggers missing them
-    for (auto& [triggerGroupName, triggerList] : sortedTriggersByGroupName) {
-        for (const auto& triggerName : triggerList) {
-            if (triggerEfficiencyPoints.find(triggerName) == triggerEfficiencyPoints.end()) {
-                if (triggerName == "MBD_NandS_geq_1") {
-                    triggerEfficiencyPoints[triggerName] = 0.0; // Minbias trigger
-                } else {
-                    // Assign a high default threshold to other triggers without a calculated threshold
-                    triggerEfficiencyPoints[triggerName] = 9999.0;
-                }
-                std::cerr << "\033[33m[WARNING]\033[0m Efficiency threshold missing for trigger '"
-                          << triggerName << "'. Assigning default value.\n";
-            }
-        }
-        
-        // Now proceed to sort
-        std::sort(triggerList.begin(), triggerList.end(),
-                  [&](const std::string& a, const std::string& b) -> bool {
-                      double effA = triggerEfficiencyPoints.at(a);
-                      double effB = triggerEfficiencyPoints.at(b);
-                      if (effA != effB)
-                          return effA > effB; // Higher efficiency threshold first
-                      else
-                          return triggerPriorityMap[a] < triggerPriorityMap[b]; // Higher priority
-                  });
-        
-        // Debugging output
-        std::cout << "\033[1;32mTrigger Group Name\033[0m: " << triggerGroupName << "\n";
-        std::cout << "\033[1;32mSorted Trigger List\033[0m: ";
-        for (const auto& trigger : triggerList) {
-            std::cout << trigger << " (Eff Threshold: " << triggerEfficiencyPoints.at(trigger) << "), ";
-        }
-        std::cout << "\n";
-    }
-
-
-
-
-    // Step 4: Combine triggers for each group and isoEtRange
-    std::cout << "\033[34m[INFO]\033[0m Combining triggers within each group...\n";
-
-    for (const auto& [triggerGroupName, sortedTriggerList] : sortedTriggersByGroupName) {
-        std::cout << "\033[33m[PROCESSING]\033[0m Combining triggers for group: "
-                  << "\033[1m" << triggerGroupName << "\033[0m\n";
-
-        // Collect all isoEtRanges for this group
-        std::set<std::pair<float, float>> allIsoEtRanges;
-        for (const auto& [groupKey, isoEtMap] : groupedData) {
-            if (std::get<0>(groupKey) == triggerGroupName) {
-                for (const auto& [isoEtRange, isoDataList] : isoEtMap) {
-                    allIsoEtRanges.emplace(isoEtRange);
-                }
-            }
-        }
-
-        if (allIsoEtRanges.empty()) {
-            std::cerr << "\033[31m[ERROR]\033[0m No isoEt ranges found for group '"
-                      << triggerGroupName << "'\n";
-            continue;
-        }
-
-        // Iterate over each isoEtRange
-        for (const auto& isoEtRange : allIsoEtRanges) {
-            std::cout << "\033[34m[INFO]\033[0m Processing isoEtRange: [" << isoEtRange.first
-                      << ", " << isoEtRange.second << "]\n";
-
-            // Collect all unique pT bins across triggers for this isoEtRange
-            std::set<std::pair<float, float>> allPtBins;
-            for (const auto& triggerName : sortedTriggerList) {
-                // Find the corresponding groupKey
-                bool foundGroupKey = false;
-                GroupKey currentGroupKey;
-                for (const auto& [gk, isoEtMap] : groupedData) {
-                    if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerName) {
-                        currentGroupKey = gk;
-                        foundGroupKey = true;
-                        break;
-                    }
-                }
-                if (!foundGroupKey) {
-                    std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
-                              << triggerName << "'\n";
-                    continue;
-                }
-
-                // Get isoDataList for this isoEtRange
-                auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
-                if (isoIt != groupedData.at(currentGroupKey).end()) {
-                    for (const auto& isoData : isoIt->second) {
-                        allPtBins.emplace(std::make_pair(isoData.ptMin, isoData.ptMax));
-                    }
-                }
-            }
-
-            if (allPtBins.empty()) {
-                std::cerr << "\033[31m[ERROR]\033[0m No pT bins found for isoEt range: ["
-                          << isoEtRange.first << ", " << isoEtRange.second << "]\n";
-                continue;
-            }
-
-            std::cout << "\033[34m[INFO]\033[0m Found " << allPtBins.size() << " pT bins\n";
-
-            // Iterate over each pT bin and select appropriate trigger data
-            std::vector<DataStructures::IsolationDataWithPt> selectedDataPoints;
-
-            // Iterate over each pT bin and select appropriate trigger data
-            for (const auto& ptBin : allPtBins) {
-                std::cout << "\033[32m[DEBUG]\033[0m Processing pT bin: [" << ptBin.first
-                          << ", " << ptBin.second << "]\n";
-                double pTCenter = (ptBin.first + ptBin.second) / 2.0;
-                bool triggerAssigned = false;
-                DataStructures::IsolationDataWithPt selectedIsoData;
-
-                std::cout << "\033[32m[DEBUG]\033[0m pTCenter: " << pTCenter << " GeV\n";
-
-                // Iterate triggers in sorted order (now descending efficiency thresholds)
-                for (const auto& triggerName : sortedTriggerList) {
-                    // Check if this trigger has an efficiency threshold
-                    auto effIt = triggerEfficiencyPoints.find(triggerName);
-                    if (effIt == triggerEfficiencyPoints.end()) {
-                        std::cout << "\033[31m[WARNING]\033[0m No efficiency threshold for trigger '"
-                                  << triggerName << "'\n";
-                        continue;
-                    }
-                    double efficiencyThreshold = effIt->second;
-
-                    std::cout << "\033[32m[DEBUG]\033[0m Evaluating trigger '" << triggerName
-                              << "' with efficiency threshold " << efficiencyThreshold
-                              << " GeV against pTCenter " << pTCenter << " GeV\n";
-
-                    if (pTCenter >= efficiencyThreshold) {
-                        // Find the isoData for this trigger and pT bin
-                        bool foundGroupKey = false;
-                        GroupKey currentGroupKey;
-                        for (const auto& [gk, isoEtMap] : groupedData) {
-                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerName) {
-                                currentGroupKey = gk;
-                                foundGroupKey = true;
-                                break;
-                            }
-                        }
-                        if (!foundGroupKey) {
-                            std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
-                                      << triggerName << "'\n";
-                            continue;
-                        }
-
-                        // Get the isoDataList for this isoEtRange
-                        auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
-                        if (isoIt != groupedData.at(currentGroupKey).end()) {
-                            // Find the isoData that contains pTCenter
-                            auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
-                                [&](const DataStructures::IsolationDataWithPt& id) {
-                                    return id.ptMin <= pTCenter && pTCenter < id.ptMax;
-                                });
-                            if (dataIt != isoIt->second.end()) {
-                                selectedIsoData = *dataIt;
-                                triggerAssigned = true;
-                                std::cout << "\033[32m[DEBUG]\033[0m Assigned to trigger '"
-                                          << triggerName << "'\n";
-                                break; // Trigger selected for this pT bin
-                            } else {
-                                std::cout << "\033[31m[DEBUG]\033[0m Data not found for trigger '"
-                                          << triggerName << "' with pT bin ["
-                                          << ptBin.first << ", " << ptBin.second << "]\n";
-                            }
-                        }
-                    } else {
-                        std::cout << "\033[33m[DEBUG]\033[0m pTCenter " << pTCenter
-                                  << " GeV is below threshold for trigger '" << triggerName << "'\n";
-                    }
-                }
-                // If no trigger met the efficiency threshold, use "Minbias" if available
-                if (!triggerAssigned) {
-                    const std::string minbiasTrigger = "MBD_NandS_geq_1";
-                    if (std::find(sortedTriggerList.begin(), sortedTriggerList.end(), minbiasTrigger) != sortedTriggerList.end()) {
-                        // Find the isoData for "Minbias"
-                        bool foundGroupKey = false;
-                        GroupKey currentGroupKey;
-                        for (const auto& [gk, isoEtMap] : groupedData) {
-                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == minbiasTrigger) {
-                                currentGroupKey = gk;
-                                foundGroupKey = true;
-                                break;
-                            }
-                        }
-                        if (foundGroupKey) {
-                            // Get the isoDataList for this isoEtRange
-                            auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
-                            if (isoIt != groupedData.at(currentGroupKey).end()) {
-                                // Find the isoData with this pT bin
-                                auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
-                                    [&](const DataStructures::IsolationDataWithPt& id) {
-                                        return std::abs(id.ptMin - ptBin.first) < 1e-6 && std::abs(id.ptMax - ptBin.second) < 1e-6;
-                                    });
-                                if (dataIt != isoIt->second.end()) {
-                                    selectedIsoData = *dataIt;
-                                    triggerAssigned = true;
-                                    std::cout << "\033[32m[DEBUG]\033[0m Assigned to Minbias trigger '"
-                                              << minbiasTrigger << "'\n";
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // If still not assigned, skip this pT bin
-                if (triggerAssigned) {
-                    selectedDataPoints.push_back(selectedIsoData);
-                } else {
-                    std::cout << "\033[31m[WARNING]\033[0m No suitable trigger found for pT bin ["
-                              << ptBin.first << ", " << ptBin.second << "] in isoEtRange ["
-                              << isoEtRange.first << ", " << isoEtRange.second << "]\n";
-                }
-            }
-
-            // Assign selectedDataPoints to combinedTriggerDataMap
-            combinedTriggerDataMap[triggerGroupName][isoEtRange] = selectedDataPoints;
-
-            // Debugging output for combined data
-            std::cout << "\033[36m[DEBUG]\033[0m Combined data points for group '"
-                      << triggerGroupName << "', isoEtRange [" << isoEtRange.first << ", "
-                      << isoEtRange.second << "]: " << selectedDataPoints.size() << " points\n";
-        }
-    }
-
-    std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
-}
-
-
-
 void GeneratePerTriggerSpectraPlots(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -3115,6 +2847,297 @@ void GeneratePerTriggerSpectraPlots(
     }
 }
 
+// Define SpectraGroupKey structure
+struct SpectraGroupKey {
+    std::string triggerGroupName;
+    float eCore;
+    float chi;
+    float asymmetry;
+
+    bool operator<(const SpectraGroupKey& other) const {
+        return std::tie(triggerGroupName, eCore, chi, asymmetry) <
+               std::tie(other.triggerGroupName, other.eCore, other.chi, other.asymmetry);
+    }
+};
+
+struct CombinedSpectraData {
+    float pTCenter;
+    float isolatedYield_in;
+    float isolatedYieldError_in;
+    float isolatedYield_out;
+    float isolatedYieldError_out;
+};
+void SortAndCombineSpectraData(
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap_inMassWindow,
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap_outsideMassWindow,
+    const std::map<std::string, double>& triggerEfficiencyPoints,
+    const std::vector<std::pair<float, float>>& exclusionRanges,
+    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>>& combinedSpectraDataMap
+) {
+    // Step 1: Map each trigger to its priority based on TriggerConfig::allTriggers
+    std::map<std::string, int> triggerPriorityMap;
+    const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
+    for (size_t i = 0; i < allTriggers.size(); ++i) {
+        triggerPriorityMap[allTriggers[i]] = static_cast<int>(i);
+    }
+
+    // Organize data into groups
+    std::map<SpectraGroupKey, std::map<float, std::vector<std::tuple<std::string, float, DataStructures::IsolationData, DataStructures::IsolationData>>>> groupedData;
+
+    for (const auto& entry : dataMap_inMassWindow) {
+        const auto& key = entry.first;
+        const auto& isoData_in = entry.second;
+        std::string triggerGroupName = std::get<0>(key);
+        std::string triggerName = std::get<1>(key);
+        float eCore = std::get<2>(key);
+        float chi = std::get<3>(key);
+        float asymmetry = std::get<4>(key);
+        float ptMin = std::get<5>(key);
+        float ptMax = std::get<6>(key);
+        float pTCenter = (ptMin + ptMax) / 2.0;
+        float isoMin = std::get<7>(key);
+        float isoMax = std::get<8>(key);
+        std::string massWindowLabel = std::get<9>(key);
+
+        // Check for exclusion ranges
+        std::pair<float, float> isoEtRange = {isoMin, isoMax};
+        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtRange) != exclusionRanges.end()) {
+            continue; // Exclude this isoEtRange
+        }
+
+        SpectraGroupKey spectraGroupKey = {triggerGroupName, eCore, chi, asymmetry};
+
+        // Find corresponding outsideMassWindow data
+        auto outsideKey = key;
+        std::get<9>(outsideKey) = "outsideMassWindow";
+
+        auto it_outside = dataMap_outsideMassWindow.find(outsideKey);
+        if (it_outside == dataMap_outsideMassWindow.end()) {
+            continue;
+        }
+        const auto& isoData_out = it_outside->second;
+
+        groupedData[spectraGroupKey][pTCenter].emplace_back(triggerName, pTCenter, isoData_in, isoData_out);
+    }
+
+    // Now, for each group, sort triggers and combine data
+    for (const auto& [spectraGroupKey, ptDataMap] : groupedData) {
+        // Get list of triggers in this group
+        std::set<std::string> triggerSet;
+        for (const auto& [pTCenter, dataVec] : ptDataMap) {
+            for (const auto& dataEntry : dataVec) {
+                const std::string& triggerName = std::get<0>(dataEntry);
+                triggerSet.insert(triggerName);
+            }
+        }
+        // Convert to vector and sort triggers
+        std::vector<std::string> triggerList(triggerSet.begin(), triggerSet.end());
+
+        std::sort(triggerList.begin(), triggerList.end(),
+            [&](const std::string& a, const std::string& b) -> bool {
+                bool aHasEff = triggerEfficiencyPoints.find(a) != triggerEfficiencyPoints.end();
+                bool bHasEff = triggerEfficiencyPoints.find(b) != triggerEfficiencyPoints.end();
+
+                if (aHasEff && bHasEff) {
+                    double effA = triggerEfficiencyPoints.at(a);
+                    double effB = triggerEfficiencyPoints.at(b);
+                    if (effA != effB)
+                        return effA > effB; // Higher efficiency threshold first
+                    else
+                        return triggerPriorityMap[a] < triggerPriorityMap[b];
+                } else if (aHasEff) {
+                    return true;  // a has efficiency, b does not
+                } else if (bHasEff) {
+                    return false; // b has efficiency, a does not
+                } else {
+                    return triggerPriorityMap[a] < triggerPriorityMap[b];
+                }
+            });
+
+        // For each pT bin, select appropriate trigger data
+        for (const auto& [pTCenter, dataVec] : ptDataMap) {
+            bool triggerAssigned = false;
+            CombinedSpectraData combinedData;
+            for (const auto& triggerName : triggerList) {
+                // Check efficiency threshold
+                double efficiencyThreshold = 0.0;
+                auto effIt = triggerEfficiencyPoints.find(triggerName);
+                if (effIt != triggerEfficiencyPoints.end()) {
+                    efficiencyThreshold = effIt->second;
+                }
+                if (pTCenter >= efficiencyThreshold) {
+                    // Find data for this trigger
+                    auto dataIt = std::find_if(dataVec.begin(), dataVec.end(),
+                        [&](const auto& dataEntry) {
+                            return std::get<0>(dataEntry) == triggerName;
+                        });
+                    if (dataIt != dataVec.end()) {
+                        combinedData.pTCenter = pTCenter;
+                        combinedData.isolatedYield_in = std::get<2>(*dataIt).isolatedYield;
+                        combinedData.isolatedYieldError_in = std::get<2>(*dataIt).isolatedYieldError;
+                        combinedData.isolatedYield_out = std::get<3>(*dataIt).isolatedYield;
+                        combinedData.isolatedYieldError_out = std::get<3>(*dataIt).isolatedYieldError;
+                        triggerAssigned = true;
+                        break;
+                    }
+                }
+            }
+            if (triggerAssigned) {
+                combinedSpectraDataMap[spectraGroupKey][pTCenter] = combinedData;
+            }
+        }
+    }
+}
+
+void GenerateCombinedSpectraPlots(
+    const std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>>& combinedSpectraDataMap,
+    const std::string& basePlotDirectory,
+    const std::map<std::string, std::string>& triggerCombinationNameMap
+) {
+    for (const auto& [spectraGroupKey, ptDataMap] : combinedSpectraDataMap) {
+        const std::string& triggerGroupName = spectraGroupKey.triggerGroupName;
+        float eCore = spectraGroupKey.eCore;
+        float chi = spectraGroupKey.chi;
+        float asym = spectraGroupKey.asymmetry;
+
+        // Map to human-readable names
+        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+            triggerGroupName, triggerCombinationNameMap);
+
+        // Define output directory (same as per-trigger spectra plots)
+        std::ostringstream dirStream;
+        dirStream << basePlotDirectory << "/" << triggerGroupName
+                  << "/E" << Utils::formatToThreeSigFigs(eCore)
+                  << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                  << "_Asym" << Utils::formatToThreeSigFigs(asym)
+                  << "/Spectra/Overlay";
+        std::string dirPath = dirStream.str();
+        gSystem->mkdir(dirPath.c_str(), true);
+
+        // Create a TCanvas
+        TCanvas* canvas = new TCanvas("canvas", "Combined Isolated Photon Spectra", 800, 600);
+        canvas->SetLogy();
+
+        // Prepare data vectors
+        std::vector<double> pTValues, isolatedYields_in, isolatedYieldsError_in;
+        std::vector<double> isolatedYields_out, isolatedYieldsError_out;
+
+        for (const auto& [pTCenter, combinedData] : ptDataMap) {
+            pTValues.push_back(combinedData.pTCenter);
+            isolatedYields_in.push_back(combinedData.isolatedYield_in);
+            isolatedYieldsError_in.push_back(combinedData.isolatedYieldError_in);
+            isolatedYields_out.push_back(combinedData.isolatedYield_out);
+            isolatedYieldsError_out.push_back(combinedData.isolatedYieldError_out);
+        }
+
+        // Create TGraphErrors
+        TGraphErrors* graphIn = new TGraphErrors(pTValues.size(),
+                                                 pTValues.data(),
+                                                 isolatedYields_in.data(),
+                                                 nullptr,
+                                                 isolatedYieldsError_in.data());
+        graphIn->SetMarkerStyle(20);
+        graphIn->SetMarkerColor(kBlue);
+        graphIn->SetLineColor(kBlue);
+        graphIn->SetLineWidth(2);
+
+        TGraphErrors* graphOut = new TGraphErrors(pTValues.size(),
+                                                  pTValues.data(),
+                                                  isolatedYields_out.data(),
+                                                  nullptr,
+                                                  isolatedYieldsError_out.data());
+        graphOut->SetMarkerStyle(21);
+        graphOut->SetMarkerColor(kRed);
+        graphOut->SetLineColor(kRed);
+        graphOut->SetLineWidth(2);
+
+        // Create a TMultiGraph
+        TMultiGraph* multiGraph = new TMultiGraph();
+        multiGraph->Add(graphIn, "P");
+        multiGraph->Add(graphOut, "P");
+
+        // Set titles and axis labels
+        std::string plotTitle = "Combined Isolated Photon Spectra for Trigger Group: " + readableTriggerGroupName;
+        multiGraph->SetTitle(plotTitle.c_str());
+        multiGraph->GetXaxis()->SetTitle("Cluster p_{T} [GeV]");
+        multiGraph->GetYaxis()->SetTitle("Yield");
+
+        // Set Y-axis range
+        double globalMaxY = std::max(*std::max_element(isolatedYields_in.begin(), isolatedYields_in.end()),
+                                     *std::max_element(isolatedYields_out.begin(), isolatedYields_out.end()));
+        multiGraph->SetMinimum(1e-1);
+        multiGraph->SetMaximum(globalMaxY * 1.5);
+
+        // Draw the multigraph
+        multiGraph->Draw("A");
+
+        // Create and draw legend
+        TLegend* legend = new TLegend(0.38, 0.78, 0.7, 0.9);
+        legend->SetBorderSize(0);
+        legend->SetFillStyle(0);
+        legend->SetTextSize(0.024);
+        legend->AddEntry(graphIn, "Isolated Photons from Meson Decay Yield", "p");
+        legend->AddEntry(graphOut, "Prompt Photon Candidate Yield", "p");
+        legend->Draw();
+
+        // Add labels using TLatex
+        TLatex labelText;
+        labelText.SetNDC();
+        labelText.SetTextSize(0.025);
+        labelText.SetTextColor(kBlack);
+
+        double xStart = 0.55;
+        double yStartLabel = 0.72;
+        double yStepLabel = 0.05;
+
+        // Prepare label strings
+        std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
+        std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
+        std::string chiLabel = "Chi2/NDF < " + Utils::formatToThreeSigFigs(chi);
+        std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
+
+        // Draw labels
+        labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, eCoreLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, chiLabel.c_str());
+        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, asymLabel.c_str());
+
+        // Update canvas and save
+        canvas->Modified();
+        canvas->Update();
+
+        std::string outputFilePath = dirPath + "/CombinedOverlaySpectra.png";
+        canvas->SaveAs(outputFilePath.c_str());
+        std::cout << "\033[33m[INFO]\033[0m Saved combined overlay spectra plot to " << outputFilePath << std::endl;
+
+        // Clean up
+        delete multiGraph;
+        delete legend;
+        delete canvas;
+    }
+}
 
 
 // Helper Function to Generate Per-Trigger Plots
@@ -3405,7 +3428,275 @@ void GeneratePerTriggerIsoPlots(
     }
 }
 
+void SortAndCombineTriggers(
+    const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
+    const std::map<std::string, double>& triggerEfficiencyPoints,
+    std::map<std::string, std::vector<std::string>>& sortedTriggersByGroupName,
+    std::map<std::string, std::map<std::pair<float, float>,
+    std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap) {
+    
+    // Step 1: Map each trigger to its priority based on TriggerConfig::allTriggers
+    std::map<std::string, int> triggerPriorityMap;
+    const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
+    for (size_t i = 0; i < allTriggers.size(); ++i) {
+        triggerPriorityMap[allTriggers[i]] = static_cast<int>(i);
+    }
 
+    // Step 2: Populate sortedTriggersByGroupName without duplication
+    std::cout << "\033[34m[INFO]\033[0m Populating sortedTriggersByGroupName...\n";
+    for (const auto& [groupKey, isoEtMap] : groupedData) {
+        const std::string& triggerGroupName = std::get<0>(groupKey);
+        const std::string& triggerName = std::get<1>(groupKey);
+
+        // Initialize the group if it doesn't exist
+        if (sortedTriggersByGroupName.find(triggerGroupName) == sortedTriggersByGroupName.end()) {
+            sortedTriggersByGroupName[triggerGroupName] = {};
+        }
+
+        // Add the trigger to the group if it's not already present
+        if (std::find(sortedTriggersByGroupName[triggerGroupName].begin(),
+                      sortedTriggersByGroupName[triggerGroupName].end(),
+                      triggerName) == sortedTriggersByGroupName[triggerGroupName].end()) {
+            sortedTriggersByGroupName[triggerGroupName].push_back(triggerName);
+            std::cout << "\033[34m[INFO]\033[0m Added trigger '" << triggerName
+                      << "' to group '" << triggerGroupName << "'\n";
+        }
+    }
+
+    // Step 3: Sort triggers within each group based on their efficiency thresholds in descending order
+    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on efficiency thresholds...\n";
+    for (auto& [triggerGroupName, triggerList] : sortedTriggersByGroupName) {
+        std::sort(triggerList.begin(), triggerList.end(),
+                  [&](const std::string& a, const std::string& b) -> bool {
+                      bool aHasEff = triggerEfficiencyPoints.find(a) != triggerEfficiencyPoints.end();
+                      bool bHasEff = triggerEfficiencyPoints.find(b) != triggerEfficiencyPoints.end();
+                      
+                      if (aHasEff && bHasEff) {
+                          double effA = triggerEfficiencyPoints.at(a);
+                          double effB = triggerEfficiencyPoints.at(b);
+                          if (effA != effB)
+                              return effA > effB; // Higher efficiency threshold first
+                          else
+                              return triggerPriorityMap[a] < triggerPriorityMap[b];
+                      } else if (aHasEff) {
+                          return true;  // a has efficiency, b does not
+                      } else if (bHasEff) {
+                          return false; // b has efficiency, a does not
+                      } else {
+                          return triggerPriorityMap[a] < triggerPriorityMap[b];
+                      }
+                  });
+        
+        // Debugging output
+        std::cout << "\033[1;32mTrigger Group Name\033[0m: " << triggerGroupName << "\n";
+        std::cout << "\033[1;32mSorted Trigger List\033[0m: ";
+        for (const auto& trigger : triggerList) {
+            if (triggerEfficiencyPoints.find(trigger) != triggerEfficiencyPoints.end()) {
+                std::cout << trigger << " (Eff Threshold: " << triggerEfficiencyPoints.at(trigger) << "), ";
+            } else {
+                std::cout << trigger << " (Eff Threshold: N/A), ";
+            }
+        }
+        std::cout << "\n";
+    }
+
+
+
+    // Step 4: Combine triggers for each group and isoEtRange
+    std::cout << "\033[34m[INFO]\033[0m Combining triggers within each group...\n";
+
+    for (const auto& [triggerGroupName, sortedTriggerList] : sortedTriggersByGroupName) {
+        std::cout << "\033[33m[PROCESSING]\033[0m Combining triggers for group: "
+                  << "\033[1m" << triggerGroupName << "\033[0m\n";
+
+        // Collect all isoEtRanges for this group
+        std::set<std::pair<float, float>> allIsoEtRanges;
+        for (const auto& [groupKey, isoEtMap] : groupedData) {
+            if (std::get<0>(groupKey) == triggerGroupName) {
+                for (const auto& [isoEtRange, isoDataList] : isoEtMap) {
+                    allIsoEtRanges.emplace(isoEtRange);
+                }
+            }
+        }
+
+        if (allIsoEtRanges.empty()) {
+            std::cerr << "\033[31m[ERROR]\033[0m No isoEt ranges found for group '"
+                      << triggerGroupName << "'\n";
+            continue;
+        }
+
+        // Iterate over each isoEtRange
+        for (const auto& isoEtRange : allIsoEtRanges) {
+            std::cout << "\033[34m[INFO]\033[0m Processing isoEtRange: [" << isoEtRange.first
+                      << ", " << isoEtRange.second << "]\n";
+
+            // Collect all unique pT bins across triggers for this isoEtRange
+            std::set<std::pair<float, float>> allPtBins;
+            for (const auto& triggerName : sortedTriggerList) {
+                // Find the corresponding groupKey
+                bool foundGroupKey = false;
+                GroupKey currentGroupKey;
+                for (const auto& [gk, isoEtMap] : groupedData) {
+                    if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerName) {
+                        currentGroupKey = gk;
+                        foundGroupKey = true;
+                        break;
+                    }
+                }
+                if (!foundGroupKey) {
+                    std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
+                              << triggerName << "'\n";
+                    continue;
+                }
+
+                // Get isoDataList for this isoEtRange
+                auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
+                if (isoIt != groupedData.at(currentGroupKey).end()) {
+                    for (const auto& isoData : isoIt->second) {
+                        allPtBins.emplace(std::make_pair(isoData.ptMin, isoData.ptMax));
+                    }
+                }
+            }
+
+            if (allPtBins.empty()) {
+                std::cerr << "\033[31m[ERROR]\033[0m No pT bins found for isoEt range: ["
+                          << isoEtRange.first << ", " << isoEtRange.second << "]\n";
+                continue;
+            }
+
+            std::cout << "\033[34m[INFO]\033[0m Found " << allPtBins.size() << " pT bins\n";
+
+            // Iterate over each pT bin and select appropriate trigger data
+            std::vector<DataStructures::IsolationDataWithPt> selectedDataPoints;
+
+            // Iterate over each pT bin and select appropriate trigger data
+            for (const auto& ptBin : allPtBins) {
+                std::cout << "\033[32m[DEBUG]\033[0m Processing pT bin: [" << ptBin.first
+                          << ", " << ptBin.second << "]\n";
+                double pTCenter = (ptBin.first + ptBin.second) / 2.0;
+                bool triggerAssigned = false;
+                DataStructures::IsolationDataWithPt selectedIsoData;
+
+                std::cout << "\033[32m[DEBUG]\033[0m pTCenter: " << pTCenter << " GeV\n";
+
+                // Iterate triggers in sorted order (now descending efficiency thresholds)
+                for (const auto& triggerName : sortedTriggerList) {
+                    // Declare efficiencyThreshold at the beginning of the loop
+                    double efficiencyThreshold = 0.0; // Initialize to 0.0 or another appropriate default
+
+                    // When checking for efficiency thresholds
+                    auto effIt = triggerEfficiencyPoints.find(triggerName);
+                    if (effIt == triggerEfficiencyPoints.end()) {
+                        std::cout << "\033[31m[WARNING]\033[0m No efficiency threshold for trigger '"
+                                  << triggerName << "'. Assigning default value 0.0.\n";
+                        // efficiencyThreshold is already initialized to 0.0
+                    } else {
+                        efficiencyThreshold = effIt->second;
+                    }
+
+                    std::cout << "\033[32m[DEBUG]\033[0m Evaluating trigger '" << triggerName
+                              << "' with efficiency threshold " << efficiencyThreshold
+                              << " GeV against pTCenter " << pTCenter << " GeV\n";
+
+
+                    if (pTCenter >= efficiencyThreshold) {
+                        // Find the isoData for this trigger and pT bin
+                        bool foundGroupKey = false;
+                        GroupKey currentGroupKey;
+                        for (const auto& [gk, isoEtMap] : groupedData) {
+                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerName) {
+                                currentGroupKey = gk;
+                                foundGroupKey = true;
+                                break;
+                            }
+                        }
+                        if (!foundGroupKey) {
+                            std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
+                                      << triggerName << "'\n";
+                            continue;
+                        }
+
+                        // Get the isoDataList for this isoEtRange
+                        auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
+                        if (isoIt != groupedData.at(currentGroupKey).end()) {
+                            // Find the isoData that contains pTCenter
+                            auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
+                                [&](const DataStructures::IsolationDataWithPt& id) {
+                                    return id.ptMin <= pTCenter && pTCenter < id.ptMax;
+                                });
+                            if (dataIt != isoIt->second.end()) {
+                                selectedIsoData = *dataIt;
+                                triggerAssigned = true;
+                                std::cout << "\033[32m[DEBUG]\033[0m Assigned to trigger '"
+                                          << triggerName << "'\n";
+                                break; // Trigger selected for this pT bin
+                            } else {
+                                std::cout << "\033[31m[DEBUG]\033[0m Data not found for trigger '"
+                                          << triggerName << "' with pT bin ["
+                                          << ptBin.first << ", " << ptBin.second << "]\n";
+                            }
+                        }
+                    } else {
+                        std::cout << "\033[33m[DEBUG]\033[0m pTCenter " << pTCenter
+                                  << " GeV is below threshold for trigger '" << triggerName << "'\n";
+                    }
+                }
+                // If no trigger met the efficiency threshold, use "Minbias" if available
+                if (!triggerAssigned) {
+                    const std::string minbiasTrigger = "MBD_NandS_geq_1";
+                    if (std::find(sortedTriggerList.begin(), sortedTriggerList.end(), minbiasTrigger) != sortedTriggerList.end()) {
+                        // Find the isoData for "Minbias"
+                        bool foundGroupKey = false;
+                        GroupKey currentGroupKey;
+                        for (const auto& [gk, isoEtMap] : groupedData) {
+                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == minbiasTrigger) {
+                                currentGroupKey = gk;
+                                foundGroupKey = true;
+                                break;
+                            }
+                        }
+                        if (foundGroupKey) {
+                            // Get the isoDataList for this isoEtRange
+                            auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
+                            if (isoIt != groupedData.at(currentGroupKey).end()) {
+                                // Find the isoData with this pT bin
+                                auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
+                                    [&](const DataStructures::IsolationDataWithPt& id) {
+                                        return std::abs(id.ptMin - ptBin.first) < 1e-6 && std::abs(id.ptMax - ptBin.second) < 1e-6;
+                                    });
+                                if (dataIt != isoIt->second.end()) {
+                                    selectedIsoData = *dataIt;
+                                    triggerAssigned = true;
+                                    std::cout << "\033[32m[DEBUG]\033[0m Assigned to Minbias trigger '"
+                                              << minbiasTrigger << "'\n";
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If still not assigned, skip this pT bin
+                if (triggerAssigned) {
+                    selectedDataPoints.push_back(selectedIsoData);
+                } else {
+                    std::cout << "\033[31m[WARNING]\033[0m No suitable trigger found for pT bin ["
+                              << ptBin.first << ", " << ptBin.second << "] in isoEtRange ["
+                              << isoEtRange.first << ", " << isoEtRange.second << "]\n";
+                }
+            }
+
+            // Assign selectedDataPoints to combinedTriggerDataMap
+            combinedTriggerDataMap[triggerGroupName][isoEtRange] = selectedDataPoints;
+
+            // Debugging output for combined data
+            std::cout << "\033[36m[DEBUG]\033[0m Combined data points for group '"
+                      << triggerGroupName << "', isoEtRange [" << isoEtRange.first << ", "
+                      << isoEtRange.second << "]: " << selectedDataPoints.size() << " points\n";
+        }
+    }
+
+    std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
+}
 
 void GenerateCombinedRatioPlot(
     const std::map<std::string, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap,
@@ -3748,6 +4039,14 @@ void ProcessIsolationData(
         triggerCombinationNameMap,
         triggerNameMap,
         exclusionRanges
+    );
+    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
+    SortAndCombineSpectraData(
+        dataMap_inMassWindow,
+        dataMap_outsideMassWindow,
+        triggerEfficiencyPoints,
+        exclusionRanges,
+        combinedSpectraDataMap
     );
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
 }
@@ -4228,7 +4527,7 @@ void PlotCombinedHistograms(
     std::vector<std::pair<float, float>> exclusionRanges = {
         {-10, 0},  // Exclude isoEt range from -10 to 0
         {0, 10},    // Exclude isoEt range from 0 to 10
-        {-100, 6}
+        {-100, 10}
     };
 
     ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, false, true);
