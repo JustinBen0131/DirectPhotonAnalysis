@@ -757,7 +757,7 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     // Reconstruct pT range label
     std::ostringstream ptRangeLabel;
     if (data.cuts.pTMin != -1 && data.cuts.pTMax != -1) {
-        ptRangeLabel << "pT: " << Utils::formatToThreeSigFigs(data.cuts.pTMin) << " - " << Utils::formatToThreeSigFigs(data.cuts.pTMax) << " GeV";
+        ptRangeLabel << Utils::formatToThreeSigFigs(data.cuts.pTMin) << " - " << Utils::formatToThreeSigFigs(data.cuts.pTMax) << " GeV";
     }
 
     // Create two TLatex objects for the formatted output
@@ -799,7 +799,7 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     // If pT range is available, add it to the legend
     if (!ptRangeLabel.str().empty()) {
         labelText.DrawLatex(0.45, 0.65, "pT Range:");
-        valueText.DrawLatex(0.65, 0.65, ptRangeLabel.str().c_str());
+        valueText.DrawLatex(0.62, 0.65, ptRangeLabel.str().c_str());
     }
 
     // Second column: Pi0 and Eta information
@@ -1772,125 +1772,6 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             delete mgEta;
             delete legendEta;
         }
-    }
-}
-
-
-void PlotRunByRunHistograms(
-    const std::string& outputDirectory,
-    const std::string& plotDirectory,
-    const std::vector<std::string>& triggers,
-    const std::vector<int>& runNumbers,
-    const std::map<std::string, int>& triggerColorMap,
-    const std::map<std::string, std::string>& triggerNameMap) {
-
-    // Create the run-by-run overlays directory
-    std::string runByRunDir = plotDirectory + "/runByRun8by8overlays";
-    gSystem->mkdir(runByRunDir.c_str(), true);
-
-    // Loop over each run number
-    for (int runNumber : runNumbers) {
-        std::string runFileName = std::to_string(runNumber) + "_HistOutput.root";
-        std::string runFilePath = outputDirectory + "/" + runFileName;
-
-        // Open the ROOT file for the run
-        TFile* runFile = TFile::Open(runFilePath.c_str(), "READ");
-        if (!runFile || runFile->IsZombie()) {
-            std::cerr << "Error: Could not open run file " << runFilePath << std::endl;
-            continue;
-        }
-
-        // Create a canvas for the overlay plot
-        TCanvas* canvas = new TCanvas("canvas", "Run-by-Run Overlay Plot", 800, 600);
-        TLegend* legend = new TLegend(0.55, 0.4, 0.8, 0.8);
-        legend->SetTextSize(0.035);
-        canvas->SetLogy();
-
-        bool firstDraw = true;
-
-        // Loop over triggers and plot histograms
-        for (const auto& trigger : triggers) {
-            // Get the trigger directory
-            TDirectory* triggerDir = runFile->GetDirectory(trigger.c_str());
-            if (!triggerDir) {
-                std::cerr << "Trigger directory '" << trigger << "' not found in run file " << runFileName << std::endl;
-                continue;
-            }
-
-            // Construct histogram name
-            std::string histName = "h8by8TowerEnergySum_" + trigger;
-
-            // Get histogram from the trigger directory
-            TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
-            if (!hist) {
-                std::cerr << "Warning: Histogram " << histName << " not found in run file " << runFileName << std::endl;
-                continue;
-            }
-
-            // Clone histogram to avoid modifying original
-            TH1* histClone = (TH1*)hist->Clone();
-            histClone->SetDirectory(0); // Detach from file
-
-            int color = kBlack; // Default color
-            auto it = TriggerConfig::triggerColorMap.find(trigger);
-            if (it != TriggerConfig::triggerColorMap.end()) {
-                color = it->second;
-            }
-
-            histClone->SetLineColor(color);
-            histClone->SetLineWidth(2);
-
-            std::string canvasTitle = "Run " + std::to_string(runNumber) + " Overlay";
-            histClone->SetTitle(canvasTitle.c_str());
-            histClone->GetXaxis()->SetTitle("Maximum 8x8 Energy Sum (EMCal) [GeV]");
-            histClone->GetYaxis()->SetTitle("Events");
-
-            if (firstDraw) {
-                histClone->Draw("HIST");
-                firstDraw = false;
-            } else {
-                histClone->Draw("HIST SAME");
-            }
-
-            // Use the map to translate the trigger name if available
-            std::string displayTriggerName = trigger;
-            if (triggerNameMap.find(trigger) != triggerNameMap.end()) {
-                displayTriggerName = triggerNameMap.at(trigger);
-            }
-
-            // Add histogram to legend with display name
-            legend->AddEntry(histClone, displayTriggerName.c_str(), "l");
-        }
-
-        legend->Draw();
-        
-        TLatex runNumberText;
-        runNumberText.SetNDC(); // Use normalized device coordinates (0-1)
-        runNumberText.SetTextAlign(31); // Align right and top
-        runNumberText.SetTextSize(0.04); // Adjust text size as needed
-        runNumberText.SetTextColor(kBlack); // Set text color
-
-        // Construct the run number string
-        std::ostringstream runNumberStr;
-        runNumberStr << "Run Number: " << runNumber;
-
-        // Draw the run number at the top right corner
-        runNumberText.DrawLatex(0.9, 0.85, runNumberStr.str().c_str());
-
-        // Update the canvas
-        canvas->Modified();
-        canvas->Update();
-
-        // Save the canvas
-        std::ostringstream outputFileName;
-        outputFileName << runByRunDir << "/Run_" << runNumber << "_h8by8TowerEnergySum_Overlay.png";
-        canvas->SaveAs(outputFileName.str().c_str());
-        std::cout << "Saved run-by-run overlay plot to " << outputFileName.str() << std::endl;
-
-        // Clean up
-        delete canvas;
-        runFile->Close();
-        delete runFile;
     }
 }
 
@@ -3248,9 +3129,9 @@ void GeneratePerTriggerIsoPlots(
         TMultiGraph* multiGraph = new TMultiGraph();
         
         // Create a legend in the top-left corner
-        TLegend legend(0.18, 0.75, 0.48, 0.9); // Adjust as needed
+        TLegend legend(0.18, 0.68, 0.48, 0.9); // Adjust as needed
         legend.SetBorderSize(0);
-        legend.SetTextSize(0.024);
+        legend.SetTextSize(0.025);
 
         // Create the reference graphs and add to legend
         TGraphErrors* refGraphOne = nullptr;
@@ -3402,9 +3283,9 @@ void GeneratePerTriggerIsoPlots(
         // Add labels using TLatex in the top-left corner
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.024);       // Adjusted text size
+        labelText.SetTextSize(0.022);       // Adjusted text size
         labelText.SetTextColor(kBlack);    // Ensured text color is black
-        double xStart = 0.7; // Starting x-coordinate (left side)
+        double xStart = 0.6; // Starting x-coordinate (left side)
         double yStartLabel = 0.9; // Starting y-coordinate
         double yStepLabel = 0.035;  // Vertical spacing between lines
 
@@ -3938,7 +3819,6 @@ void ProcessIsolationData(
     const std::map<std::string, double>& triggerEfficiencyPoints = {},
     bool drawRefA = false,
     bool drawRefB = false) {
-    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
 
     // -----------------------------
     // ** isoEtRange Setup **
@@ -4059,6 +3939,7 @@ void ProcessIsolationData(
         exclusionRanges
     );
 
+    std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
     // Sort and combine spectra data
     SortAndCombineSpectraData(
         dataMap_inMassWindow,
@@ -4075,6 +3956,158 @@ void ProcessIsolationData(
         TriggerCombinationNames::triggerCombinationNameMap
     );
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
+}
+
+void PlotRunByRunHistograms(
+    const std::string& outputDirectory,
+    const std::string& plotDirectory,
+    const std::vector<std::string>& triggers,
+    const std::vector<int>& runNumbers,
+    const std::map<std::string, int>& triggerColorMap,
+    const std::map<std::string, std::string>& triggerNameMap) {
+
+    // Create the run-by-run overlays directory
+    std::string runByRunDir = plotDirectory + "/runByRun8by8overlays";
+    gSystem->mkdir(runByRunDir.c_str(), true);
+
+    // Determine the grid size
+    const int nColumns = 9;
+    const int nRows = 5;    
+    const int runsPerPage = nColumns * nRows;
+
+    size_t totalRuns = runNumbers.size();
+    size_t totalPages = (totalRuns + runsPerPage - 1) / runsPerPage;
+
+    // Loop over pages
+    for (size_t pageIndex = 0; pageIndex < totalPages; ++pageIndex) {
+        // Create a canvas with multiple pads
+        TCanvas* canvas = new TCanvas("canvas", "Run-by-Run Overlay Plot", 2400, 1500); // Adjust size as needed
+        canvas->Divide(nColumns, nRows);
+
+        // Loop over runs in this page
+        for (int padIndex = 1; padIndex <= runsPerPage; ++padIndex) {
+            size_t runIndex = pageIndex * runsPerPage + padIndex - 1;
+            if (runIndex >= totalRuns) {
+                break; // No more runs
+            }
+
+            int runNumber = runNumbers[runIndex];
+            std::string runFileName = std::to_string(runNumber) + "_HistOutput.root";
+            std::string runFilePath = outputDirectory + "/" + runFileName;
+
+            // Open the ROOT file for the run
+            TFile* runFile = TFile::Open(runFilePath.c_str(), "READ");
+            if (!runFile || runFile->IsZombie()) {
+                std::cerr << "Error: Could not open run file " << runFilePath << std::endl;
+                continue;
+            }
+
+            // Get the pad and cd into it
+            canvas->cd(padIndex);
+
+            // Set log scale if desired
+            gPad->SetLogy();
+
+            // Create a legend for this pad
+            TLegend* legend = new TLegend(0.45, 0.6, 0.9, 0.9);
+            legend->SetTextSize(0.04);
+            legend->SetBorderSize(0);
+
+            bool firstDraw = true;
+
+            // Loop over triggers and plot histograms
+            for (const auto& trigger : triggers) {
+                // Get the trigger directory
+                TDirectory* triggerDir = runFile->GetDirectory(trigger.c_str());
+                if (!triggerDir) {
+                    std::cerr << "Trigger directory '" << trigger << "' not found in run file " << runFileName << std::endl;
+                    continue;
+                }
+
+                // Construct histogram name
+                std::string histName = "h8by8TowerEnergySum_" + trigger;
+
+                // Get histogram from the trigger directory
+                TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
+                if (!hist) {
+                    std::cerr << "Warning: Histogram " << histName << " not found in run file " << runFileName << std::endl;
+                    continue;
+                }
+
+                // Clone histogram to avoid modifying original
+                TH1* histClone = (TH1*)hist->Clone();
+                histClone->SetDirectory(0); // Detach from file
+
+                int color = kBlack; // Default color
+                auto it = triggerColorMap.find(trigger);
+                if (it != triggerColorMap.end()) {
+                    color = it->second;
+                }
+
+                histClone->SetLineColor(color);
+                histClone->SetLineWidth(2);
+
+                // Set titles (optional)
+                histClone->SetTitle("");
+                histClone->GetXaxis()->SetTitle("");
+                histClone->GetYaxis()->SetTitle("");
+
+                // Adjust axis labels and titles
+                histClone->GetXaxis()->SetLabelSize(0.07);
+                histClone->GetYaxis()->SetLabelSize(0.07);
+
+                if (firstDraw) {
+                    histClone->Draw("HIST");
+                    firstDraw = false;
+                } else {
+                    histClone->Draw("HIST SAME");
+                }
+
+                // Use the map to translate the trigger name if available
+                std::string displayTriggerName = trigger;
+                if (triggerNameMap.find(trigger) != triggerNameMap.end()) {
+                    displayTriggerName = triggerNameMap.at(trigger);
+                }
+
+                // Add histogram to legend with display name
+                legend->AddEntry(histClone, displayTriggerName.c_str(), "l");
+            }
+
+            // Draw the legend
+            legend->Draw();
+
+            // Draw the run number on the plot
+            TLatex runNumberText;
+            runNumberText.SetNDC(); // Use normalized device coordinates (0-1)
+            runNumberText.SetTextAlign(13); // Align left and top
+            runNumberText.SetTextSize(0.08); // Adjust text size as needed
+            runNumberText.SetTextColor(kBlack); // Set text color
+
+            // Construct the run number string
+            std::ostringstream runNumberStr;
+            runNumberStr << "Run " << runNumber;
+
+            // Draw the run number at the top left corner
+            runNumberText.DrawLatex(0.1, 0.85, runNumberStr.str().c_str());
+
+            // Close the run file
+            runFile->Close();
+            delete runFile;
+        }
+
+        // Update the canvas
+        canvas->Modified();
+        canvas->Update();
+
+        // Save the canvas
+        std::ostringstream outputFileName;
+        outputFileName << runByRunDir << "/RunOverlay_Page" << pageIndex + 1 << ".png";
+        canvas->SaveAs(outputFileName.str().c_str());
+        std::cout << "Saved run-by-run overlay plot to " << outputFileName.str() << std::endl;
+
+        // Clean up
+        delete canvas;
+    }
 }
 
 
@@ -4250,28 +4283,21 @@ void PlotCombinedHistograms(
         TLegend* legend = new TLegend(0.65, 0.53, 0.85, 0.88);
         legend->SetTextSize(0.03);
         canvas->SetLogy();
-
         bool firstDraw = true;
-
         // Loop over triggers and plot histograms
         for (const auto& trigger : triggers) {
-            // Get the trigger directory
             TDirectory* triggerDir = inputFile->GetDirectory(trigger.c_str());
             if (!triggerDir) {
                 std::cerr << "Trigger directory '" << trigger << "' not found in file " << rootFileName << std::endl;
                 continue;
             }
-            
-            // Construct histogram name
             std::string histName = "h8by8TowerEnergySum_" + trigger;
 
-            // Get histogram from file
             TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
             if (!hist) {
                 std::cerr << "Warning: Histogram " << histName << " not found in file " << rootFileName << std::endl;
                 continue;
             }
-
             // Clone histogram to avoid modifying original
             TH1* histClone = (TH1*)hist->Clone();
             histClone->SetDirectory(0); // Detach from file
@@ -4285,7 +4311,7 @@ void PlotCombinedHistograms(
             histClone->SetLineWidth(2);
 
             histClone->SetTitle(("Overlay for " + combinationName).c_str());
-            histClone->GetXaxis()->SetTitle("Maximum 8x8 Energy Sum (EMCal) [GeV]");
+            histClone->GetXaxis()->SetTitle("Maximum 8x8 EMCal Tower Energy Sum [GeV]");
             histClone->GetYaxis()->SetTitle("Events");
 
             if (firstDraw) {
