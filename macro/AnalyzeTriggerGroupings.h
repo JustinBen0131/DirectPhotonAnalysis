@@ -1,4 +1,3 @@
-
 #ifndef ANALYZE_TRIGGER_GROUPINGS_H
 #define ANALYZE_TRIGGER_GROUPINGS_H
 
@@ -208,11 +207,11 @@ namespace TriggerConfig {
 
     // Map of triggers to human-readable names
     const std::map<std::string, std::string> triggerNameMap = {
-        {"MBD_NandS_geq_1", "Minbias"},
-        {"Photon_2_GeV_plus_MBD_NS_geq_1", "Photon 2 GeV + Minbias"},
-        {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + Minbias"},
-        {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + Minbias"},
-        {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + Minbias"},
+        {"MBD_NandS_geq_1", "MBD NS #geq 1"},
+        {"Photon_2_GeV_plus_MBD_NS_geq_1", "Photon 2 GeV + MBD NS #geq 1"},
+        {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + MBD NS #geq 1"},
+        {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + MBD NS #geq 1"},
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + MBD NS #geq 1"},
 //        {"Photon_2_GeV", "Photon 2 GeV"},
 //        {"Photon_3_GeV", "Photon 3 GeV"},
 //        {"Photon_4_GeV", "Photon 4 GeV"},
@@ -378,20 +377,20 @@ namespace TriggerConfig {
 // Namespace for trigger combination names
 namespace TriggerCombinationNames {
     const std::map<std::string, std::string> triggerCombinationNameMap = {
-        {"MBD_NandS_geq_1", "Minbias"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3 GeV"},
-        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 4, 5 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 2, 3, 4 GeV"},
-        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Minbias and Photon 3, 4, 5 GeV"},
+        {"MBD_NandS_geq_1", "MBD NS #geq 1"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2, 3 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 3, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 4, 5 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 2, 3, 4 GeV"},
+        {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "MBD NS #geq 1 and Photon 3, 4, 5 GeV"},
     };
 }
 
