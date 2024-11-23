@@ -96,11 +96,8 @@ using GroupKey = std::tuple<
     std::string  // MassWindowLabel
 >;
 
-
-
-
 // Function to analyze combinations from the CSV file
-std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvailable(const std::string& csvFilePath) {
+std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(const std::string& csvFilePath) {
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
     const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
 
@@ -208,8 +205,8 @@ std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvaila
     }
     
     // Map from combination to vector of run numbers
-    std::map<std::set<std::string>, std::vector<int>> combinationToRuns;
-    
+    std::map<std::set<std::string>, std::vector<int>> tempCombinationToRuns;
+
     // For each run, check which combinations it satisfies
     for (const auto& runEntry : runToActiveTriggers) {
         int runNumber = runEntry.first;
@@ -229,7 +226,7 @@ std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvaila
                 }
                 if (satisfiesCombination) {
                     // Add run number to this combination
-                    combinationToRuns[combination].push_back(runNumber);
+                    tempCombinationToRuns[combination].push_back(runNumber);
                 }
             }
         }
@@ -238,13 +235,14 @@ std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvaila
     // Map from sorted run lists to sets of trigger combinations
     std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinations;
 
-    for (const auto& entry : combinationToRuns) {
+    for (const auto& entry : tempCombinationToRuns) {
         const std::set<std::string>& combination = entry.first;
         std::vector<int> runList = entry.second;
         std::sort(runList.begin(), runList.end()); // Ensure run list is sorted for comparison
 
         runListToCombinations[runList].push_back(combination);
     }
+
 
     // For each run list, find the largest combination(s) and remove subsets
     std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRuns;
@@ -270,59 +268,281 @@ std::map<std::set<std::string>, std::vector<int>> AnalyzeWhatTriggerGroupsAvaila
         }
     }
 
-    // Now 'filteredCombinationToRuns' contains only the largest combinations per unique run list
-    // You can return this map instead of 'combinationToRuns'
-    return filteredCombinationToRuns;
+
+    // Map from combination to vector of run numbers
+    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns;
+
+    // For each entry in filteredCombinationToRuns
+    for (const auto& entry : filteredCombinationToRuns) {
+        const std::set<std::string>& combination = entry.first;
+        const std::vector<int>& runs = entry.second;
+
+        DataStructures::RunInfo runInfo;
+        for (int runNumber : runs) {
+            if (runNumber < 47289) {
+                runInfo.runsBeforeFirmwareUpdate.push_back(runNumber);
+            } else {
+                runInfo.runsAfterFirmwareUpdate.push_back(runNumber);
+            }
+        }
+        combinationToRuns[combination] = runInfo;
+    }
+
+    // Return the adjusted map
+    return combinationToRuns;
 }
 
 
 
-void PrintSortedCombinations(const std::map<std::set<std::string>, std::vector<int>>& combinationToRuns) {
-    // Sort combinations based on size and triggers
-    std::vector<std::pair<std::set<std::string>, std::vector<int>>> sortedCombinations(
+void PrintSortedCombinations(const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns) {
+    std::vector<std::pair<std::set<std::string>, DataStructures::RunInfo>> sortedCombinations(
         combinationToRuns.begin(), combinationToRuns.end());
-
+    
+    // Sort combinations by the number of triggers in the set (descending)
     std::sort(sortedCombinations.begin(), sortedCombinations.end(),
               [](const auto& a, const auto& b) {
-                  // Compare based on the number of triggers active (excluding 'MBD_NandS_geq_1')
-                  int countA = a.first.size();
-                  int countB = b.first.size();
-                  if (countA != countB) {
-                      return countA < countB;
-                  } else {
-                      // If same number of triggers, sort alphabetically
-                      return a.first < b.first;
-                  }
+                  return a.first.size() > b.first.size();
               });
 
-    // Print the sorted combinations
-    for (const auto& kv : sortedCombinations) {
-        const std::set<std::string>& triggers = kv.first;
-        const std::vector<int>& runs = kv.second;
+    for (const auto& entry : sortedCombinations) {
+        const std::set<std::string>& combination = entry.first;
+        const DataStructures::RunInfo& runInfo = entry.second;
 
-        std::cout << "Combination: ";
-        for (const std::string& t : triggers) {
-            std::cout << t << " ";
+        std::string combinationName;
+        for (const auto& trigger : combination) {
+            combinationName += trigger + " ";
         }
-        std::cout << "\n";
-        std::cout << "Number of runs: " << runs.size() << "\n";
-        std::cout << "Run numbers: ";
-        for (size_t i = 0; i < runs.size(); ++i) {
-            std::cout << runs[i];
-            if ((i + 1) % 10 == 0) {
-                std::cout << "\n             ";
-            } else {
-                std::cout << " ";
+
+        std::cout << "Combination: " << combinationName << "\n";
+        if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+            std::cout << "  Runs before firmware update (" << runInfo.runsBeforeFirmwareUpdate.size() << " runs): ";
+            for (int run : runInfo.runsBeforeFirmwareUpdate) {
+                std::cout << run << " ";
+            }
+            std::cout << "\n";
+        }
+        if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+            std::cout << "  Runs after firmware update (" << runInfo.runsAfterFirmwareUpdate.size() << " runs): ";
+            for (int run : runInfo.runsAfterFirmwareUpdate) {
+                std::cout << run << " ";
+            }
+            std::cout << "\n";
+        }
+    }
+}
+
+void ProcessRunsForCombination(
+    const std::string& combinationName,
+    const std::vector<int>& runs,
+    const std::set<std::string>& triggers,
+    const std::string& outputDirectory,
+    std::map<std::string, std::vector<int>>& combinationToValidRuns) {
+    
+    // Define the final output ROOT file path
+    std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
+    // Define the text file path to store valid runs
+    std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
+    
+    // Check if both the final ROOT file and valid runs text file already exist to avoid overwriting
+    bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
+    bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
+    
+    if (rootFileExists && validRunsFileExists) {
+        std::cout << "Final ROOT file and valid runs file already exist for combination: " << combinationName << ". Skipping merge." << std::endl;
+        // Read valid runs from the text file
+        std::vector<int> validRuns;
+        std::ifstream validRunsFile(validRunsFilePath);
+        if (validRunsFile.is_open()) {
+            int runNumber;
+            while (validRunsFile >> runNumber) {
+                validRuns.push_back(runNumber);
+            }
+            validRunsFile.close();
+            combinationToValidRuns[combinationName] = validRuns;
+        } else {
+            std::cerr << "Failed to open valid runs file: " << validRunsFilePath << std::endl;
+        }
+        return;
+    }
+
+    // Map to keep track of histograms (by trigger and histogram name)
+    std::map<std::string, std::map<std::string, std::unique_ptr<TH1>>> mergedHistograms;
+    
+    // Collect histogram names
+    std::set<std::string> histogramNames;
+    
+    // Vector to store valid run numbers for this combination
+    std::vector<int> validRuns;
+    
+    // Iterate over each run number in the combination
+    for (const auto& runNumber : runs) {
+        // Define the run's ROOT file path
+        std::stringstream ss;
+        ss << outputDirectory << "/" << runNumber << "_HistOutput.root";
+        std::string runRootFilePath = ss.str();
+        
+        std::cout << "Processing run: " << runNumber << ", file: " << runRootFilePath << std::endl;
+        
+        // Check if the run's ROOT file exists
+        if (gSystem->AccessPathName(runRootFilePath.c_str())) {
+            std::cerr << "Run ROOT file does not exist: " << runRootFilePath << ". Skipping this run." << std::endl;
+            continue;
+        }
+        
+        // Open the run's ROOT file
+        std::cout << "Opening run file..." << std::endl;
+        TFile runFile(runRootFilePath.c_str(), "READ");
+        if (runFile.IsZombie() || !runFile.IsOpen()) {
+            std::cerr << "Failed to open run ROOT file: " << runRootFilePath << ". Skipping this run." << std::endl;
+            continue;
+        }
+        std::cout << "Run file opened successfully." << std::endl;
+        
+        bool runHasValidHistogram = false;
+        
+        
+        // For each trigger in the combination
+        for (const auto& trigger : triggers) {
+            // Check if the trigger directory exists in the run file
+            TDirectory* triggerDir = runFile.GetDirectory(trigger.c_str());
+            if (!triggerDir) {
+                std::cerr << "Trigger directory '" << trigger << "' not found in run " << runNumber << ". Skipping this trigger." << std::endl;
+                continue;
+            }
+            
+            // Get all histograms in the trigger directory
+            TIter nextKey(triggerDir->GetListOfKeys());
+            TKey* key;
+            while ((key = (TKey*)nextKey())) {
+                std::string className = key->GetClassName();
+                if (className.find("TH1") != std::string::npos || className.find("TH2") != std::string::npos) {
+                    TObject* obj = key->ReadObj();
+                    TH1* hist = dynamic_cast<TH1*>(obj);
+                    if (!hist) {
+                        std::cerr << "Failed to read histogram '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
+                        delete obj;
+                        continue;
+                    }
+                    std::string histName = hist->GetName();
+                    
+                    // Clone the histogram and set directory to nullptr
+                    TH1* histClone = dynamic_cast<TH1*>(hist->Clone());
+                    if (!histClone) {
+                        std::cerr << "Failed to clone histogram: " << histName << " from run " << runNumber << std::endl;
+                        delete obj;
+                        continue;
+                    }
+                    histClone->SetDirectory(nullptr);
+                    
+                    // Check if we already have this histogram in mergedHistograms
+                    auto& histMap = mergedHistograms[trigger];
+                    auto it = histMap.find(histName);
+                    if (it != histMap.end()) {
+                        // Histogram already exists, add the new histogram to it
+                        it->second->Add(histClone);
+                        std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to existing histogram in trigger '" << trigger << "'." << std::endl;
+                        delete histClone;
+                    } else {
+                        // Add histClone to mergedHistograms
+                        histMap[histName] = std::unique_ptr<TH1>(histClone);
+                        std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to merged histograms in trigger '" << trigger << "'." << std::endl;
+                        // histClone is managed by unique_ptr in histMap
+                    }
+                    
+                    // Clean up
+                    delete obj;
+                    
+                    runHasValidHistogram = true;
+                } else {
+                    std::cout << "Skipping non-histogram object '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
+                }
             }
         }
-        std::cout << "\n-------------------------------------\n";
+        
+        if (runHasValidHistogram) {
+            // Add run number to validRuns
+            validRuns.push_back(runNumber);
+        }
+        
+        // Close the run file
+        runFile.Close();
+    }
+    
+    if (validRuns.empty()) {
+        std::cout << "No valid runs found for combination: " << combinationName << ". Skipping this combination." << std::endl;
+        return; // Replace continue with return
+    }
+
+    if (mergedHistograms.empty()) {
+        std::cout << "No histograms were merged for combination: " << combinationName << ". Skipping writing output ROOT file." << std::endl;
+        return; // Replace continue with return
+    }
+
+    // Write all merged histograms to the final ROOT file
+    std::cout << "Writing merged histograms to final ROOT file: " << finalRootFilePath << std::endl;
+    TFile finalFile(finalRootFilePath.c_str(), "RECREATE");
+    if (finalFile.IsZombie() || !finalFile.IsOpen()) {
+        std::cerr << "Failed to create final ROOT file: " << finalRootFilePath << std::endl;
+        mergedHistograms.clear();
+        return;
+    }
+    
+    finalFile.cd();
+    for (const auto& triggerHistPair : mergedHistograms) {
+        const std::string& trigger = triggerHistPair.first;
+        const auto& histMap = triggerHistPair.second;
+        
+        // Create the trigger directory
+        TDirectory* triggerDir = finalFile.mkdir(trigger.c_str());
+        if (!triggerDir) {
+            std::cerr << "Failed to create directory for trigger: " << trigger << std::endl;
+            continue;
+        }
+        
+        triggerDir->cd();
+        
+        for (const auto& histPair : histMap) {
+            const std::string& histName = histPair.first;
+            TH1* hist = histPair.second.get();
+            if (!hist) {
+                std::cerr << "Null histogram encountered. Skipping." << std::endl;
+                continue;
+            }
+            hist->Write();
+            std::cout << "Histogram '" << histName << "' written to trigger directory '" << trigger << "' in final ROOT file." << std::endl;
+        }
+    }
+    
+    // Write and close the final ROOT file
+    finalFile.Write();
+    finalFile.Close();
+    
+    // Clean up merged histograms
+    mergedHistograms.clear();
+    
+    std::cout << "Successfully created combined ROOT file: " << finalRootFilePath << std::endl;
+    
+    // Store the valid runs for this combination
+    combinationToValidRuns[combinationName] = validRuns;
+    
+    // Write the valid runs to a text file
+    std::ofstream validRunsFile(validRunsFilePath);
+    if (validRunsFile.is_open()) {
+        for (const auto& runNumber : validRuns) {
+            validRunsFile << runNumber << "\n";
+        }
+        validRunsFile.close();
+        std::cout << "Valid runs written to file: " << validRunsFilePath << std::endl;
+    } else {
+        std::cerr << "Failed to write valid runs to file: " << validRunsFilePath << std::endl;
     }
 }
 
 
 void ProcessAndMergeRootFiles(
-    const std::map<std::set<std::string>, std::vector<int>>& combinationToRuns,
-    const std::string& outputDirectory, std::map<std::string, std::vector<int>>& combinationToValidRuns) {
+    const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns,
+    const std::string& outputDirectory,
+    std::map<std::string, std::vector<int>>& combinationToValidRuns) {
     
     std::cout << "Starting ProcessAndMergeRootFiles" << std::endl;
     // Disable automatic addition of histograms to directories
@@ -331,224 +551,52 @@ void ProcessAndMergeRootFiles(
     // Iterate over each trigger combination
     for (const auto& kv : combinationToRuns) {
         const std::set<std::string>& triggers = kv.first;
-        const std::vector<int>& runs = kv.second;
+        const DataStructures::RunInfo& runInfo = kv.second;
         
         // Create a string to represent the combination for naming
-        std::string combinationName;
+        std::string baseCombinationName;
         for (const auto& trigger : triggers) {
-            combinationName += trigger + "_";
+            baseCombinationName += trigger + "_";
         }
         // Remove the trailing underscore
-        if (!combinationName.empty()) {
-            combinationName.pop_back();
+        if (!baseCombinationName.empty()) {
+            baseCombinationName.pop_back();
         }
-        
-        std::cout << "\nProcessing combination: " << combinationName << std::endl;
-        std::cout << "Runs in this combination: ";
-        for (const auto& runNumber : runs) {
-            std::cout << runNumber << " ";
-        }
-        std::cout << std::endl;
-        
-        // Define the final output ROOT file path
-        std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
-        // Define the text file path to store valid runs
-        std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
-        
-        // Check if both the final ROOT file and valid runs text file already exist to avoid overwriting
-        bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
-        bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
-        
-        if (rootFileExists && validRunsFileExists) {
-            std::cout << "Final ROOT file and valid runs file already exist for combination: " << combinationName << ". Skipping merge." << std::endl;
-            // Read valid runs from the text file
-            std::vector<int> validRuns;
-            std::ifstream validRunsFile(validRunsFilePath);
-            if (validRunsFile.is_open()) {
-                int runNumber;
-                while (validRunsFile >> runNumber) {
-                    validRuns.push_back(runNumber);
-                }
-                validRunsFile.close();
-                combinationToValidRuns[combinationName] = validRuns;
-            } else {
-                std::cerr << "Failed to open valid runs file: " << validRunsFilePath << std::endl;
-            }
-            continue;
-        }
-        
-        // Map to keep track of histograms (by trigger and histogram name)
-        std::map<std::string, std::map<std::string, std::unique_ptr<TH1>>> mergedHistograms;
-        
-        // Collect histogram names
-        std::set<std::string> histogramNames;
-        
-        // Vector to store valid run numbers for this combination
-        std::vector<int> validRuns;
-        
-        // Iterate over each run number in the combination
-        for (const auto& runNumber : runs) {
-            // Define the run's ROOT file path
-            std::stringstream ss;
-            ss << outputDirectory << "/" << runNumber << "_HistOutput.root";
-            std::string runRootFilePath = ss.str();
-            
-            std::cout << "Processing run: " << runNumber << ", file: " << runRootFilePath << std::endl;
-            
-            // Check if the run's ROOT file exists
-            if (gSystem->AccessPathName(runRootFilePath.c_str())) {
-                std::cerr << "Run ROOT file does not exist: " << runRootFilePath << ". Skipping this run." << std::endl;
-                continue;
-            }
-            
-            // Open the run's ROOT file
-            std::cout << "Opening run file..." << std::endl;
-            TFile runFile(runRootFilePath.c_str(), "READ");
-            if (runFile.IsZombie() || !runFile.IsOpen()) {
-                std::cerr << "Failed to open run ROOT file: " << runRootFilePath << ". Skipping this run." << std::endl;
-                continue;
-            }
-            std::cout << "Run file opened successfully." << std::endl;
-            
-            bool runHasValidHistogram = false;
-            
-            
-            // For each trigger in the combination
-            for (const auto& trigger : triggers) {
-                // Check if the trigger directory exists in the run file
-                TDirectory* triggerDir = runFile.GetDirectory(trigger.c_str());
-                if (!triggerDir) {
-                    std::cerr << "Trigger directory '" << trigger << "' not found in run " << runNumber << ". Skipping this trigger." << std::endl;
-                    continue;
-                }
-                
-                // Get all histograms in the trigger directory
-                TIter nextKey(triggerDir->GetListOfKeys());
-                TKey* key;
-                while ((key = (TKey*)nextKey())) {
-                    std::string className = key->GetClassName();
-                    if (className.find("TH1") != std::string::npos || className.find("TH2") != std::string::npos) {
-                        TObject* obj = key->ReadObj();
-                        TH1* hist = dynamic_cast<TH1*>(obj);
-                        if (!hist) {
-                            std::cerr << "Failed to read histogram '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
-                            delete obj;
-                            continue;
-                        }
-                        std::string histName = hist->GetName();
-                        
-                        // Clone the histogram and set directory to nullptr
-                        TH1* histClone = dynamic_cast<TH1*>(hist->Clone());
-                        if (!histClone) {
-                            std::cerr << "Failed to clone histogram: " << histName << " from run " << runNumber << std::endl;
-                            delete obj;
-                            continue;
-                        }
-                        histClone->SetDirectory(nullptr);
-                        
-                        // Check if we already have this histogram in mergedHistograms
-                        auto& histMap = mergedHistograms[trigger];
-                        auto it = histMap.find(histName);
-                        if (it != histMap.end()) {
-                            // Histogram already exists, add the new histogram to it
-                            it->second->Add(histClone);
-                            std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to existing histogram in trigger '" << trigger << "'." << std::endl;
-                            delete histClone;
-                        } else {
-                            // Add histClone to mergedHistograms
-                            histMap[histName] = std::unique_ptr<TH1>(histClone);
-                            std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to merged histograms in trigger '" << trigger << "'." << std::endl;
-                            // histClone is managed by unique_ptr in histMap
-                        }
-                        
-                        // Clean up
-                        delete obj;
-                        
-                        runHasValidHistogram = true;
-                    } else {
-                        std::cout << "Skipping non-histogram object '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
-                    }
-                }
-            }
-            
-            if (runHasValidHistogram) {
-                // Add run number to validRuns
-                validRuns.push_back(runNumber);
-            }
-            
-            // Close the run file
-            runFile.Close();
-        }
-        
-        // If no valid runs were found, skip this combination
-        if (validRuns.empty()) {
-            std::cout << "No valid runs found for combination: " << combinationName << ". Skipping this combination." << std::endl;
-            continue;
-        }
-        
-        // If no histograms were merged, skip writing the output ROOT file
-        if (mergedHistograms.empty()) {
-            std::cout << "No histograms were merged for combination: " << combinationName << ". Skipping writing output ROOT file." << std::endl;
-            continue;
-        }
-        
-        // Write all merged histograms to the final ROOT file
-        std::cout << "Writing merged histograms to final ROOT file: " << finalRootFilePath << std::endl;
-        TFile finalFile(finalRootFilePath.c_str(), "RECREATE");
-        if (finalFile.IsZombie() || !finalFile.IsOpen()) {
-            std::cerr << "Failed to create final ROOT file: " << finalRootFilePath << std::endl;
-            mergedHistograms.clear();
-            continue;
-        }
-        
-        finalFile.cd();
-        for (const auto& triggerHistPair : mergedHistograms) {
-            const std::string& trigger = triggerHistPair.first;
-            const auto& histMap = triggerHistPair.second;
-            
-            // Create the trigger directory
-            TDirectory* triggerDir = finalFile.mkdir(trigger.c_str());
-            if (!triggerDir) {
-                std::cerr << "Failed to create directory for trigger: " << trigger << std::endl;
-                continue;
-            }
-            
-            triggerDir->cd();
-            
-            for (const auto& histPair : histMap) {
-                const std::string& histName = histPair.first;
-                TH1* hist = histPair.second.get();
-                if (!hist) {
-                    std::cerr << "Null histogram encountered. Skipping." << std::endl;
-                    continue;
-                }
-                hist->Write();
-                std::cout << "Histogram '" << histName << "' written to trigger directory '" << trigger << "' in final ROOT file." << std::endl;
-            }
-        }
-        
-        // Write and close the final ROOT file
-        finalFile.Write();
-        finalFile.Close();
-        
-        // Clean up merged histograms
-        mergedHistograms.clear();
-        
-        std::cout << "Successfully created combined ROOT file: " << finalRootFilePath << std::endl;
-        
-        // Store the valid runs for this combination
-        combinationToValidRuns[combinationName] = validRuns;
-        
-        // Write the valid runs to a text file
-        std::ofstream validRunsFile(validRunsFilePath);
-        if (validRunsFile.is_open()) {
-            for (const auto& runNumber : validRuns) {
-                validRunsFile << runNumber << "\n";
-            }
-            validRunsFile.close();
-            std::cout << "Valid runs written to file: " << validRunsFilePath << std::endl;
+
+        // Check if this combination is exactly "MBD_NandS_geq_1"
+        if (triggers.size() == 1 && triggers.count("MBD_NandS_geq_1") == 1) {
+            // Combine runs before and after firmware update
+            std::vector<int> allRuns = runInfo.runsBeforeFirmwareUpdate;
+            allRuns.insert(allRuns.end(), runInfo.runsAfterFirmwareUpdate.begin(), runInfo.runsAfterFirmwareUpdate.end());
+
+            std::string combinationName = baseCombinationName; // Do not append firmware update tags
+
+            // Merge ROOT files for these runs
+            ProcessRunsForCombination(combinationName, allRuns, triggers, outputDirectory, combinationToValidRuns);
         } else {
-            std::cerr << "Failed to write valid runs to file: " << validRunsFilePath << std::endl;
+            // For other combinations, process runs before and after firmware update separately
+
+            // Process runs before firmware update
+            if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+                std::string combinationName = baseCombinationName;
+                if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+                    combinationName += "_beforeTriggerFirmwareUpdate";
+                }
+                const std::vector<int>& runs = runInfo.runsBeforeFirmwareUpdate;
+                // Merge ROOT files for these runs
+                ProcessRunsForCombination(combinationName, runs, triggers, outputDirectory, combinationToValidRuns);
+            }
+            
+            // Process runs after firmware update
+            if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+                std::string combinationName = baseCombinationName;
+                if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+                    combinationName += "_afterTriggerFirmwareUpdate";
+                }
+                const std::vector<int>& runs = runInfo.runsAfterFirmwareUpdate;
+                // Merge ROOT files for these runs
+                ProcessRunsForCombination(combinationName, runs, triggers, outputDirectory, combinationToValidRuns);
+            }
         }
     }
     
@@ -557,14 +605,18 @@ void ProcessAndMergeRootFiles(
 }
 
 
+
+
 std::vector<std::string> ExtractTriggersFromFilename(const std::string& filename, const std::vector<std::string>& allTriggers) {
-    // Remove '_Combined.root' suffix
     std::string baseName = filename;
     std::string suffix = "_Combined.root";
     if (Utils::EndsWith(baseName, suffix)) {
         baseName = baseName.substr(0, baseName.length() - suffix.length());
     }
 
+    // Strip firmware tag if present
+    baseName = Utils::stripFirmwareTag(baseName);
+    
     // Split baseName into tokens using underscores
     std::vector<std::string> filenameTokens;
     std::istringstream iss(baseName);
@@ -2881,8 +2933,7 @@ void SortAndCombineSpectraData(
 void GenerateCombinedSpectraPlots(
     const std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>>& combinedSpectraDataMap,
     const std::string& basePlotDirectory,
-    const std::map<std::string, std::string>& triggerCombinationNameMap
-) {
+    const std::map<std::string, std::string>& triggerCombinationNameMap) {
     std::cout << "\033[1;34m[INFO]\033[0m Starting GenerateCombinedSpectraPlots function.\n";
 
     for (const auto& [spectraGroupKey, ptDataMap] : combinedSpectraDataMap) {
@@ -3972,7 +4023,7 @@ void PlotRunByRunHistograms(
 
     // Determine the grid size
     const int nColumns = 9;
-    const int nRows = 5;    
+    const int nRows = 5;
     const int runsPerPage = nColumns * nRows;
 
     size_t totalRuns = runNumbers.size();
@@ -4249,6 +4300,14 @@ void PlotCombinedHistograms(
         // Extract triggers from the filename
         std::vector<std::string> triggers = ExtractTriggersFromFilename(rootFileName, allTriggers);
 
+        // Check for firmware tag in the filename
+        std::string firmwareTag;
+        if (Utils::EndsWith(rootFileName, "_beforeTriggerFirmwareUpdate_Combined.root")) {
+            firmwareTag = "_beforeTriggerFirmwareUpdate";
+        } else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root")) {
+            firmwareTag = "_afterTriggerFirmwareUpdate";
+        }
+
         std::cout << "Processing file: " << rootFileName << std::endl;
         std::cout << "Triggers found: ";
         for (const auto& trigger : triggers) {
@@ -4256,6 +4315,7 @@ void PlotCombinedHistograms(
         }
         std::cout << std::endl;
 
+        // Reconstruct combinationName with firmware tag if present
         std::string combinationName;
         for (const auto& trigger : triggers) {
             combinationName += trigger + "_";
@@ -4264,13 +4324,18 @@ void PlotCombinedHistograms(
         if (!combinationName.empty()) {
             combinationName.pop_back();
         }
+        // Append firmware tag
+        combinationName += firmwareTag;
+
         // Sanitize combinationName for use as a directory name
         std::string sanitizedCombinationName = combinationName;
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), '/', '_');
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), ' ', '_');
+
         // Create the subdirectory for this trigger combination
         std::string plotDirectory = basePlotDirectory + "/" + sanitizedCombinationName;
         gSystem->mkdir(plotDirectory.c_str(), true);
+
         // Open the ROOT file
         TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
         if (!inputFile || inputFile->IsZombie()) {
@@ -4332,7 +4397,6 @@ void PlotCombinedHistograms(
 
         legend->Draw();
 
-        // Display run numbers on the plot
         auto it = combinationToValidRuns.find(combinationName);
         if (it != combinationToValidRuns.end()) {
             const std::vector<int>& validRuns = it->second;
@@ -4346,6 +4410,7 @@ void PlotCombinedHistograms(
             text.SetTextSize(0.03);
             text.DrawLatex(0.15, 0.6, "Run numbers not available");
         }
+
 
         // Update the canvas
         canvas->Modified();
@@ -4448,7 +4513,7 @@ void PlotCombinedHistograms(
                         legendEntry << displayPhotonTriggerName;
                         
                         // Prepare the key
-                        std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
+                        std::pair<std::string, std::string> key = std::make_pair(Utils::stripFirmwareTag(combinationName), photonTrigger);
 
                         // Try to find the fit parameters for the combination and trigger
                         auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
@@ -5026,11 +5091,10 @@ void AnalyzeTriggerGroupings() {
     SetsPhenixStyle();
 
     std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonAna/triggerAnalysisCombined.csv";
-
     std::string outputDirectory = "/Users/patsfan753/Desktop/DirectPhotonAna/output";
 
     // Get the map of trigger combinations to run numbers
-    std::map<std::set<std::string>, std::vector<int>> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath);
+    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath);
 
     // Now, loop through the map and print out the groupings and structure
     std::cout << "\nSummary of Trigger Combinations:\n";
@@ -5040,52 +5104,90 @@ void AnalyzeTriggerGroupings() {
 
     // Map to store valid runs for each combination
     std::map<std::string, std::vector<int>> combinationToValidRuns;
+
     // Check if all combined ROOT files and valid runs files already exist
     bool allOutputFilesExist = true;
     for (const auto& kv : combinationToRuns) {
         const std::set<std::string>& triggers = kv.first;
+        const DataStructures::RunInfo& runInfo = kv.second;
 
         // Create a string to represent the combination for naming
-        std::string combinationName;
+        std::string baseCombinationName;
         for (const auto& trigger : triggers) {
-            combinationName += trigger + "_";
+            baseCombinationName += trigger + "_";
         }
         // Remove the trailing underscore
-        if (!combinationName.empty()) {
-            combinationName.pop_back();
+        if (!baseCombinationName.empty()) {
+            baseCombinationName.pop_back();
         }
 
-        // Define the final output ROOT file path
-        std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
-        // Define the valid runs text file path
-        std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
+        // Check runs before firmware update
+        if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+            std::string combinationName = baseCombinationName;
+            if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+                combinationName += "_beforeTriggerFirmwareUpdate";
+            }
+            std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
+            std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
 
-        // Check if both files exist
-        bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
-        bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
+            bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
+            bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
 
-        if (!rootFileExists || !validRunsFileExists) {
-            // At least one file does not exist
-            allOutputFilesExist = false;
-            break;
-        } else {
-            // Read valid runs from the text file
-            std::vector<int> validRuns;
-            std::ifstream validRunsFile(validRunsFilePath);
-            if (validRunsFile.is_open()) {
-                int runNumber;
-                while (validRunsFile >> runNumber) {
-                    validRuns.push_back(runNumber);
-                }
-                validRunsFile.close();
-                combinationToValidRuns[combinationName] = validRuns;
-
-                // Output the size of the list of run numbers
-                std::cout << "Combination: " << combinationName << ", Number of valid runs: " << validRuns.size() << std::endl;
-            } else {
-                std::cerr << "Failed to open valid runs file: " << validRunsFilePath << std::endl;
+            if (!rootFileExists || !validRunsFileExists) {
                 allOutputFilesExist = false;
                 break;
+            } else {
+                // Read valid runs from the text file
+                std::vector<int> validRuns;
+                std::ifstream validRunsFile(validRunsFilePath);
+                if (validRunsFile.is_open()) {
+                    int runNumber;
+                    while (validRunsFile >> runNumber) {
+                        validRuns.push_back(runNumber);
+                    }
+                    validRunsFile.close();
+                    combinationToValidRuns[combinationName] = validRuns;
+                    std::cout << "Combination: " << combinationName << ", Number of valid runs: " << validRuns.size() << std::endl;
+                } else {
+                    std::cerr << "Failed to open valid runs file: " << validRunsFilePath << std::endl;
+                    allOutputFilesExist = false;
+                    break;
+                }
+            }
+        }
+
+        // Check runs after firmware update
+        if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+            std::string combinationName = baseCombinationName;
+            if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+                combinationName += "_afterTriggerFirmwareUpdate";
+            }
+            std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
+            std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
+
+            bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
+            bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
+
+            if (!rootFileExists || !validRunsFileExists) {
+                allOutputFilesExist = false;
+                break;
+            } else {
+                // Read valid runs from the text file
+                std::vector<int> validRuns;
+                std::ifstream validRunsFile(validRunsFilePath);
+                if (validRunsFile.is_open()) {
+                    int runNumber;
+                    while (validRunsFile >> runNumber) {
+                        validRuns.push_back(runNumber);
+                    }
+                    validRunsFile.close();
+                    combinationToValidRuns[combinationName] = validRuns;
+                    std::cout << "Combination: " << combinationName << ", Number of valid runs: " << validRuns.size() << std::endl;
+                } else {
+                    std::cerr << "Failed to open valid runs file: " << validRunsFilePath << std::endl;
+                    allOutputFilesExist = false;
+                    break;
+                }
             }
         }
     }
@@ -5111,6 +5213,6 @@ void AnalyzeTriggerGroupings() {
 
     // Now plot the combined histograms
     PlotCombinedHistograms(outputDirectory, combinedRootFiles, combinationToValidRuns);
-    
+
     ProcessAllIsolationEnergies(outputDirectory, combinedRootFiles, TriggerCombinationNames::triggerCombinationNameMap);
 }
