@@ -4255,7 +4255,7 @@ void PlotCombinedHistograms(
         runNumbersLatex.DrawLatex(0.5, 0.9, headerText.str().c_str());
 
         // Skip plotting run numbers for specific size
-        if (runNumbers.size() == 697 || runNumbers.size() == 700 || runNumbers.size() == 585 || runNumbers.size() == 728 || runNumbers.size() == 104) {
+        if (runNumbers.size() == 697 || runNumbers.size() == 700 || runNumbers.size() == 585 || runNumbers.size() == 728 || runNumbers.size() == 101) {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
             return;
         }
