@@ -22,7 +22,7 @@
 #define CYAN    "\033[36m"      /* Cyan */
 #define BOLD    "\033[1m"
 
-bool enableFits = true; // Set to true if you want to enable the fits
+bool enableFits = false; // Set to true if you want to enable the fits
 
 
 std::map<std::tuple<
@@ -96,32 +96,37 @@ using GroupKey = std::tuple<
     std::string  // MassWindowLabel
 >;
 
-// Function to analyze combinations from the CSV file
-std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(const std::string& csvFilePath) {
+std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(
+    const std::string& csvFilePath, bool debugMode) {
+
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
     const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
 
-    
     // Map from trigger name to column index in the CSV
     std::map<std::string, int> triggerToIndex;
-    
+
     // Map from run number to set of triggers that are 'ON'
     std::map<int, std::set<std::string>> runToActiveTriggers;
-    
+
+    // Variables for debug output
+    int totalRunsProcessed = 0;
+    std::map<std::set<std::string>, std::vector<int>> initialCombinationToRuns;
+    std::vector<std::pair<std::set<std::string>, DataStructures::RunInfo>> finalCombinations;
+
     // Open the CSV file
     std::ifstream file(csvFilePath);
     if (!file.is_open()) {
         std::cerr << "Failed to open file: " << csvFilePath << std::endl;
         return {};
     }
-    
+
     // Read the header line
     std::string line;
     if (!std::getline(file, line)) {
         std::cerr << "Failed to read header from CSV file." << std::endl;
         return {};
     }
-    
+
     // Parse the header to get the indices of the triggers
     std::vector<std::string> headers;
     std::istringstream headerStream(line);
@@ -131,7 +136,7 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
         // Trim whitespace
         header.erase(0, header.find_first_not_of(" \t\r\n"));
         header.erase(header.find_last_not_of(" \t\r\n") + 1);
-        
+
         headers.push_back(header);
         // If header is in allTriggers or is 'runNumber', store its index
         if (std::find(allTriggers.begin(), allTriggers.end(), header) != allTriggers.end() || header == "runNumber") {
@@ -139,12 +144,12 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
         }
         colIndex++;
     }
-    
+
     if (triggerToIndex.find("runNumber") == triggerToIndex.end()) {
         std::cerr << "runNumber column not found in CSV header." << std::endl;
         return {};
     }
-    
+
     // Read each line of the CSV
     while (std::getline(file, line)) {
         // Parse the line into cells
@@ -157,16 +162,16 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
             cell.erase(cell.find_last_not_of(" \t\r\n") + 1);
             cells.push_back(cell);
         }
-        
+
         // Ensure that the number of cells matches the number of headers
         if (cells.size() != headers.size()) {
             std::cerr << "Mismatch between number of cells and headers in line: " << line << std::endl;
             continue;
         }
-        
+
         // Get run number
         int runNumber = std::stoi(cells[triggerToIndex["runNumber"]]);
-        
+
         // Collect triggers that are 'ON' for this run
         std::set<std::string> activeTriggers;
         for (const auto& trigger : allTriggers) {
@@ -184,15 +189,18 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
         // Store active triggers for this run
         runToActiveTriggers[runNumber] = activeTriggers;
     }
-    
+
     file.close();
-    
+
+    // Total runs processed
+    totalRunsProcessed = runToActiveTriggers.size();
+
     // Now generate all combinations of triggers we're interested in
     // Generate all subsets of photonTriggers
     std::vector<std::set<std::string>> triggerCombinations;
     int nPhotonTriggers = photonTriggers.size();
     int totalCombinations = 1 << nPhotonTriggers; // 2^n combinations
-    
+
     for (int mask = 0; mask < totalCombinations; ++mask) {
         std::set<std::string> combination;
         combination.insert("MBD_NandS_geq_1"); // Always include MBD_NandS_geq_1
@@ -203,7 +211,7 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
         }
         triggerCombinations.push_back(combination);
     }
-    
+
     // Map from combination to vector of run numbers
     std::map<std::set<std::string>, std::vector<int>> tempCombinationToRuns;
 
@@ -211,7 +219,7 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
     for (const auto& runEntry : runToActiveTriggers) {
         int runNumber = runEntry.first;
         const std::set<std::string>& activeTriggers = runEntry.second;
-        
+
         // Proceed only if 'MBD_NandS_geq_1' is 'ON'
         if (activeTriggers.find("MBD_NandS_geq_1") != activeTriggers.end()) {
             // For each combination, check if it is satisfied
@@ -231,23 +239,78 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
             }
         }
     }
-    // Now, identify combinations with identical run lists
-    // Map from sorted run lists to sets of trigger combinations
-    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinations;
+
+    // Store initial combinations and their runs before splitting
+    initialCombinationToRuns = tempCombinationToRuns;
+
+    // Now, for each combination, split runs into runsBeforeFirmwareUpdate and runsAfterFirmwareUpdate
+    struct TempRunInfo {
+        std::vector<int> runsBeforeFirmwareUpdate;
+        std::vector<int> runsAfterFirmwareUpdate;
+    };
+    std::map<std::set<std::string>, TempRunInfo> tempCombinationToRunInfo;
+
+    // Collect combinations that include run 47289
+    std::set<std::set<std::string>> combinationsWithRun47289;
 
     for (const auto& entry : tempCombinationToRuns) {
         const std::set<std::string>& combination = entry.first;
-        std::vector<int> runList = entry.second;
-        std::sort(runList.begin(), runList.end()); // Ensure run list is sorted for comparison
+        const std::vector<int>& runs = entry.second;
 
-        runListToCombinations[runList].push_back(combination);
+        TempRunInfo runInfo;
+        bool hasRun47289 = false;
+        for (int runNumber : runs) {
+            if (runNumber == 47289) {
+                hasRun47289 = true;
+            }
+            if (runNumber < 47289) {
+                runInfo.runsBeforeFirmwareUpdate.push_back(runNumber);
+            } else {
+                runInfo.runsAfterFirmwareUpdate.push_back(runNumber);
+            }
+        }
+
+        if (hasRun47289) {
+            combinationsWithRun47289.insert(combination);
+        }
+
+        tempCombinationToRunInfo[combination] = runInfo;
     }
 
+    // Now, process runsBeforeFirmwareUpdate and runsAfterFirmwareUpdate separately
+
+    // For runsBeforeFirmwareUpdate
+    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinationsBeforeFirmwareUpdate;
+
+    for (const auto& entry : tempCombinationToRunInfo) {
+        const std::set<std::string>& combination = entry.first;
+        const std::vector<int>& runList = entry.second.runsBeforeFirmwareUpdate;
+        if (runList.empty()) continue;
+        std::vector<int> sortedRunList = runList;
+        std::sort(sortedRunList.begin(), sortedRunList.end());
+
+        runListToCombinationsBeforeFirmwareUpdate[sortedRunList].push_back(combination);
+    }
+
+    // For runsAfterFirmwareUpdate
+    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinationsAfterFirmwareUpdate;
+
+    for (const auto& entry : tempCombinationToRunInfo) {
+        const std::set<std::string>& combination = entry.first;
+        const std::vector<int>& runList = entry.second.runsAfterFirmwareUpdate;
+        if (runList.empty()) continue;
+        std::vector<int> sortedRunList = runList;
+        std::sort(sortedRunList.begin(), sortedRunList.end());
+
+        runListToCombinationsAfterFirmwareUpdate[sortedRunList].push_back(combination);
+    }
 
     // For each run list, find the largest combination(s) and remove subsets
-    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRuns;
 
-    for (const auto& entry : runListToCombinations) {
+    // Process before firmware update
+    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRunsBeforeFirmwareUpdate;
+
+    for (const auto& entry : runListToCombinationsBeforeFirmwareUpdate) {
         const std::vector<int>& runList = entry.first;
         const std::vector<std::set<std::string>>& combinations = entry.second;
 
@@ -263,34 +326,216 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
         for (const auto& combo : combinations) {
             if (combo.size() == maxSize) {
                 // Add to the filtered map
-                filteredCombinationToRuns[combo] = runList;
+                filteredCombinationToRunsBeforeFirmwareUpdate[combo] = runList;
             }
         }
     }
 
+    // Process after firmware update
+    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRunsAfterFirmwareUpdate;
 
-    // Map from combination to vector of run numbers
+    for (const auto& entry : runListToCombinationsAfterFirmwareUpdate) {
+        const std::vector<int>& runList = entry.first;
+        const std::vector<std::set<std::string>>& combinations = entry.second;
+
+        // Find the combination(s) with the maximum size (most triggers)
+        size_t maxSize = 0;
+        for (const auto& combo : combinations) {
+            if (combo.size() > maxSize) {
+                maxSize = combo.size();
+            }
+        }
+
+        // Collect combinations with maximum size
+        for (const auto& combo : combinations) {
+            if (combo.size() == maxSize) {
+                // Add to the filtered map
+                filteredCombinationToRunsAfterFirmwareUpdate[combo] = runList;
+            }
+        }
+    }
+
+    // Now, assemble combinationToRuns
     std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns;
 
-    // For each entry in filteredCombinationToRuns
-    for (const auto& entry : filteredCombinationToRuns) {
+    // Handle before firmware update
+    for (const auto& entry : filteredCombinationToRunsBeforeFirmwareUpdate) {
         const std::set<std::string>& combination = entry.first;
         const std::vector<int>& runs = entry.second;
 
-        DataStructures::RunInfo runInfo;
-        for (int runNumber : runs) {
-            if (runNumber < 47289) {
-                runInfo.runsBeforeFirmwareUpdate.push_back(runNumber);
-            } else {
-                runInfo.runsAfterFirmwareUpdate.push_back(runNumber);
+        DataStructures::RunInfo& runInfo = combinationToRuns[combination];
+        runInfo.runsBeforeFirmwareUpdate = runs;
+    }
+
+    // Handle after firmware update
+    for (const auto& entry : filteredCombinationToRunsAfterFirmwareUpdate) {
+        const std::set<std::string>& combination = entry.first;
+        const std::vector<int>& runs = entry.second;
+
+        DataStructures::RunInfo& runInfo = combinationToRuns[combination];
+        runInfo.runsAfterFirmwareUpdate = runs;
+    }
+
+    // Store final combinations for debug output
+    finalCombinations.assign(combinationToRuns.begin(), combinationToRuns.end());
+
+    // If debugMode is true, output the processing information and terminate
+    if (debugMode) {
+        // Output the detailed processing information
+        std::cout << BOLD << BLUE << "\n===== Processing Summary =====\n" << RESET;
+
+        // Output total number of runs processed
+        std::cout << BOLD << "Total runs processed: " << totalRunsProcessed << RESET << "\n";
+
+        // Output initial combinations before splitting
+        std::cout << BOLD << "\nInitial Active Trigger Combinations (before splitting due to firmware update):\n" << RESET;
+        // Prepare header
+        std::cout << BOLD << std::left << std::setw(60) << "Combination" << std::right << std::setw(20) << "Number of Runs" << RESET << "\n";
+        std::cout << std::string(80, '=') << "\n";
+
+        for (const auto& entry : initialCombinationToRuns) {
+            const std::set<std::string>& combination = entry.first;
+            const std::vector<int>& runs = entry.second;
+
+            // Build combination string
+            std::string combinationStr;
+            for (const auto& trigger : combination) {
+                combinationStr += trigger + " ";
+            }
+
+            // Output combination and number of runs
+            std::cout << std::left << std::setw(60) << combinationStr << std::right << std::setw(20) << runs.size() << "\n";
+        }
+
+        // Output combinations that had run 47289 and were split
+        std::cout << BOLD << "\nCombinations that included run 47289 and were split due to firmware update:\n" << RESET;
+        if (combinationsWithRun47289.empty()) {
+            std::cout << "  None\n";
+        } else {
+            // Prepare header
+            std::cout << BOLD << std::left << std::setw(60) << "Combination" << RESET << "\n";
+            std::cout << std::string(60, '=') << "\n";
+
+            for (const auto& combination : combinationsWithRun47289) {
+                // Build combination string
+                std::string combinationStr;
+                for (const auto& trigger : combination) {
+                    combinationStr += trigger + " ";
+                }
+
+                std::cout << std::left << std::setw(60) << combinationStr << "\n";
             }
         }
-        combinationToRuns[combination] = runInfo;
+
+        // Output groups found with the same run numbers before firmware update
+        std::cout << BOLD << "\nGroups with identical run numbers before firmware update:\n" << RESET;
+        int groupIndex = 1;
+        for (const auto& entry : runListToCombinationsBeforeFirmwareUpdate) {
+            const std::vector<int>& runList = entry.first;
+            const std::vector<std::set<std::string>>& combinations = entry.second;
+
+            std::cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
+            std::cout << "Run List (size " << runList.size() << "):\n";
+            // Print run numbers in columns
+            for (size_t i = 0; i < runList.size(); ++i) {
+                std::cout << std::setw(8) << runList[i];
+                if ((i + 1) % 10 == 0 || i == runList.size() - 1) {
+                    std::cout << "\n";
+                }
+            }
+
+            std::cout << "  Combinations:\n";
+            for (const auto& combo : combinations) {
+                // Build combination string
+                std::string combinationStr;
+                for (const auto& trigger : combo) {
+                    combinationStr += trigger + " ";
+                }
+                std::cout << "    " << combinationStr << "\n";
+            }
+        }
+
+        // Output groups found with the same run numbers after firmware update
+        std::cout << BOLD << "\nGroups with identical run numbers after firmware update:\n" << RESET;
+        groupIndex = 1;
+        for (const auto& entry : runListToCombinationsAfterFirmwareUpdate) {
+            const std::vector<int>& runList = entry.first;
+            const std::vector<std::set<std::string>>& combinations = entry.second;
+
+            std::cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
+            std::cout << "Run List (size " << runList.size() << "):\n";
+            // Print run numbers in columns
+            for (size_t i = 0; i < runList.size(); ++i) {
+                std::cout << std::setw(8) << runList[i];
+                if ((i + 1) % 10 == 0 || i == runList.size() - 1) {
+                    std::cout << "\n";
+                }
+            }
+
+            std::cout << "  Combinations:\n";
+            for (const auto& combo : combinations) {
+                // Build combination string
+                std::string combinationStr;
+                for (const auto& trigger : combo) {
+                    combinationStr += trigger + " ";
+                }
+                std::cout << "    " << combinationStr << "\n";
+            }
+        }
+
+        // Output final combinations after splitting and filtering
+        std::cout << BOLD << "\nFinal Active Trigger Combinations (after splitting and filtering):\n" << RESET;
+        // Prepare header
+        std::cout << BOLD << std::left << std::setw(60) << "Combination"
+                  << std::right << std::setw(25) << "Runs Before Firmware Update"
+                  << std::setw(25) << "Runs After Firmware Update" << RESET << "\n";
+        std::cout << std::string(110, '=') << "\n";
+
+        for (const auto& entry : finalCombinations) {
+            const std::set<std::string>& combination = entry.first;
+            const DataStructures::RunInfo& runInfo = entry.second;
+
+            // Build combination string
+            std::string combinationStr;
+            for (const auto& trigger : combination) {
+                combinationStr += trigger + " ";
+            }
+
+            std::cout << std::left << std::setw(60) << combinationStr;
+            std::cout << std::right << std::setw(25) << runInfo.runsBeforeFirmwareUpdate.size();
+            std::cout << std::setw(25) << runInfo.runsAfterFirmwareUpdate.size() << "\n";
+
+            // Optionally, print run numbers
+            if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+                std::cout << "  Runs before firmware update (" << runInfo.runsBeforeFirmwareUpdate.size() << " runs):\n";
+                for (size_t i = 0; i < runInfo.runsBeforeFirmwareUpdate.size(); ++i) {
+                    std::cout << std::setw(8) << runInfo.runsBeforeFirmwareUpdate[i];
+                    if ((i + 1) % 10 == 0 || i == runInfo.runsBeforeFirmwareUpdate.size() - 1) {
+                        std::cout << "\n";
+                    }
+                }
+            }
+            if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+                std::cout << "  Runs after firmware update (" << runInfo.runsAfterFirmwareUpdate.size() << " runs):\n";
+                for (size_t i = 0; i < runInfo.runsAfterFirmwareUpdate.size(); ++i) {
+                    std::cout << std::setw(8) << runInfo.runsAfterFirmwareUpdate[i];
+                    if ((i + 1) % 10 == 0 || i == runInfo.runsAfterFirmwareUpdate.size() - 1) {
+                        std::cout << "\n";
+                    }
+                }
+            }
+        }
+
+        std::cout << BOLD << BLUE << "\n===== End of Processing Summary =====\n" << RESET;
+
+        // Terminate the program
+        exit(0);
     }
 
     // Return the adjusted map
     return combinationToRuns;
 }
+
 
 
 
@@ -4021,6 +4266,10 @@ void PlotRunByRunHistograms(
     std::string runByRunDir = plotDirectory + "/runByRun8by8overlays";
     gSystem->mkdir(runByRunDir.c_str(), true);
 
+    // Create the directory for individual run plots
+    std::string runByRunIndividualDir = plotDirectory + "/runByRunIndividual";
+    gSystem->mkdir(runByRunIndividualDir.c_str(), true);
+
     // Determine the grid size
     const int nColumns = 9;
     const int nRows = 5;
@@ -4031,7 +4280,7 @@ void PlotRunByRunHistograms(
 
     // Loop over pages
     for (size_t pageIndex = 0; pageIndex < totalPages; ++pageIndex) {
-        // Create a canvas with multiple pads
+        // Create a canvas with multiple pads for overlay images
         TCanvas* canvas = new TCanvas("canvas", "Run-by-Run Overlay Plot", 2400, 1500); // Adjust size as needed
         canvas->Divide(nColumns, nRows);
 
@@ -4053,18 +4302,30 @@ void PlotRunByRunHistograms(
                 continue;
             }
 
-            // Get the pad and cd into it
-            canvas->cd(padIndex);
+            // Create vectors to store cloned histograms
+            std::vector<TH1*> clonedHists;
+            std::vector<TH1*> clonedHistsIndividual;
 
-            // Set log scale if desired
-            gPad->SetLogy();
-
-            // Create a legend for this pad
+            // Create a legend for the overlay canvas pad
             TLegend* legend = new TLegend(0.45, 0.6, 0.9, 0.9);
             legend->SetTextSize(0.04);
             legend->SetBorderSize(0);
 
             bool firstDraw = true;
+
+            // Create an individual canvas for this run
+            TCanvas* individualCanvas = new TCanvas("individualCanvas", "Individual Run Plot", 800, 600);
+            individualCanvas->cd();
+
+            // Set log scale if desired
+            individualCanvas->SetLogy();
+
+            // Create a legend for the individual canvas
+            TLegend* individualLegend = new TLegend(0.45, 0.6, 0.9, 0.9);
+            individualLegend->SetTextSize(0.04);
+            individualLegend->SetBorderSize(0);
+
+            bool firstDrawIndividual = true;
 
             // Loop over triggers and plot histograms
             for (const auto& trigger : triggers) {
@@ -4089,6 +4350,9 @@ void PlotRunByRunHistograms(
                 TH1* histClone = (TH1*)hist->Clone();
                 histClone->SetDirectory(0); // Detach from file
 
+                // Store the cloned histogram for later deletion
+                clonedHists.push_back(histClone);
+
                 int color = kBlack; // Default color
                 auto it = triggerColorMap.find(trigger);
                 if (it != triggerColorMap.end()) {
@@ -4107,6 +4371,26 @@ void PlotRunByRunHistograms(
                 histClone->GetXaxis()->SetLabelSize(0.07);
                 histClone->GetYaxis()->SetLabelSize(0.07);
 
+                // Plot into individual canvas
+                individualCanvas->cd();
+                if (firstDrawIndividual) {
+                    histClone->Draw("HIST");
+                    firstDrawIndividual = false;
+                } else {
+                    histClone->Draw("HIST SAME");
+                }
+
+                // Add to individual legend
+                std::string displayTriggerName = trigger;
+                if (triggerNameMap.find(trigger) != triggerNameMap.end()) {
+                    displayTriggerName = triggerNameMap.at(trigger);
+                }
+                individualLegend->AddEntry(histClone, displayTriggerName.c_str(), "l");
+
+                // Plot into pad of overlay canvas
+                canvas->cd(padIndex);
+                gPad->SetLogy();
+
                 if (firstDraw) {
                     histClone->Draw("HIST");
                     firstDraw = false;
@@ -4114,20 +4398,46 @@ void PlotRunByRunHistograms(
                     histClone->Draw("HIST SAME");
                 }
 
-                // Use the map to translate the trigger name if available
-                std::string displayTriggerName = trigger;
-                if (triggerNameMap.find(trigger) != triggerNameMap.end()) {
-                    displayTriggerName = triggerNameMap.at(trigger);
-                }
-
-                // Add histogram to legend with display name
+                // Add to legend
                 legend->AddEntry(histClone, displayTriggerName.c_str(), "l");
             }
 
-            // Draw the legend
+            // Draw the legend on individual canvas
+            individualCanvas->cd();
+            individualLegend->Draw();
+
+            // Draw the run number on the individual plot
+            TLatex runNumberTextIndividual;
+            runNumberTextIndividual.SetNDC(); // Use normalized device coordinates (0-1)
+            runNumberTextIndividual.SetTextAlign(13); // Align left and top
+            runNumberTextIndividual.SetTextSize(0.08); // Adjust text size as needed
+            runNumberTextIndividual.SetTextColor(kBlack); // Set text color
+
+            // Construct the run number string
+            std::ostringstream runNumberStrIndividual;
+            runNumberStrIndividual << "Run " << runNumber;
+
+            // Draw the run number at the top left corner
+            runNumberTextIndividual.DrawLatex(0.1, 0.85, runNumberStrIndividual.str().c_str());
+
+            // Update and save the individual canvas
+            individualCanvas->Modified();
+            individualCanvas->Update();
+
+            std::ostringstream individualOutputFileName;
+            individualOutputFileName << runByRunIndividualDir << "/Run" << runNumber << ".png";
+            individualCanvas->SaveAs(individualOutputFileName.str().c_str());
+            std::cout << "Saved individual run plot to " << individualOutputFileName.str() << std::endl;
+
+            // Clean up individual canvas and legend
+            delete individualCanvas;
+            delete individualLegend;
+
+            // Draw the legend on the pad
+            canvas->cd(padIndex);
             legend->Draw();
 
-            // Draw the run number on the plot
+            // Draw the run number on the pad
             TLatex runNumberText;
             runNumberText.SetNDC(); // Use normalized device coordinates (0-1)
             runNumberText.SetTextAlign(13); // Align left and top
@@ -4144,6 +4454,14 @@ void PlotRunByRunHistograms(
             // Close the run file
             runFile->Close();
             delete runFile;
+
+            // Clean up cloned histograms
+            for (auto hist : clonedHists) {
+                delete hist;
+            }
+
+            // Delete the legend
+            delete legend;
         }
 
         // Update the canvas
@@ -4255,7 +4573,7 @@ void PlotCombinedHistograms(
         runNumbersLatex.DrawLatex(0.5, 0.9, headerText.str().c_str());
 
         // Skip plotting run numbers for specific size
-        if (runNumbers.size() == 697 || runNumbers.size() == 700 || runNumbers.size() == 585 || runNumbers.size() == 728 || runNumbers.size() == 101) {
+        if (runNumbers.size() == 248 || runNumbers.size() == 722 || runNumbers.size() == 700 || runNumbers.size() == 443 || runNumbers.size() == 139 || runNumbers.size() == 101 || runNumbers.size() == 102) {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
             return;
         }
@@ -5092,9 +5410,11 @@ void AnalyzeTriggerGroupings() {
 
     std::string csvFilePath = "/Users/patsfan753/Desktop/DirectPhotonAna/triggerAnalysisCombined.csv";
     std::string outputDirectory = "/Users/patsfan753/Desktop/DirectPhotonAna/output";
-
+    
+    
+    bool debugMode = false;
     // Get the map of trigger combinations to run numbers
-    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath);
+    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath, debugMode);
 
     // Now, loop through the map and print out the groupings and structure
     std::cout << "\nSummary of Trigger Combinations:\n";
