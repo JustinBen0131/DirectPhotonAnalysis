@@ -1,3 +1,4 @@
+
 #ifndef ANALYZE_TRIGGER_GROUPINGS_H
 #define ANALYZE_TRIGGER_GROUPINGS_H
 
@@ -8,7 +9,6 @@
 #include <cctype>
 
 namespace ReferenceData {
-
     // Define first reference dataset
     const std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
     const std::vector<double> referenceRatio = {0.594, 0.664, 0.626, 0.658, 0.900, 0.715, 0.872, 0.907, 0.802};
@@ -18,11 +18,15 @@ namespace ReferenceData {
     const std::vector<double> referenceTwoPTGamma = {3.34, 4.38, 5.40, 6.41, 7.42, 8.43, 9.78, 11.81, 14.41};
     const std::vector<double> referenceTwoRatio = {0.477, 0.455, 0.448, 0.430, 0.338, 0.351, 0.400, 0.286, 0.371};
     const std::vector<double> referenceTwoStatError = {0.0020, 0.0060, 0.012, 0.021, 0.032, 0.053, 0.070, 0.130, 0.180};
-
 }
 
 // Define CutValues, FitParameters, and HistogramData within a dedicated namespace
 namespace DataStructures {
+
+    struct RunInfo {
+        std::vector<int> runsBeforeFirmwareUpdate;
+        std::vector<int> runsAfterFirmwareUpdate;
+    };
 
     struct CutValues {
         float clusECore = 0;
@@ -399,25 +403,6 @@ namespace Utils {
         normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
         return normalized;
     }
-
-    // Function to retrieve the human-readable combination name
-    std::string getTriggerCombinationName(const std::string& dirName, const std::map<std::string, std::string>& nameMap) {
-        std::string normalizedDir = normalizeString(dirName);
-        for (const auto& entry : nameMap) {
-            if (normalizeString(entry.first) == normalizedDir) {
-                return entry.second;
-            }
-        }
-        return dirName; // Default to directory name if not found
-    }
-
-    // Function to format a double to three significant figures as a string
-    std::string formatToThreeSigFigs(double value) {
-        std::ostringstream out;
-        out << std::fixed << std::setprecision(3) << value;
-        return out.str();
-    }
-
     // Function to check if a string ends with another string
     bool EndsWith(const std::string& fullString, const std::string& ending) {
         if (fullString.length() >= ending.length()) {
@@ -425,6 +410,49 @@ namespace Utils {
         } else {
             return false;
         }
+    }
+    // Helper function to strip firmware update tags from the combination name
+    std::string stripFirmwareTag(const std::string& combinationName) {
+        std::string strippedName = combinationName;
+        const std::vector<std::string> firmwareTags = {
+            "_beforeTriggerFirmwareUpdate",
+            "_afterTriggerFirmwareUpdate"
+        };
+
+        for (const auto& tag : firmwareTags) {
+            size_t pos = strippedName.find(tag);
+            if (pos != std::string::npos) {
+                strippedName.erase(pos, tag.length());
+                break;
+            }
+        }
+        return strippedName;
+    }
+
+    std::string getTriggerCombinationName(const std::string& combinationName, const std::map<std::string, std::string>& nameMap) {
+        std::string strippedCombinationName = stripFirmwareTag(combinationName);
+        std::string normalizedCombinationName = normalizeString(strippedCombinationName);
+
+        for (const auto& entry : nameMap) {
+            if (normalizeString(entry.first) == normalizedCombinationName) {
+                // Append firmware tag back to the human-readable name if present
+                if (EndsWith(combinationName, "_beforeTriggerFirmwareUpdate")) {
+                    return entry.second + " (Before Firmware Update)";
+                } else if (EndsWith(combinationName, "_afterTriggerFirmwareUpdate")) {
+                    return entry.second + " (After Firmware Update)";
+                } else {
+                    return entry.second;
+                }
+            }
+        }
+        return combinationName; // Default to combination name if not found
+    }
+
+    // Function to format a double to three significant figures as a string
+    std::string formatToThreeSigFigs(double value) {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3) << value;
+        return out.str();
     }
 
     // Existing sigmoidFit function remains unchanged
