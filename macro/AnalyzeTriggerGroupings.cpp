@@ -22,7 +22,7 @@
 #define CYAN    "\033[36m"      /* Cyan */
 #define BOLD    "\033[1m"
 
-bool enableFits = false; // Set to true if you want to enable the fits
+bool enableFits = true; // Set to true if you want to enable the fits
 
 
 std::map<std::tuple<
@@ -97,7 +97,10 @@ using GroupKey = std::tuple<
 >;
 
 std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(
-    const std::string& csvFilePath, bool debugMode) {
+    const std::string& csvFilePath,
+    bool debugMode,
+    const std::map<int, std::map<std::string, std::string>>& overrideTriggerStatus) {
+
 
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
     const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
@@ -181,6 +184,18 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
                 // Trim whitespace
                 status.erase(0, status.find_first_not_of(" \t\r\n"));
                 status.erase(status.find_last_not_of(" \t\r\n") + 1);
+
+                // Check if there is an override for this run and trigger
+                auto runOverrideIt = overrideTriggerStatus.find(runNumber);
+                if (runOverrideIt != overrideTriggerStatus.end()) {
+                    const auto& triggerOverrides = runOverrideIt->second;
+                    auto triggerOverrideIt = triggerOverrides.find(trigger);
+                    if (triggerOverrideIt != triggerOverrides.end()) {
+                        // Override exists, use it
+                        status = triggerOverrideIt->second;
+                    }
+                }
+
                 if (status == "ON") {
                     activeTriggers.insert(trigger);
                 }
@@ -1492,7 +1507,7 @@ void generateMesonPlotVsPt(
     const std::vector<double>& meanErrors,
     const std::string& yAxisLabel,
     const std::string& outputFilePath,
-    const std::string& triggerName,
+    const std::string& triggerCombinationName,
     const std::string& cutCombination,
     int markerStyle,
     int markerColor,
@@ -1555,7 +1570,7 @@ void generateMesonPlotVsPt(
 
     graph->Draw("P SAME");
 
-    // Add trigger and cut information on the top right of the plot
+    // Add trigger and cut information on the plot
     TLatex labelText;
     labelText.SetNDC();
     labelText.SetTextSize(0.042);
@@ -1564,16 +1579,12 @@ void generateMesonPlotVsPt(
     valueText.SetNDC();
     valueText.SetTextSize(0.042);
 
-    // Use the map to translate the trigger name if available
-    std::string displayTriggerName = triggerName;
-    if (TriggerCombinationNames::triggerCombinationNameMap.find(triggerName) != TriggerCombinationNames::triggerCombinationNameMap.end()) {
-        displayTriggerName = TriggerCombinationNames::triggerCombinationNameMap.at(triggerName);
-    }
+    // Use the utility function to get the display trigger group name, including firmware info if relevant
+    std::string displayTriggerGroupName = Utils::getTriggerCombinationName(triggerCombinationName, TriggerCombinationNames::triggerCombinationNameMap);
 
-    labelText.DrawLatex(0.2, 0.87, "#font[62]{Trigger:}");
-    valueText.DrawLatex(0.3, 0.87, displayTriggerName.c_str());
-    
-    
+    labelText.DrawLatex(0.2, 0.87, "#font[62]{Active Trigger Group:}");
+    valueText.DrawLatex(0.42, 0.87, displayTriggerGroupName.c_str());
+
     labelText.DrawLatex(0.2, 0.8, "#font[62]{ECore #geq}");
     std::ostringstream eCoreWithUnit;
     eCoreWithUnit << clusECore << "   GeV";
@@ -1831,7 +1842,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             std::string outputFilePathPi0 = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT.png";
             generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors,
                                   "Mean #pi^{0} Mass [GeV]", outputFilePathPi0, combinationName,
-                                  cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.14, 0.17, 2.0, 6.0);
+                                  cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.14, 0.17, 2.0, 10.0);
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
         }
@@ -1841,7 +1852,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             std::string outputFilePathEta = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT.png";
             generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors,
                                   "Mean #eta Mass [GeV]", outputFilePathEta, combinationName,
-                                  cutCombination, 21, kBlue, clusECore, chi, asymmetry, 0.55, 0.72, 2.0, 6.0);
+                                  cutCombination, 21, kBlue, clusECore, chi, asymmetry, 0.55, 0.72, 2.0, 10.0);
         } else {
             std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
         }
@@ -1911,7 +1922,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             mg->SetTitle(("Mean #pi^{0} Mass vs p_{T} (" + cutCombination + ")").c_str());
             mg->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
             mg->GetYaxis()->SetTitle("Mean #pi^{0} Mass [GeV]");
-            mg->GetXaxis()->SetLimits(2.0, 6.0);
+            mg->GetXaxis()->SetLimits(2.0, 7.0);
             mg->GetXaxis()->SetNdivisions(505);
             mg->GetYaxis()->SetRangeUser(0.14, 0.19);
 
@@ -2025,7 +2036,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             mgEta->SetTitle(("Mean #eta Mass vs p_{T} (" + cutCombination + ")").c_str());
             mgEta->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
             mgEta->GetYaxis()->SetTitle("Mean #eta Mass [GeV]");
-            mgEta->GetXaxis()->SetLimits(2.0, 6.0);
+            mgEta->GetXaxis()->SetLimits(2.0, 10.0);
             mgEta->GetXaxis()->SetNdivisions(505);
             mgEta->GetYaxis()->SetRangeUser(0.45, 0.75);
 
@@ -4260,7 +4271,8 @@ void PlotRunByRunHistograms(
     const std::vector<std::string>& triggers,
     const std::vector<int>& runNumbers,
     const std::map<std::string, int>& triggerColorMap,
-    const std::map<std::string, std::string>& triggerNameMap) {
+    const std::map<std::string, std::string>& triggerNameMap,
+    const std::string& firmwareStatus) {
 
     // Create the run-by-run overlays directory
     std::string runByRunDir = plotDirectory + "/runByRun8by8overlays";
@@ -4281,8 +4293,14 @@ void PlotRunByRunHistograms(
     // Loop over pages
     for (size_t pageIndex = 0; pageIndex < totalPages; ++pageIndex) {
         // Create a canvas with multiple pads for overlay images
-        TCanvas* canvas = new TCanvas("canvas", "Run-by-Run Overlay Plot", 2400, 1500); // Adjust size as needed
+        std::ostringstream canvasName;
+        canvasName << "canvas_page_" << pageIndex;
+        TCanvas* canvas = new TCanvas(canvasName.str().c_str(), "Run-by-Run Overlay Plot", 2400, 1500);
         canvas->Divide(nColumns, nRows);
+
+        // Vectors to store histograms and legends for this page
+        std::vector<TH1*> pageClonedHists;
+        std::vector<TLegend*> pageLegends;
 
         // Loop over runs in this page
         for (int padIndex = 1; padIndex <= runsPerPage; ++padIndex) {
@@ -4302,8 +4320,7 @@ void PlotRunByRunHistograms(
                 continue;
             }
 
-            // Create vectors to store cloned histograms
-            std::vector<TH1*> clonedHists;
+            // Create vectors to store cloned histograms for individual plots
             std::vector<TH1*> clonedHistsIndividual;
 
             // Create a legend for the overlay canvas pad
@@ -4311,10 +4328,15 @@ void PlotRunByRunHistograms(
             legend->SetTextSize(0.04);
             legend->SetBorderSize(0);
 
+            // Store the legend for later deletion
+            pageLegends.push_back(legend);
+
             bool firstDraw = true;
 
             // Create an individual canvas for this run
-            TCanvas* individualCanvas = new TCanvas("individualCanvas", "Individual Run Plot", 800, 600);
+            std::ostringstream individualCanvasName;
+            individualCanvasName << "individualCanvas_run_" << runNumber;
+            TCanvas* individualCanvas = new TCanvas(individualCanvasName.str().c_str(), "Individual Run Plot", 800, 600);
             individualCanvas->cd();
 
             // Set log scale if desired
@@ -4351,7 +4373,14 @@ void PlotRunByRunHistograms(
                 histClone->SetDirectory(0); // Detach from file
 
                 // Store the cloned histogram for later deletion
-                clonedHists.push_back(histClone);
+                pageClonedHists.push_back(histClone);
+
+                // Clone histogram for individual canvas
+                TH1* histCloneIndividual = (TH1*)histClone->Clone();
+                histCloneIndividual->SetDirectory(0); // Detach from file
+
+                // Store the cloned histogram for later deletion
+                clonedHistsIndividual.push_back(histCloneIndividual);
 
                 int color = kBlack; // Default color
                 auto it = triggerColorMap.find(trigger);
@@ -4362,22 +4391,32 @@ void PlotRunByRunHistograms(
                 histClone->SetLineColor(color);
                 histClone->SetLineWidth(2);
 
+                histCloneIndividual->SetLineColor(color);
+                histCloneIndividual->SetLineWidth(2);
+
                 // Set titles (optional)
                 histClone->SetTitle("");
                 histClone->GetXaxis()->SetTitle("");
                 histClone->GetYaxis()->SetTitle("");
 
+                histCloneIndividual->SetTitle("");
+                histCloneIndividual->GetXaxis()->SetTitle("");
+                histCloneIndividual->GetYaxis()->SetTitle("");
+
                 // Adjust axis labels and titles
                 histClone->GetXaxis()->SetLabelSize(0.07);
                 histClone->GetYaxis()->SetLabelSize(0.07);
 
+                histCloneIndividual->GetXaxis()->SetLabelSize(0.07);
+                histCloneIndividual->GetYaxis()->SetLabelSize(0.07);
+
                 // Plot into individual canvas
                 individualCanvas->cd();
                 if (firstDrawIndividual) {
-                    histClone->Draw("HIST");
+                    histCloneIndividual->Draw("HIST");
                     firstDrawIndividual = false;
                 } else {
-                    histClone->Draw("HIST SAME");
+                    histCloneIndividual->Draw("HIST SAME");
                 }
 
                 // Add to individual legend
@@ -4385,7 +4424,7 @@ void PlotRunByRunHistograms(
                 if (triggerNameMap.find(trigger) != triggerNameMap.end()) {
                     displayTriggerName = triggerNameMap.at(trigger);
                 }
-                individualLegend->AddEntry(histClone, displayTriggerName.c_str(), "l");
+                individualLegend->AddEntry(histCloneIndividual, displayTriggerName.c_str(), "l");
 
                 // Plot into pad of overlay canvas
                 canvas->cd(padIndex);
@@ -4408,16 +4447,14 @@ void PlotRunByRunHistograms(
 
             // Draw the run number on the individual plot
             TLatex runNumberTextIndividual;
-            runNumberTextIndividual.SetNDC(); // Use normalized device coordinates (0-1)
-            runNumberTextIndividual.SetTextAlign(13); // Align left and top
-            runNumberTextIndividual.SetTextSize(0.08); // Adjust text size as needed
-            runNumberTextIndividual.SetTextColor(kBlack); // Set text color
+            runNumberTextIndividual.SetNDC();
+            runNumberTextIndividual.SetTextAlign(13);
+            runNumberTextIndividual.SetTextSize(0.08);
+            runNumberTextIndividual.SetTextColor(kBlack);
 
-            // Construct the run number string
             std::ostringstream runNumberStrIndividual;
             runNumberStrIndividual << "Run " << runNumber;
 
-            // Draw the run number at the top left corner
             runNumberTextIndividual.DrawLatex(0.1, 0.85, runNumberStrIndividual.str().c_str());
 
             // Update and save the individual canvas
@@ -4433,35 +4470,44 @@ void PlotRunByRunHistograms(
             delete individualCanvas;
             delete individualLegend;
 
+            // Clean up cloned histograms for individual canvas
+            for (auto hist : clonedHistsIndividual) {
+                delete hist;
+            }
+
             // Draw the legend on the pad
             canvas->cd(padIndex);
             legend->Draw();
 
             // Draw the run number on the pad
             TLatex runNumberText;
-            runNumberText.SetNDC(); // Use normalized device coordinates (0-1)
-            runNumberText.SetTextAlign(13); // Align left and top
-            runNumberText.SetTextSize(0.08); // Adjust text size as needed
-            runNumberText.SetTextColor(kBlack); // Set text color
+            runNumberText.SetNDC();
+            runNumberText.SetTextAlign(13);
+            runNumberText.SetTextSize(0.08);
+            runNumberText.SetTextColor(kBlack);
 
-            // Construct the run number string
             std::ostringstream runNumberStr;
             runNumberStr << "Run " << runNumber;
 
-            // Draw the run number at the top left corner
             runNumberText.DrawLatex(0.1, 0.85, runNumberStr.str().c_str());
 
             // Close the run file
             runFile->Close();
             delete runFile;
 
-            // Clean up cloned histograms
-            for (auto hist : clonedHists) {
-                delete hist;
-            }
+            // Do not delete the histograms and legend used in the canvas here
+            // They will be deleted after saving the canvas
+        }
 
-            // Delete the legend
-            delete legend;
+        // Draw the firmware status on the overlay canvas
+        if (!firmwareStatus.empty()) {
+            canvas->cd();
+            TLatex firmwareStatusText;
+            firmwareStatusText.SetNDC();
+            firmwareStatusText.SetTextAlign(22); // Centered
+            firmwareStatusText.SetTextSize(0.03);
+            firmwareStatusText.SetTextColor(kBlack);
+            firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
         }
 
         // Update the canvas
@@ -4474,6 +4520,15 @@ void PlotRunByRunHistograms(
         canvas->SaveAs(outputFileName.str().c_str());
         std::cout << "Saved run-by-run overlay plot to " << outputFileName.str() << std::endl;
 
+        // Clean up histograms and legends for this page
+        for (auto hist : pageClonedHists) {
+            delete hist;
+        }
+
+        for (auto legend : pageLegends) {
+            delete legend;
+        }
+
         // Clean up
         delete canvas;
     }
@@ -4485,7 +4540,7 @@ void PlotCombinedHistograms(
     const std::string& outputDirectory,
     const std::vector<std::string>& combinedRootFiles,
     const std::map<std::string, std::vector<int>>& combinationToValidRuns,
-    const std::string& fitFunctionType = "sigmoid") {
+    const std::string& fitFunctionType = "sigmoid", bool fitOnly = false) {
     
     // List of all triggers
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
@@ -4499,9 +4554,10 @@ void PlotCombinedHistograms(
 
     // Create the base plot directory if it doesn't exist
     gSystem->mkdir(basePlotDirectory.c_str(), true);
+    
 
     // Function to draw run numbers on canvas
-    auto drawRunNumbersOnCanvas = [](const std::vector<int>& runNumbers) {
+    auto drawRunNumbersOnCanvas = [](const std::vector<int>& runNumbers, const std::string& firmwareStatus) {
         std::cout << "drawRunNumbersOnCanvas: Number of runs = " << runNumbers.size() << std::endl;
 
         // Set up TLatex for run numbers
@@ -4566,14 +4622,17 @@ void PlotCombinedHistograms(
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
-        double headerTextSize = 0.045;
+        double headerTextSize = 0.03;
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
-        headerText << "Includes " << runNumbers.size() << " runs";
-        runNumbersLatex.DrawLatex(0.5, 0.9, headerText.str().c_str());
+        headerText << runNumbers.size() << " runs";
+        if (!firmwareStatus.empty()) {
+            headerText << " (" << firmwareStatus << ")";
+        }
+        runNumbersLatex.DrawLatex(0.42, 0.9, headerText.str().c_str());
 
         // Skip plotting run numbers for specific size
-        if (runNumbers.size() == 248 || runNumbers.size() == 722 || runNumbers.size() == 700 || runNumbers.size() == 443 || runNumbers.size() == 139 || runNumbers.size() == 101 || runNumbers.size() == 102) {
+        if (runNumbers.size() == 257 || runNumbers.size() == 251 || runNumbers.size() == 102 || runNumbers.size() == 101 || runNumbers.size() == 240 || runNumbers.size() == 142 || runNumbers.size() == 440 || runNumbers.size() == 443 || runNumbers.size() == 725 || runNumbers.size() == 100 || runNumbers.size() == 250 || runNumbers.size() == 141 || runNumbers.size() == 254) {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
             return;
         }
@@ -4625,6 +4684,16 @@ void PlotCombinedHistograms(
         } else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root")) {
             firmwareTag = "_afterTriggerFirmwareUpdate";
         }
+        
+        // Extract firmware status from firmwareTag
+        std::string firmwareStatus;
+        if (firmwareTag == "_beforeTriggerFirmwareUpdate") {
+            firmwareStatus = "#bf{Before firmware update at run 47289}";
+        } else if (firmwareTag == "_afterTriggerFirmwareUpdate") {
+            firmwareStatus = "#bf{After firmware update at run 47289}";
+        } else {
+            firmwareStatus = "";
+        }
 
         std::cout << "Processing file: " << rootFileName << std::endl;
         std::cout << "Triggers found: ";
@@ -4663,8 +4732,8 @@ void PlotCombinedHistograms(
         // -------------------- Overlay 8x8 Tower NRG --------------------
         // Create a canvas
         TCanvas* canvas = new TCanvas("canvas", "Overlay Plot", 800, 600);
-        TLegend* legend = new TLegend(0.65, 0.53, 0.85, 0.88);
-        legend->SetTextSize(0.03);
+        TLegend* legend = new TLegend(0.5, 0.58, 0.8, 0.88);
+        legend->SetTextSize(0.028);
         canvas->SetLogy();
         bool firstDraw = true;
         // Loop over triggers and plot histograms
@@ -4719,7 +4788,7 @@ void PlotCombinedHistograms(
         if (it != combinationToValidRuns.end()) {
             const std::vector<int>& validRuns = it->second;
             // Draw run numbers on canvas using the drawRunNumbersOnCanvas function
-            drawRunNumbersOnCanvas(validRuns);
+            drawRunNumbersOnCanvas(validRuns, firmwareStatus);
         } else {
             // If no valid runs info, indicate it
             TLatex text;
@@ -4830,16 +4899,25 @@ void PlotCombinedHistograms(
                         std::ostringstream legendEntry;
                         legendEntry << displayPhotonTriggerName;
                         
-                        // Prepare the key
-                        std::pair<std::string, std::string> key = std::make_pair(Utils::stripFirmwareTag(combinationName), photonTrigger);
+                        // Prepare the key using combinationName with firmware tag
+                        std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
 
                         // Try to find the fit parameters for the combination and trigger
                         auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
+
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
+                            // If not found, try with combinationName without firmware tag
+                            std::string combinationNameWithoutFirmware = Utils::stripFirmwareTag(combinationName);
+                            key = std::make_pair(combinationNameWithoutFirmware, photonTrigger);
+                            it_fitParams = TriggerConfig::triggerFitParameters.find(key);
+                        }
+
                         if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
                             // If not found, try with empty combinationName
                             key = std::make_pair("", photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
+
 
                         if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
                             DataStructures::FitParameters params = it_fitParams->second;
@@ -4935,7 +5013,7 @@ void PlotCombinedHistograms(
                                 TLine* verticalLine = new TLine(x99, 0, x99, 1); // Draw line up to y = 1
                                 verticalLine->SetLineStyle(2); // Dashed line
                                 verticalLine->SetLineColor(color); // Use the color of the current trigger
-                                verticalLine->SetLineWidth(3); // Set the line width
+                                verticalLine->SetLineWidth(5); // Set the line width
                                 verticalLine->Draw("SAME");
                             }
                         } else {
@@ -4949,6 +5027,7 @@ void PlotCombinedHistograms(
                     
                     // Draw the legend
                     legendTurnOn->Draw();
+                    
                     
                     // Add a separate legend for the 99% efficiency line
                     TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72);
@@ -4967,6 +5046,18 @@ void PlotCombinedHistograms(
                     legendEfficiencyLine->SetLineWidth(2);
                     legendEfficiencyLine->Draw();
                     
+                    // Draw the firmware status on the overlay canvas
+                    if (!firmwareStatus.empty()) {
+                        canvasTurnOn->cd();
+                        TLatex firmwareStatusText;
+                        firmwareStatusText.SetNDC();
+                        firmwareStatusText.SetTextAlign(22); // Centered
+                        firmwareStatusText.SetTextSize(0.03);
+                        firmwareStatusText.SetTextColor(kBlack);
+                        firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
+                    }
+
+                    
                     canvasTurnOn->Modified();
                     canvasTurnOn->Update();
                     
@@ -4980,10 +5071,32 @@ void PlotCombinedHistograms(
                 }
             }
         }
+        if (fitOnly) {
+            // Close the ROOT file and continue to the next iteration
+            inputFile->Close();
+            delete inputFile;
+            
+            // Now, generate run-by-run overlays
+            auto it_run = combinationToValidRuns.find(combinationName);
+            // Call PlotRunByRunHistograms with firmwareStatus
+            if (it_run != combinationToValidRuns.end()) {
+                const std::vector<int>& validRuns = it_run->second;
+                PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers, validRuns, triggerColorMap, triggerNameMap, firmwareStatus);
+            } else {
+                std::cout << "No valid runs found for combination: " << combinationName << std::endl;
+            }
+            
+            continue; // Skip to the next ROOT file
+        }
+
+        // The following code will only execute if fitOnly is false
+        // -------------------- Process Invariant Mass Histograms --------------------
         ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers, triggerColorMap, combinationName);
 
+        // -------------------- Process Meson Mass vs Pt --------------------
         ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints);
-        
+
+        // -------------------- Process Isolation Energy Histograms --------------------
         ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory, triggers, combinationName);
 
         
@@ -4992,23 +5105,28 @@ void PlotCombinedHistograms(
         
         // Now, generate run-by-run overlays
         auto it_run = combinationToValidRuns.find(combinationName);
+        // Call PlotRunByRunHistograms with firmwareStatus
         if (it_run != combinationToValidRuns.end()) {
             const std::vector<int>& validRuns = it_run->second;
-            PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers, validRuns, triggerColorMap, triggerNameMap);
+            PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers, validRuns, triggerColorMap, triggerNameMap, firmwareStatus);
         } else {
             std::cout << "No valid runs found for combination: " << combinationName << std::endl;
         }
     }
-    // After processing all histograms, write the CSV file
-    std::string csvOutputPath = "/Users/patsfan753/Desktop/isolation_data.csv";
-    WriteIsolationDataToCSV(csvOutputPath);
-    readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
-    
-    std::vector<std::pair<float, float>> exclusionRanges = {
-    };
+    if (!fitOnly) {
+        std::string csvOutputPath = "/Users/patsfan753/Desktop/isolation_data.csv";
+        WriteIsolationDataToCSV(csvOutputPath);
+        readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
 
-    ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, false, true);
-    ProcessIsolationData(dataMap_outsideMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, true, false);
+        std::vector<std::pair<float, float>> exclusionRanges = {
+            {-100, 10},
+            {-10, 0},
+            {0, 10}
+        };
+
+        ProcessIsolationData(dataMap_inMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, false, true);
+        ProcessIsolationData(dataMap_outsideMassWindow, basePlotDirectory, exclusionRanges, triggerEfficiencyPoints, true, false);
+    }
 }
 
 void AddLabelsToCanvas(
@@ -5413,8 +5531,85 @@ void AnalyzeTriggerGroupings() {
     
     
     bool debugMode = false;
+    std::map<int, std::map<std::string, std::string>> overrideTriggerStatus; // Empty map
+    overrideTriggerStatus[46697]["Photon_3_GeV_plus_MBD_NS_geq_1"] = "OFF";
+    
+//    // Override the status of "Photon_5_GeV_plus_MBD_NS_geq_1" to "OFF" for run 46697
+//    overrideTriggerStatus[47289]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47303]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47323]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47332]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47334]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47375]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47807]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47846]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47848]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47887]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47962]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48080]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48100]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48287]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48293]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48295]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48338]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48342]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48343]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48346]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48352]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48357]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48409]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48410]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48412]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48417]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48418]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48422]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48423]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48454]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48459]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48461]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48462]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48638]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48645]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48656]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48701]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48720]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48726]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48734]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48859]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48868]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48884]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48903]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48936]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48984]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48986]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48991]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49028]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49029]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49044]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49061]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49138]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49219]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49247]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49250]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49263]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49266]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49270]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49310]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49317]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49329]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49336]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49337]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49348]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49363]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49377]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49433]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49434]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49435]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49467]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49748]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
+
     // Get the map of trigger combinations to run numbers
-    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath, debugMode);
+    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath, debugMode, overrideTriggerStatus);
 
     // Now, loop through the map and print out the groupings and structure
     std::cout << "\nSummary of Trigger Combinations:\n";
@@ -5532,7 +5727,7 @@ void AnalyzeTriggerGroupings() {
     gSystem->FreeDirectory(dirp);
 
     // Now plot the combined histograms
-    PlotCombinedHistograms(outputDirectory, combinedRootFiles, combinationToValidRuns);
+    PlotCombinedHistograms(outputDirectory, combinedRootFiles, combinationToValidRuns, "sigmoid", false);
 
     ProcessAllIsolationEnergies(outputDirectory, combinedRootFiles, TriggerCombinationNames::triggerCombinationNameMap);
 }
