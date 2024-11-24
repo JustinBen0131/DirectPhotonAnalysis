@@ -939,29 +939,147 @@ TFitResultPtr PerformFitting(TH1* hPi0Mass, TF1*& totalFit, TF1*& gaussPi0Fit, T
     fitStart = 0.04;
     fitEnd = 0.9;
 
-    // Pi0 estimates
-    double sigmaPi0Estimate = 0.021;  // Estimate for pi0 sigma
-    double meanPi0Estimate = 0.135;   // Estimate for pi0 mean
-    double amplitudePi0Estimate = hPi0Mass->GetBinContent(hPi0Mass->GetXaxis()->FindBin(meanPi0Estimate));
+    // Define expected peak regions for pi0 and eta
+    double pi0RangeMin = 0.1;
+    double pi0RangeMax = 0.18;
+    double etaRangeMin = 0.5;
+    double etaRangeMax = 0.7;
 
-    // Eta estimates
-    double sigmaEtaEstimate = 0.04;   // Eta sigma estimate
-    double meanEtaEstimate = 0.62;    // Eta mean estimate
-    double amplitudeEtaEstimate = 0.1 * amplitudePi0Estimate; // Eta amplitude much smaller than pi0
+    // Find maximum bin in pi0 peak region
+    int binPi0Min = hPi0Mass->GetXaxis()->FindBin(pi0RangeMin);
+    int binPi0Max = hPi0Mass->GetXaxis()->FindBin(pi0RangeMax);
+
+    int maxBinPi0 = binPi0Min;
+    double maxContentPi0 = 0.0;
+
+    for (int bin = binPi0Min; bin <= binPi0Max; ++bin) {
+        double content = hPi0Mass->GetBinContent(bin);
+        if (content > maxContentPi0) {
+            maxContentPi0 = content;
+            maxBinPi0 = bin;
+        }
+    }
+
+    double meanPi0Estimate = hPi0Mass->GetXaxis()->GetBinCenter(maxBinPi0);
+
+    // Estimate background under pi0 peak
+    double pi0BgLeftMin = 0.08;
+    double pi0BgLeftMax = 0.1;
+    double pi0BgRightMin = 0.18;
+    double pi0BgRightMax = 0.2;
+
+    int binPi0BgLeftMin = hPi0Mass->GetXaxis()->FindBin(pi0BgLeftMin);
+    int binPi0BgLeftMax = hPi0Mass->GetXaxis()->FindBin(pi0BgLeftMax);
+    int binPi0BgRightMin = hPi0Mass->GetXaxis()->FindBin(pi0BgRightMin);
+    int binPi0BgRightMax = hPi0Mass->GetXaxis()->FindBin(pi0BgRightMax);
+
+    double sumBgPi0 = 0.0;
+    int nBinsBgPi0 = 0;
+
+    for (int bin = binPi0BgLeftMin; bin <= binPi0BgLeftMax; ++bin) {
+        sumBgPi0 += hPi0Mass->GetBinContent(bin);
+        ++nBinsBgPi0;
+    }
+    for (int bin = binPi0BgRightMin; bin <= binPi0BgRightMax; ++bin) {
+        sumBgPi0 += hPi0Mass->GetBinContent(bin);
+        ++nBinsBgPi0;
+    }
+
+    double bgEstimatePi0 = (nBinsBgPi0 > 0) ? sumBgPi0 / nBinsBgPi0 : 0.0;
+    double amplitudePi0Estimate = maxContentPi0 - bgEstimatePi0;
+    amplitudePi0Estimate = std::max(amplitudePi0Estimate, 0.0); // Ensure non-negative amplitude
+
+    // Sigma estimate for pi0
+    double sigmaPi0Estimate = 0.012;  // Initial estimate
+    double sigmaPi0Min = 0.008;
+    double sigmaPi0Max = 0.02;
+
+    // Find maximum bin in eta peak region
+    int binEtaMin = hPi0Mass->GetXaxis()->FindBin(etaRangeMin);
+    int binEtaMax = hPi0Mass->GetXaxis()->FindBin(etaRangeMax);
+
+    int maxBinEta = binEtaMin;
+    double maxContentEta = 0.0;
+
+    for (int bin = binEtaMin; bin <= binEtaMax; ++bin) {
+        double content = hPi0Mass->GetBinContent(bin);
+        if (content > maxContentEta) {
+            maxContentEta = content;
+            maxBinEta = bin;
+        }
+    }
+
+    double meanEtaEstimate = hPi0Mass->GetXaxis()->GetBinCenter(maxBinEta);
+
+    // Estimate background under eta peak
+    double etaBgLeftMin = 0.4;
+    double etaBgLeftMax = 0.5;
+    double etaBgRightMin = 0.7;
+    double etaBgRightMax = 0.8;
+
+    int binEtaBgLeftMin = hPi0Mass->GetXaxis()->FindBin(etaBgLeftMin);
+    int binEtaBgLeftMax = hPi0Mass->GetXaxis()->FindBin(etaBgLeftMax);
+    int binEtaBgRightMin = hPi0Mass->GetXaxis()->FindBin(etaBgRightMin);
+    int binEtaBgRightMax = hPi0Mass->GetXaxis()->FindBin(etaBgRightMax);
+
+    double sumBgEta = 0.0;
+    int nBinsBgEta = 0;
+
+    for (int bin = binEtaBgLeftMin; bin <= binEtaBgLeftMax; ++bin) {
+        sumBgEta += hPi0Mass->GetBinContent(bin);
+        ++nBinsBgEta;
+    }
+    for (int bin = binEtaBgRightMin; bin <= binEtaBgRightMax; ++bin) {
+        sumBgEta += hPi0Mass->GetBinContent(bin);
+        ++nBinsBgEta;
+    }
+
+    double bgEstimateEta = (nBinsBgEta > 0) ? sumBgEta / nBinsBgEta : 0.0;
+    double amplitudeEtaEstimate = maxContentEta - bgEstimateEta;
+    amplitudeEtaEstimate = std::max(amplitudeEtaEstimate, 0.0); // Ensure non-negative amplitude
+
+    // Sigma estimate for eta
+    double sigmaEtaEstimate = 0.03;  // Initial estimate
+    double sigmaEtaMin = 0.02;
+    double sigmaEtaMax = 0.05;
 
     // Define the totalFit function as two Gaussians (pi0 and eta) plus a fourth-order polynomial (pol4)
     totalFit = new TF1("totalFit", "gaus(0) + gaus(3) + pol4(6)", fitStart, fitEnd);
     totalFit->SetLineColor(kRed);
 
-    // Set initial parameters for pi0 and eta Gaussian components
-    totalFit->SetParameters(amplitudePi0Estimate, meanPi0Estimate, sigmaPi0Estimate, amplitudeEtaEstimate, meanEtaEstimate, sigmaEtaEstimate);
+    // Set initial parameters for pi0 Gaussian (parameters 0-2)
+    totalFit->SetParameter(0, amplitudePi0Estimate);
+    totalFit->SetParameter(1, meanPi0Estimate);
+    totalFit->SetParameter(2, sigmaPi0Estimate);
 
-    // Set limits on eta mean and sigma to help fit convergence
-    totalFit->SetParLimits(4, 0.55, 0.65);   // Eta mean constrained between 550 and 650 MeV
-    totalFit->SetParLimits(5, 0.03, 0.05);   // Eta sigma constrained between 30 and 50 MeV
+    // Set parameter limits for pi0 Gaussian
+    totalFit->SetParLimits(0, 0, amplitudePi0Estimate * 2); // Amplitude positive and up to twice the estimate
+    totalFit->SetParLimits(1, meanPi0Estimate - 0.01, meanPi0Estimate + 0.01); // Mean within ±10 MeV
+    totalFit->SetParLimits(2, sigmaPi0Min, sigmaPi0Max); // Sigma within reasonable range
+
+    // Set initial parameters for eta Gaussian (parameters 3-5)
+    totalFit->SetParameter(3, amplitudeEtaEstimate);
+    totalFit->SetParameter(4, meanEtaEstimate);
+    totalFit->SetParameter(5, sigmaEtaEstimate);
+
+    // Set parameter limits for eta Gaussian
+    totalFit->SetParLimits(3, 0, amplitudeEtaEstimate * 2); // Amplitude positive and up to twice the estimate
+    totalFit->SetParLimits(4, meanEtaEstimate - 0.02, meanEtaEstimate + 0.02); // Mean within ±20 MeV
+    totalFit->SetParLimits(5, sigmaEtaMin, sigmaEtaMax); // Sigma within reasonable range
+
+    // Initial parameters for polynomial background (parameters 6-10)
+    for (int i = 6; i < 11; ++i) {
+        totalFit->SetParameter(i, 0); // Start with zero coefficients
+    }
 
     // Perform the fit
-    TFitResultPtr fitResult = hPi0Mass->Fit("totalFit", "SR+");
+    TFitResultPtr fitResult = hPi0Mass->Fit("totalFit", "SR");
+
+    // Check fit status and provide feedback
+    int fitStatus = fitResult;
+    if (fitStatus != 0) {
+        std::cerr << "Fit did not converge properly. Fit status: " << fitStatus << std::endl;
+    }
 
     // Separate Gaussian fits for pi0 and eta
     gaussPi0Fit = new TF1("gaussPi0Fit", "gaus", fitStart, fitEnd);
@@ -976,7 +1094,7 @@ TFitResultPtr PerformFitting(TH1* hPi0Mass, TF1*& totalFit, TF1*& gaussPi0Fit, T
 
     // Polynomial for the background (pol4 has 5 parameters)
     polyFit = new TF1("polyFit", "pol4", fitStart, fitEnd);
-    for (int i = 6; i < 11; i++) {  // Parameters 6 to 10 correspond to the pol4 background
+    for (int i = 6; i < 11; ++i) {  // Parameters 6 to 10 correspond to the pol4 background
         polyFit->SetParameter(i - 6, totalFit->GetParameter(i));
     }
     polyFit->SetLineColor(kOrange + 7);
@@ -984,6 +1102,7 @@ TFitResultPtr PerformFitting(TH1* hPi0Mass, TF1*& totalFit, TF1*& gaussPi0Fit, T
 
     return fitResult;
 }
+
 
 void printHistogramData(const std::vector<DataStructures::HistogramData>& histogramDataVector,
                         const std::string& outputDirPath,
@@ -1500,20 +1619,20 @@ void estimateSigmoidParameters(TH1* ratioHist, double& amplitude, double& xOffse
     slope = (deltaX > 0) ? 4.0 / deltaX : 0.1;  // Default to a gentle slope if deltaX is zero
 }
 
-
 void generateMesonPlotVsPt(
     const std::vector<double>& pTCenters,
     const std::vector<double>& meanValues,
     const std::vector<double>& meanErrors,
+    const std::vector<std::string>& triggersUsed,
     const std::string& yAxisLabel,
     const std::string& outputFilePath,
     const std::string& triggerCombinationName,
     const std::string& cutCombination,
-    int markerStyle,
-    int markerColor,
     double clusECore,
     double chi,
     double asymmetry,
+    const std::map<std::string, int>& triggerColorMap,
+    const std::map<std::string, std::string>& triggerNameMap,
     double yMin = std::numeric_limits<double>::quiet_NaN(),
     double yMax = std::numeric_limits<double>::quiet_NaN(),
     double xMin = std::numeric_limits<double>::quiet_NaN(),
@@ -1521,19 +1640,29 @@ void generateMesonPlotVsPt(
     if (pTCenters.empty()) {
         return; // Nothing to plot if pTCenters is empty
     }
-    
-    TGraphErrors* graph = new TGraphErrors(pTCenters.size());
-    for (size_t i = 0; i < pTCenters.size(); ++i) {
-        graph->SetPoint(i, pTCenters[i], meanValues[i]);
-        graph->SetPointError(i, 0, meanErrors[i]);
-    }
-    graph->SetMarkerStyle(markerStyle);
-    graph->SetMarkerSize(1);
-    graph->SetLineWidth(2);
-    graph->SetMarkerColor(markerColor);
-    graph->SetLineColor(markerColor);
 
-    // *** Move xMin and xMax calculation here ***
+    // Organize data by trigger
+    std::map<std::string, std::vector<double>> triggerToPtCenters;
+    std::map<std::string, std::vector<double>> triggerToMeanValues;
+    std::map<std::string, std::vector<double>> triggerToMeanErrors;
+
+    for (size_t i = 0; i < pTCenters.size(); ++i) {
+        const std::string& trigger = triggersUsed[i];
+        triggerToPtCenters[trigger].push_back(pTCenters[i]);
+        triggerToMeanValues[trigger].push_back(meanValues[i]);
+        triggerToMeanErrors[trigger].push_back(meanErrors[i]);
+    }
+
+    // Create canvas
+    TCanvas canvas;
+
+    // Create multigraph
+    TMultiGraph* mg = new TMultiGraph();
+
+    // Create legend
+    TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
+    legend->SetTextSize(0.03);
+
     // Automatically calculate x-axis range if xMin or xMax is NaN
     if (std::isnan(xMin) || std::isnan(xMax)) {
         xMin = 2;  // Default starting point for x-axis
@@ -1559,46 +1688,103 @@ void generateMesonPlotVsPt(
         yMax += yMargin;
     }
 
-    // Create canvas
-    TCanvas canvas;
+    // For each trigger, create a TGraphErrors and add to multigraph
+    for (const auto& triggerDataPair : triggerToPtCenters) {
+        const std::string& trigger = triggerDataPair.first;
+        const std::vector<double>& pts = triggerDataPair.second;
+        const std::vector<double>& means = triggerToMeanValues.at(trigger);
+        const std::vector<double>& errors = triggerToMeanErrors.at(trigger);
 
-    // Draw graph
-    TH1F* hFrame = canvas.DrawFrame(xMin, yMin, xMax, yMax, (";Leading Cluster p_{T} [GeV];" + yAxisLabel).c_str());
-    hFrame->GetXaxis()->SetNdivisions(5);
-    hFrame->GetXaxis()->SetLimits(xMin, xMax);
-    hFrame->GetXaxis()->CenterLabels(false);
+        // Debugging output
+        std::cout << CYAN << "Plotting data for trigger: " << trigger << RESET << std::endl;
+        std::cout << CYAN << "  Number of points: " << pts.size() << RESET << std::endl;
+        for (size_t i = 0; i < pts.size(); ++i) {
+            std::cout << CYAN << "    pT: " << pts[i] << ", mean: " << means[i] << ", error: " << errors[i] << RESET << std::endl;
+        }
 
-    graph->Draw("P SAME");
+        TGraphErrors* graph = new TGraphErrors(pts.size());
+        for (size_t i = 0; i < pts.size(); ++i) {
+            graph->SetPoint(i, pts[i], means[i]);
+            graph->SetPointError(i, 0, errors[i]);
+        }
+
+        // Set marker style and color
+        int markerStyle = 20; // Filled circle
+        int markerColor = kBlack; // Default color
+
+        auto it_color = triggerColorMap.find(trigger);
+        if (it_color != triggerColorMap.end()) {
+            markerColor = it_color->second;
+        }
+
+        graph->SetMarkerStyle(markerStyle);
+        graph->SetMarkerSize(1);
+        graph->SetLineWidth(2);
+        graph->SetMarkerColor(markerColor);
+        graph->SetLineColor(markerColor);
+
+        // Add to multigraph
+        mg->Add(graph, "P");
+
+        // Add to legend only if the trigger has data points within x-axis range
+        bool hasPointsInRange = false;
+        for (const auto& pt : pts) {
+            if (pt >= xMin && pt <= xMax) {
+                hasPointsInRange = true;
+                break;
+            }
+        }
+        if (hasPointsInRange) {
+            std::string displayTriggerName = trigger;
+            auto it_name = triggerNameMap.find(trigger);
+            if (it_name != triggerNameMap.end()) {
+                displayTriggerName = it_name->second;
+            }
+            legend->AddEntry(graph, displayTriggerName.c_str(), "p");
+        }
+    }
+
+    // Draw multigraph
+    mg->Draw("A");
+    mg->SetTitle("");
+    mg->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+    mg->GetYaxis()->SetTitle(yAxisLabel.c_str());
+    mg->GetXaxis()->SetLimits(xMin, xMax);
+    mg->GetXaxis()->SetNdivisions(505);
+    mg->GetYaxis()->SetRangeUser(yMin, yMax);
+
+    // Draw legend
+    legend->Draw();
 
     // Add trigger and cut information on the plot
     TLatex labelText;
     labelText.SetNDC();
-    labelText.SetTextSize(0.042);
+    labelText.SetTextSize(0.032);
 
     TLatex valueText;
     valueText.SetNDC();
-    valueText.SetTextSize(0.042);
+    valueText.SetTextSize(0.028);
 
     // Use the utility function to get the display trigger group name, including firmware info if relevant
     std::string displayTriggerGroupName = Utils::getTriggerCombinationName(triggerCombinationName, TriggerCombinationNames::triggerCombinationNameMap);
 
-    labelText.DrawLatex(0.2, 0.87, "#font[62]{Active Trigger Group:}");
-    valueText.DrawLatex(0.42, 0.87, displayTriggerGroupName.c_str());
+    labelText.DrawLatex(0.2, 0.9, "#font[62]{Active Trigger Group:}");
+    valueText.DrawLatex(0.42, 0.9, displayTriggerGroupName.c_str());
 
-    labelText.DrawLatex(0.2, 0.8, "#font[62]{ECore #geq}");
+    labelText.DrawLatex(0.2, 0.83, "#font[62]{ECore #geq}");
     std::ostringstream eCoreWithUnit;
     eCoreWithUnit << clusECore << "   GeV";
-    valueText.DrawLatex(0.42, 0.8, eCoreWithUnit.str().c_str());
+    valueText.DrawLatex(0.42, 0.83, eCoreWithUnit.str().c_str());
 
-    labelText.DrawLatex(0.2, 0.73, "#font[62]{#chi^{2} <}");
+    labelText.DrawLatex(0.2, 0.76, "#font[62]{#chi^{2} <}");
     std::ostringstream chiStr;
     chiStr << chi;
-    valueText.DrawLatex(0.42, 0.73, chiStr.str().c_str());
+    valueText.DrawLatex(0.42, 0.76, chiStr.str().c_str());
 
-    labelText.DrawLatex(0.2, 0.66, "#font[62]{Asymmetry <}");
+    labelText.DrawLatex(0.2, 0.69, "#font[62]{Asymmetry <}");
     std::ostringstream asymmetryStr;
     asymmetryStr << asymmetry;
-    valueText.DrawLatex(0.42, 0.66, asymmetryStr.str().c_str());
+    valueText.DrawLatex(0.42, 0.69, asymmetryStr.str().c_str());
 
     // Ensure the directory exists
     std::string outputDirPath = outputFilePath.substr(0, outputFilePath.find_last_of("/"));
@@ -1609,8 +1795,10 @@ void generateMesonPlotVsPt(
     std::cout << "Saved plot: " << outputFilePath << std::endl;
 
     // Clean up
-    delete graph;
+    delete mg;
+    delete legend;
 }
+
 
 
 void ProcessMesonMassVsPt(const std::string& plotDirectory,
@@ -1634,12 +1822,20 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
     std::string line;
     std::getline(csvFile, line); // Skip header
 
+    // Collect all trigger names found in the CSV file
+    std::set<std::string> triggersInDataFile;
+
     // Read data lines
     while (std::getline(csvFile, line)) {
         std::istringstream iss(line);
         std::string token;
 
         DataStructures::HistogramData data;
+
+        // Read fields
+        std::getline(iss, token, ',');
+        data.cuts.triggerName = token;
+        triggersInDataFile.insert(token);  // Collect trigger names
 
         // Read fields
         std::getline(iss, token, ',');
@@ -1689,6 +1885,19 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
 
     csvFile.close();
 
+    // Print triggers found in the CSV data
+    std::cout << GREEN << "Triggers found in CSV data:" << RESET << std::endl;
+    for (const auto& trigName : triggersInDataFile) {
+        std::cout << GREEN << "  - " << trigName << RESET << std::endl;
+    }
+
+    // Print triggers used in the code
+    std::cout << GREEN << "Triggers being used in code:" << RESET << std::endl;
+    for (const auto& trigName : triggers) {
+        std::cout << GREEN << "  - " << trigName << RESET << std::endl;
+    }
+
+
     // Organize data by cut combinations
     std::map<std::string, std::vector<DataStructures::HistogramData>> dataByCuts;
 
@@ -1701,8 +1910,32 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
 
         dataByCuts[cutCombination].push_back(data);
     }
+    // Define a map from trigger names to photon thresholds
+    std::map<std::string, double> triggerThresholds = {
+        {"MBD_NandS_geq_1", 0.0},
+        {"Photon_2_GeV_plus_MBD_NS_geq_1", 2.0},
+        {"Photon_3_GeV_plus_MBD_NS_geq_1", 3.0},
+        {"Photon_4_GeV_plus_MBD_NS_geq_1", 4.0},
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", 5.0},
 
-    // For each cut combination, process data
+//        {"Photon_2_GeV", 2.0},
+//        {"Photon_3_GeV", 3.0},
+//        {"Photon_4_GeV", 4.0},
+//        {"Photon_5_GeV", 5.0},
+        // Add other triggers if necessary
+    };
+    // Function to extract photon threshold from trigger name if not in the map
+    auto extractPhotonThreshold = [](const std::string& triggerName) -> double {
+        std::regex re("Photon_(\\d+)_GeV");
+        std::smatch match;
+        if (std::regex_search(triggerName, match, re)) {
+            if (match.size() >= 2) {
+                return std::stod(match[1]);
+            }
+        }
+        return 0.0; // Default to 0 if parsing fails
+    };
+
     for (const auto& cutPair : dataByCuts) {
         const std::string& cutCombination = cutPair.first;
         const std::vector<DataStructures::HistogramData>& dataList = cutPair.second;
@@ -1711,10 +1944,12 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         std::vector<double> pTCentersPi0;
         std::vector<double> meanPi0Values;
         std::vector<double> meanPi0Errors;
+        std::vector<std::string> triggersUsedPi0; // New vector to track triggers used
 
         std::vector<double> pTCentersEta;
         std::vector<double> meanEtaValues;
         std::vector<double> meanEtaErrors;
+        std::vector<std::string> triggersUsedEta; // New vector to track triggers used
 
         double clusECore = dataList[0].cuts.clusECore;
         double chi = dataList[0].cuts.chi;
@@ -1730,6 +1965,10 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
 
             std::pair<double, double> pTBin = std::make_pair(data.cuts.pTMin, data.cuts.pTMax);
             dataPerPtBin[pTBin][data.cuts.triggerName] = data;
+
+            // Debugging output
+            std::cout << BLUE << "Added data for pT bin [" << data.cuts.pTMin << ", " << data.cuts.pTMax << "], "
+                      << "trigger: " << data.cuts.triggerName << RESET << std::endl;
         }
 
         // Maps to store data for the overlay plots
@@ -1745,7 +1984,6 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         std::map<std::string, std::vector<double>> triggerToMeanEtaValues;
         std::map<std::string, std::vector<double>> triggerToMeanEtaErrors;
 
-        // Now, for each pT bin, collect data from all triggers
         for (const auto& ptBinData : dataPerPtBin) {
             double pTMin = ptBinData.first.first;
             double pTMax = ptBinData.first.second;
@@ -1753,32 +1991,12 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
 
             const auto& triggerDataMap = ptBinData.second;
 
-            // For the overlay plots, collect data from all triggers
-            for (const auto& triggerDataPair : triggerDataMap) {
-                const std::string& triggerName = triggerDataPair.first;
-                const DataStructures::HistogramData& data = triggerDataPair.second;
-
-                // Validate meanPi0 before adding
-                bool validPi0 = data.meanPi0 > 0.0 && data.meanPi0 < 0.4;
-                bool validEta = data.meanEta > 0.3 && data.meanEta < 1.0;
-
-                triggersInData.insert(triggerName);
-
-                if (validPi0) {
-                    triggerToPtCentersPi0[triggerName].push_back(pTCenter);
-                    triggerToMeanPi0Values[triggerName].push_back(data.meanPi0);
-                    triggerToMeanPi0Errors[triggerName].push_back(data.meanPi0Error);
-                }
-
-                if (validEta) {
-                    triggerToPtCentersEta[triggerName].push_back(pTCenter);
-                    triggerToMeanEtaValues[triggerName].push_back(data.meanEta);
-                    triggerToMeanEtaErrors[triggerName].push_back(data.meanEtaError);
-                }
-            }
-
             // Decide which trigger to use for the main plot
             std::string triggerToUse = "MBD_NandS_geq_1";
+            double maxPhotonThreshold = 0.0;
+
+            // List to keep track of efficient triggers at this pT bin
+            std::vector<std::string> efficientTriggers;
 
             if (!triggerEfficiencyPoints.empty()) {
                 for (const auto& photonTrigger : triggers) {
@@ -1787,13 +2005,34 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
                         if (it != triggerEfficiencyPoints.end()) {
                             double x99 = it->second;
                             if (pTCenter >= x99) {
-                                triggerToUse = photonTrigger;
-                                break; // Use the first photon trigger that becomes efficient
+                                // Get the photon threshold
+                                double photonThreshold = 0.0;
+                                auto thresholdIt = triggerThresholds.find(photonTrigger);
+                                if (thresholdIt != triggerThresholds.end()) {
+                                    photonThreshold = thresholdIt->second;
+                                } else {
+                                    // Extract threshold from trigger name if not in the map
+                                    photonThreshold = extractPhotonThreshold(photonTrigger);
+                                }
+
+                                if (photonThreshold > maxPhotonThreshold) {
+                                    maxPhotonThreshold = photonThreshold;
+                                    triggerToUse = photonTrigger;
+                                }
+                                efficientTriggers.push_back(photonTrigger);
                             }
                         }
                     }
                 }
             }
+
+            // Debugging output
+            std::cout << CYAN << "Processing pT bin [" << pTMin << ", " << pTMax << "], pTCenter: " << pTCenter << RESET << std::endl;
+            std::cout << CYAN << "Efficient triggers at this pT:" << RESET << std::endl;
+            for (const auto& etrig : efficientTriggers) {
+                std::cout << CYAN << "  - " << etrig << RESET << std::endl;
+            }
+            std::cout << CYAN << "Selected trigger to use: " << triggerToUse << RESET << std::endl;
 
             // For the main plot, check if data from the selected trigger is available
             auto dataIt = triggerDataMap.find(triggerToUse);
@@ -1804,45 +2043,51 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
                 bool validPi0 = selectedData.meanPi0 > 0.0 && selectedData.meanPi0 < 0.4;
                 bool validEta = selectedData.meanEta > 0.3 && selectedData.meanEta < 1.0;
 
-                if (!validPi0) {
-                    std::cerr << "Warning: Invalid meanPi0 (" << selectedData.meanPi0
-                              << ") for pT bin " << pTMin << " - " << pTMax
-                              << ". Skipping this point for pi0." << std::endl;
+                // Debugging output
+                std::cout << GREEN << "Data found for trigger " << triggerToUse << " at pT bin [" << pTMin << ", " << pTMax << "]" << RESET << std::endl;
+                if (validPi0) {
+                    std::cout << GREEN << "  Valid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
+                } else {
+                    std::cout << YELLOW << "  Invalid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
                 }
 
-                if (!validEta) {
-                    std::cerr << "Warning: Invalid meanEta (" << selectedData.meanEta
-                              << ") for pT bin " << pTMin << " - " << pTMax
-                              << ". Skipping this point for eta." << std::endl;
+                if (validEta) {
+                    std::cout << GREEN << "  Valid Eta mean: " << selectedData.meanEta << RESET << std::endl;
+                } else {
+                    std::cout << YELLOW << "  Invalid Eta mean: " << selectedData.meanEta << RESET << std::endl;
                 }
 
                 if (validPi0) {
                     pTCentersPi0.push_back(pTCenter);
                     meanPi0Values.push_back(selectedData.meanPi0);
                     meanPi0Errors.push_back(selectedData.meanPi0Error);
-                    std::cout << "Added valid Pi0: pT = " << pTCenter
-                              << ", meanPi0 = " << selectedData.meanPi0 << std::endl;
+                    triggersUsedPi0.push_back(triggerToUse); // Track the trigger used
                 }
 
                 if (validEta) {
                     pTCentersEta.push_back(pTCenter);
                     meanEtaValues.push_back(selectedData.meanEta);
                     meanEtaErrors.push_back(selectedData.meanEtaError);
-                    std::cout << "Added valid Eta: pT = " << pTCenter
-                              << ", meanEta = " << selectedData.meanEta << std::endl;
+                    triggersUsedEta.push_back(triggerToUse); // Track the trigger used
                 }
             } else {
-                std::cerr << "Warning: Data not found for pT bin " << pTMin << " - " << pTMax
-                          << " and trigger " << triggerToUse << std::endl;
+                std::cout << RED << "Warning: Data not found for pT bin [" << pTMin << ", " << pTMax << "] and trigger " << triggerToUse << RESET << std::endl;
+                // Debugging output: List available triggers for this pT bin
+                std::cout << YELLOW << "Available triggers for this pT bin:" << RESET << std::endl;
+                for (const auto& tDataPair : triggerDataMap) {
+                    std::cout << YELLOW << "  - " << tDataPair.first << RESET << std::endl;
+                }
             }
         }
 
         // Generate π⁰ mass vs pT plot if we have valid data
         if (!pTCentersPi0.empty()) {
             std::string outputFilePathPi0 = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors,
+            generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors, triggersUsedPi0,
                                   "Mean #pi^{0} Mass [GeV]", outputFilePathPi0, combinationName,
-                                  cutCombination, 20, kRed, clusECore, chi, asymmetry, 0.14, 0.17, 2.0, 10.0);
+                                  cutCombination, clusECore, chi, asymmetry,
+                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
+                                  0.13, 0.19, 2.0, 7.0);
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
         }
@@ -1850,9 +2095,35 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         // Generate η mass vs pT plot if we have valid data
         if (!pTCentersEta.empty()) {
             std::string outputFilePathEta = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors,
+            generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors, triggersUsedEta,
                                   "Mean #eta Mass [GeV]", outputFilePathEta, combinationName,
-                                  cutCombination, 21, kBlue, clusECore, chi, asymmetry, 0.55, 0.72, 2.0, 10.0);
+                                  cutCombination, clusECore, chi, asymmetry,
+                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
+                                  0.55, 0.72, 2.0, 15.0);
+        } else {
+            std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
+        }
+
+        // Generate π⁰ mass vs pT plot if we have valid data
+        if (!pTCentersPi0.empty()) {
+            std::string outputFilePathPi0 = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT.png";
+            generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors, triggersUsedPi0,
+                                  "Mean #pi^{0} Mass [GeV]", outputFilePathPi0, combinationName,
+                                  cutCombination, clusECore, chi, asymmetry,
+                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
+                                  0.13, 0.19, 2.0, 7.0);
+        } else {
+            std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
+        }
+
+        // Generate η mass vs pT plot if we have valid data
+        if (!pTCentersEta.empty()) {
+            std::string outputFilePathEta = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT.png";
+            generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors, triggersUsedEta,
+                                  "Mean #eta Mass [GeV]", outputFilePathEta, combinationName,
+                                  cutCombination, clusECore, chi, asymmetry,
+                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
+                                  0.55, 0.72, 2.0, 20.0);
         } else {
             std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
         }
@@ -2036,7 +2307,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
             mgEta->SetTitle(("Mean #eta Mass vs p_{T} (" + cutCombination + ")").c_str());
             mgEta->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
             mgEta->GetYaxis()->SetTitle("Mean #eta Mass [GeV]");
-            mgEta->GetXaxis()->SetLimits(2.0, 10.0);
+            mgEta->GetXaxis()->SetLimits(2.0, 15.0);
             mgEta->GetXaxis()->SetNdivisions(505);
             mgEta->GetYaxis()->SetRangeUser(0.45, 0.75);
 
@@ -4507,7 +4778,7 @@ void PlotRunByRunHistograms(
             firmwareStatusText.SetTextAlign(22); // Centered
             firmwareStatusText.SetTextSize(0.03);
             firmwareStatusText.SetTextColor(kBlack);
-            firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
+            firmwareStatusText.DrawLatex(0.5, 1.0, firmwareStatus.c_str());
         }
 
         // Update the canvas
