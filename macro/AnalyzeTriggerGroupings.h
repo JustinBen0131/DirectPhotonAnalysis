@@ -286,38 +286,245 @@ namespace TriggerConfig {
             0.1,   // sigmaMin (placeholder value)
             1.0    // sigmaMax (placeholder value)
         } },
-        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
-            1.25,   // amplitudeEstimate
-            0.62,   // slopeEstimate
-            7,   // xOffsetEstimate
-            1.0,  // amplitudeMin
-            1.3,  // amplitudeMax
-            0.62,   // slopeMin
-            0.66,  // slopeMax
-            6.8,   // xOffsetMin
-            7.2    // xOffsetMax
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_beforeTriggerFirmwareUpdate", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            7.25,  // xOffsetEstimate
+            7.2,  // xOffsetMin
+            7.3,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
         } },
-        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
-            1.25,   // amplitudeEstimate
-            0.64,   // slopeEstimate
-            7.2,   // xOffsetEstimate
-            1.0,  // amplitudeMin
-            1.3,  // amplitudeMax
-            0.62,   // slopeMin
-            0.66,  // slopeMax
-            7.0,   // xOffsetMin
-            7.5    // xOffsetMax
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_beforeTriggerFirmwareUpdate", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.47,  // slopeEstimate
+            0.46,  // slopeMin
+            0.48,  // slopeMax
+            
+            8.45,   // xOffsetEstimate
+            8.35,   // xOffsetMin
+            8.55,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
         } },
-        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
-            1.0,   // amplitudeEstimate
-            0.48,  // slopeEstimate
-            10.5,   // xOffsetEstimate
-            0.98,  // amplitudeMin
-            1.05,  // amplitudeMax
-            0.46,   // slopeMin
-            0.5,   // slopeMax
-            10.4,   // xOffsetMin
-            10.6    // xOffsetMax
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_beforeTriggerFirmwareUpdate", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.45,  // slopeEstimate
+            0.44,  // slopeMin
+            0.46,  // slopeMax
+            
+            9.65,   // xOffsetEstimate
+            9.64,   // xOffsetMin
+            9.66,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.64,  // slopeEstimate
+            0.63,  // slopeMin
+            0.65,  // slopeMax
+            
+            7.95,  // xOffsetEstimate
+            7.9,  // xOffsetMin
+            8.0,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.57,  // slopeEstimate
+            0.52,  // slopeMin
+            0.62,  // slopeMax
+            
+            9.0,   // xOffsetEstimate
+            9.1,   // xOffsetMin
+            8.9,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.5,  // slopeEstimate
+            0.49,  // slopeMin
+            0.51,  // slopeMax
+            
+            10.1,   // xOffsetEstimate
+            10,   // xOffsetMin
+            10.2,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_beforeTriggerFirmwareUpdate", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            7.25,  // xOffsetEstimate
+            7.2,  // xOffsetMin
+            7.3,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_beforeTriggerFirmwareUpdate", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.47,  // slopeEstimate
+            0.46,  // slopeMin
+            0.48,  // slopeMax
+            
+            8.45,   // xOffsetEstimate
+            8.35,   // xOffsetMin
+            8.55,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Photon_3_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.54,  // slopeEstimate
+            0.53,  // slopeMin
+            0.55,  // slopeMax
+            
+            8.0,  // xOffsetEstimate
+            7.9,  // xOffsetMin
+            7.13,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.42,  // slopeEstimate
+            0.415,  // slopeMin
+            0.425,  // slopeMax
+            
+            8.45,   // xOffsetEstimate
+            8.35,   // xOffsetMin
+            8.55,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Photon_2_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.42,  // slopeEstimate
+            0.415,  // slopeMin
+            0.425,  // slopeMax
+            
+            8.45,   // xOffsetEstimate
+            8.35,   // xOffsetMin
+            8.55,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Photon_2_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1", "Photon_4_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.25,  // amplitudeEstimate
+            1.0,   // amplitudeMin
+            1.3,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.42,  // slopeEstimate
+            0.415,  // slopeMin
+            0.425,  // slopeMax
+            
+            8.45,   // xOffsetEstimate
+            8.35,   // xOffsetMin
+            8.55,    // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
         } },
         { {"", "Photon_2_GeV_plus_MBD_NS_geq_1"}, {
             // Common parameters
