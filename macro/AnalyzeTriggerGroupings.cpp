@@ -1633,13 +1633,54 @@ void generateMesonPlotVsPt(
     double asymmetry,
     const std::map<std::string, int>& triggerColorMap,
     const std::map<std::string, std::string>& triggerNameMap,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax,
     double yMin = std::numeric_limits<double>::quiet_NaN(),
-    double yMax = std::numeric_limits<double>::quiet_NaN(),
-    double xMin = std::numeric_limits<double>::quiet_NaN(),
-    double xMax = std::numeric_limits<double>::quiet_NaN()) {
+    double yMax = std::numeric_limits<double>::quiet_NaN()) {
+
     if (pTCenters.empty()) {
         return; // Nothing to plot if pTCenters is empty
     }
+
+    // Create canvas
+    TCanvas canvas("canvas", "", 800, 600);
+
+    // Prepare bin edges for variable bin widths
+    std::vector<double> binEdges;
+    for (const auto& bin : pT_bins) {
+        if (bin.first >= pTExclusionMax) {
+            break;
+        }
+        binEdges.push_back(bin.first);
+    }
+    // Add the upper edge of the last included bin
+    binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+
+    int nBins = binEdges.size() - 1;
+    double* binEdgesArray = &binEdges[0];
+
+    // Create a dummy histogram to set up the axes
+    TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+    hFrame->SetStats(0);
+    hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+    hFrame->GetYaxis()->SetTitle(yAxisLabel.c_str());
+
+    // Set y-axis range
+    if (std::isnan(yMin) || std::isnan(yMax)) {
+        yMin = *std::min_element(meanValues.begin(), meanValues.end());
+        yMax = *std::max_element(meanValues.begin(), meanValues.end());
+        double yMargin = 0.05 * (yMax - yMin);
+        yMin -= yMargin;
+        yMax += yMargin;
+    }
+    hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+
+    // Remove x-axis labels and ticks
+    hFrame->GetXaxis()->SetLabelOffset(999);
+    hFrame->GetXaxis()->SetTickLength(0);
+
+    // Draw the frame
+    hFrame->Draw();
 
     // Organize data by trigger
     std::map<std::string, std::vector<double>> triggerToPtCenters;
@@ -1653,108 +1694,135 @@ void generateMesonPlotVsPt(
         triggerToMeanErrors[trigger].push_back(meanErrors[i]);
     }
 
-    // Create canvas
-    TCanvas canvas;
-
-    // Create multigraph
-    TMultiGraph* mg = new TMultiGraph();
-
     // Create legend
-    TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
+    TLegend* legend = new TLegend(0.55, 0.67, 0.88, 0.87);
     legend->SetTextSize(0.03);
 
-    // Automatically calculate x-axis range if xMin or xMax is NaN
-    if (std::isnan(xMin) || std::isnan(xMax)) {
-        xMin = 2;  // Default starting point for x-axis
-        xMax = *std::max_element(pTCenters.begin(), pTCenters.end()) * 1.1;  // Adding 10% margin
-    }
+    // Keep track of graphs to delete later
+    std::vector<TGraphErrors*> graphs;
 
-    // Automatically calculate y-axis range if yMin or yMax is not provided
-    if (std::isnan(yMin) || std::isnan(yMax)) {
-        yMin = std::numeric_limits<double>::max();
-        yMax = std::numeric_limits<double>::lowest();
-        for (size_t i = 0; i < meanValues.size(); ++i) {
-            double xVal = pTCenters[i];
-            if (xVal >= xMin && xVal <= xMax) {
-                double yVal = meanValues[i];
-                double yErr = meanErrors[i];
-                yMin = std::min(yMin, yVal - yErr);
-                yMax = std::max(yMax, yVal + yErr);
-            }
-        }
-        // Add a 5% margin around yMin and yMax
-        double yMargin = 0.05 * (yMax - yMin);
-        yMin -= yMargin;
-        yMax += yMargin;
-    }
-
-    // For each trigger, create a TGraphErrors and add to multigraph
+    // For each trigger, create a TGraphErrors and add to the canvas
     for (const auto& triggerDataPair : triggerToPtCenters) {
         const std::string& trigger = triggerDataPair.first;
         const std::vector<double>& pts = triggerDataPair.second;
         const std::vector<double>& means = triggerToMeanValues.at(trigger);
         const std::vector<double>& errors = triggerToMeanErrors.at(trigger);
 
-        // Debugging output
-        std::cout << CYAN << "Plotting data for trigger: " << trigger << RESET << std::endl;
-        std::cout << CYAN << "  Number of points: " << pts.size() << RESET << std::endl;
+        TGraphErrors* graph = new TGraphErrors();
+
         for (size_t i = 0; i < pts.size(); ++i) {
-            std::cout << CYAN << "    pT: " << pts[i] << ", mean: " << means[i] << ", error: " << errors[i] << RESET << std::endl;
+            double pT = pts[i];
+            double mean = means[i];
+            double meanError = errors[i];
+
+            // Exclude points beyond pTExclusionMax
+            if (pT >= pTExclusionMax) {
+                continue;
+            }
+
+            // Find the bin corresponding to this pT
+            int binIndex = -1;
+            for (size_t j = 0; j < pT_bins.size(); ++j) {
+                if (pT_bins[j].first >= pTExclusionMax) {
+                    break;
+                }
+                if (pT >= pT_bins[j].first && pT < pT_bins[j].second) {
+                    binIndex = j;
+                    break;
+                }
+            }
+            if (binIndex == -1) {
+                continue;
+            }
+
+            // Calculate the bin center
+            double binLowEdge = pT_bins[binIndex].first;
+            double binUpEdge = pT_bins[binIndex].second;
+            double binCenter = (binLowEdge + binUpEdge) / 2.0;
+
+            int pointIndex = graph->GetN();
+            graph->SetPoint(pointIndex, binCenter, mean);
+            graph->SetPointError(pointIndex, 0, meanError); // No x errors
         }
 
-        TGraphErrors* graph = new TGraphErrors(pts.size());
-        for (size_t i = 0; i < pts.size(); ++i) {
-            graph->SetPoint(i, pts[i], means[i]);
-            graph->SetPointError(i, 0, errors[i]);
+        if (graph->GetN() == 0) {
+            delete graph;
+            continue;
         }
 
         // Set marker style and color
-        int markerStyle = 20; // Filled circle
-        int markerColor = kBlack; // Default color
+        int markerStyle = 20;
+        int markerColor = kBlack;
 
         auto it_color = triggerColorMap.find(trigger);
         if (it_color != triggerColorMap.end()) {
             markerColor = it_color->second;
         }
-
         graph->SetMarkerStyle(markerStyle);
-        graph->SetMarkerSize(1);
+
+        graph->SetMarkerSize(1.0);
+
         graph->SetLineWidth(2);
         graph->SetMarkerColor(markerColor);
         graph->SetLineColor(markerColor);
 
-        // Add to multigraph
-        mg->Add(graph, "P");
+        // Draw the graph
+        graph->Draw("P SAME");
 
-        // Add to legend only if the trigger has data points within x-axis range
-        bool hasPointsInRange = false;
-        for (const auto& pt : pts) {
-            if (pt >= xMin && pt <= xMax) {
-                hasPointsInRange = true;
-                break;
-            }
+        // Add to legend
+        std::string displayTriggerName = trigger;
+        auto it_name = triggerNameMap.find(trigger);
+        if (it_name != triggerNameMap.end()) {
+            displayTriggerName = it_name->second;
         }
-        if (hasPointsInRange) {
-            std::string displayTriggerName = trigger;
-            auto it_name = triggerNameMap.find(trigger);
-            if (it_name != triggerNameMap.end()) {
-                displayTriggerName = it_name->second;
-            }
-            legend->AddEntry(graph, displayTriggerName.c_str(), "p");
-        }
+        legend->AddEntry(graph, displayTriggerName.c_str(), "p");
+
+        // Store the graph for cleanup
+        graphs.push_back(graph);
     }
-
-    // Draw multigraph
-    mg->Draw("A");
-    mg->SetTitle("");
-    mg->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-    mg->GetYaxis()->SetTitle(yAxisLabel.c_str());
-    mg->GetXaxis()->SetLimits(xMin, xMax);
-    mg->GetXaxis()->SetNdivisions(505);
-    mg->GetYaxis()->SetRangeUser(yMin, yMax);
 
     // Draw legend
     legend->Draw();
+
+    // Draw custom x-axis ticks and labels
+    double xMin = binEdges.front();
+    double xMax = binEdges.back();
+    double yAxisMin = hFrame->GetMinimum();
+    double yAxisMax = hFrame->GetMaximum();
+
+    double tickSize = (yAxisMax - yAxisMin) * 0.02;
+    double labelOffset = (yAxisMax - yAxisMin) * 0.05;
+    TLatex latex;
+    latex.SetTextSize(0.035);
+    latex.SetTextAlign(22); // Center alignment
+
+    // Draw x-axis line
+    TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+    xAxisLine.Draw();
+
+    // Draw ticks and labels at bin edges
+    for (size_t i = 0; i < binEdges.size(); ++i) {
+        double xPos = binEdges[i];
+        double yPos = yAxisMin;
+
+        // Draw tick
+        TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+        tick->Draw();
+
+        // Get pT value for label
+        double pTValue = binEdges[i];
+
+        // **Format label to show one decimal place**
+        std::ostringstream labelStream;
+        labelStream << std::fixed << std::setprecision(1) << pTValue;
+        std::string label = labelStream.str();
+
+        // Draw label
+        latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
+    }
+
+    // Redraw the axes to ensure labels are on top
+    canvas.RedrawAxis();
 
     // Add trigger and cut information on the plot
     TLatex labelText;
@@ -1765,7 +1833,7 @@ void generateMesonPlotVsPt(
     valueText.SetNDC();
     valueText.SetTextSize(0.028);
 
-    // Use the utility function to get the display trigger group name, including firmware info if relevant
+    // Use the utility function to get the display trigger group name
     std::string displayTriggerGroupName = Utils::getTriggerCombinationName(triggerCombinationName, TriggerCombinationNames::triggerCombinationNameMap);
 
     labelText.DrawLatex(0.2, 0.9, "#font[62]{Active Trigger Group:}");
@@ -1795,19 +1863,18 @@ void generateMesonPlotVsPt(
     std::cout << "Saved plot: " << outputFilePath << std::endl;
 
     // Clean up
-    delete mg;
+    for (auto graph : graphs) {
+        delete graph;
+    }
     delete legend;
+    delete hFrame;
 }
 
 
 
-void ProcessMesonMassVsPt(const std::string& plotDirectory,
-                          const std::string& combinationName,
-                          const std::vector<std::string>& triggers,
-                          const std::map<std::string, double>& triggerEfficiencyPoints) {
-    // Construct the CSV file path
-    std::string csvFilePath = plotDirectory + "/InvariantMassInformation_" + combinationName + ".csv";
-
+void readHistogramDataForInvariantMasses(const std::string& csvFilePath,
+                       std::vector<DataStructures::HistogramData>& dataVector,
+                       std::set<std::string>& triggersInDataFile) {
     // Open the CSV file
     std::ifstream csvFile(csvFilePath);
     if (!csvFile.is_open()) {
@@ -1815,15 +1882,9 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         return;
     }
 
-    // Read the CSV data
-    std::vector<DataStructures::HistogramData> dataVector;
-
     // Read header line
     std::string line;
     std::getline(csvFile, line); // Skip header
-
-    // Collect all trigger names found in the CSV file
-    std::set<std::string> triggersInDataFile;
 
     // Read data lines
     while (std::getline(csvFile, line)) {
@@ -1831,11 +1892,6 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         std::string token;
 
         DataStructures::HistogramData data;
-
-        // Read fields
-        std::getline(iss, token, ',');
-        data.cuts.triggerName = token;
-        triggersInDataFile.insert(token);  // Collect trigger names
 
         // Read fields
         std::getline(iss, token, ',');
@@ -1880,23 +1936,515 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         std::getline(iss, token, ',');
         data.sigmaEtaError = std::stod(token);
 
+        triggersInDataFile.insert(data.cuts.triggerName);  // Collect trigger names
         dataVector.push_back(data);
     }
 
     csvFile.close();
+}
 
-    // Print triggers found in the CSV data
-    std::cout << GREEN << "Triggers found in CSV data:" << RESET << std::endl;
-    for (const auto& trigName : triggersInDataFile) {
-        std::cout << GREEN << "  - " << trigName << RESET << std::endl;
+DataStructures::CutCombinationData processCutCombination(
+    const std::vector<DataStructures::HistogramData>& dataList,
+    const std::vector<std::string>& triggers,
+    const std::map<std::string, double>& triggerEfficiencyPoints,
+    const std::map<std::string, double>& triggerThresholds,
+    double pTExclusionMax) {
+    DataStructures::CutCombinationData result;
+
+    // Function to extract photon threshold from trigger name if not in the map
+    auto extractPhotonThreshold = [](const std::string& triggerName) -> double {
+        std::regex re("Photon_(\\d+)_GeV");
+        std::smatch match;
+        if (std::regex_search(triggerName, match, re)) {
+            if (match.size() >= 2) {
+                return std::stod(match[1]);
+            }
+        }
+        return 0.0; // Default to 0 if parsing fails
+    };
+
+    // Initialize the cuts
+    result.clusECore = dataList[0].cuts.clusECore;
+    result.chi = dataList[0].cuts.chi;
+    result.asymmetry = dataList[0].cuts.asymmetry;
+
+    // Organize data per pT bin and trigger
+    std::map<std::pair<double, double>, std::map<std::string, DataStructures::HistogramData>> dataPerPtBin;
+
+    for (const auto& data : dataList) {
+        if (data.cuts.pTMin == -1 || data.cuts.pTMax == -1) {
+            continue; // Skip data without pT bins
+        }
+
+        // Exclude pT bins beyond the exclusion maximum
+        if (data.cuts.pTMin >= pTExclusionMax) {
+            continue;
+        }
+
+        std::pair<double, double> pTBin = std::make_pair(data.cuts.pTMin, data.cuts.pTMax);
+        dataPerPtBin[pTBin][data.cuts.triggerName] = data;
+
+        // Debugging output
+        std::cout << BLUE << "Added data for pT bin [" << data.cuts.pTMin << ", " << data.cuts.pTMax << "], "
+                  << "trigger: " << data.cuts.triggerName << RESET << std::endl;
     }
 
-    // Print triggers used in the code
-    std::cout << GREEN << "Triggers being used in code:" << RESET << std::endl;
-    for (const auto& trigName : triggers) {
-        std::cout << GREEN << "  - " << trigName << RESET << std::endl;
+    // Process each pT bin
+    for (const auto& ptBinData : dataPerPtBin) {
+        double pTMin = ptBinData.first.first;
+        double pTMax = ptBinData.first.second;
+        double pTCenter = (pTMin + pTMax) / 2.0;
+
+        const auto& triggerDataMap = ptBinData.second;
+
+        // Decide which trigger to use for the main plot
+        std::string triggerToUse = "MBD_NandS_geq_1";
+        double maxPhotonThreshold = 0.0;
+
+        // List to keep track of efficient triggers at this pT bin
+        std::vector<std::string> efficientTriggers;
+
+        for (const auto& photonTrigger : triggers) {
+            if (photonTrigger != "MBD_NandS_geq_1") {
+                auto it = triggerEfficiencyPoints.find(photonTrigger);
+                if (it != triggerEfficiencyPoints.end()) {
+                    double x99 = it->second;
+                    // Trigger is efficient if x99 <= pTMax
+                    if (x99 <= pTMax) {
+                        efficientTriggers.push_back(photonTrigger);
+                    }
+                }
+            }
+        }
+
+        // Select the trigger with the highest photon threshold among efficient triggers
+        for (const auto& efficientTrigger : efficientTriggers) {
+            double photonThreshold = 0.0;
+            auto thresholdIt = triggerThresholds.find(efficientTrigger);
+            if (thresholdIt != triggerThresholds.end()) {
+                photonThreshold = thresholdIt->second;
+            } else {
+                // Extract threshold from trigger name if not in the map
+                photonThreshold = extractPhotonThreshold(efficientTrigger);
+            }
+
+            if (photonThreshold > maxPhotonThreshold) {
+                maxPhotonThreshold = photonThreshold;
+                triggerToUse = efficientTrigger;
+            } else if (photonThreshold == maxPhotonThreshold) {
+                // If thresholds are equal, prefer the one with lower x99 (more efficient)
+                double x99_current = triggerEfficiencyPoints.at(triggerToUse);
+                double x99_candidate = triggerEfficiencyPoints.at(efficientTrigger);
+                if (x99_candidate < x99_current) {
+                    triggerToUse = efficientTrigger;
+                }
+            }
+        }
+        // Debugging output
+        std::cout << CYAN << "Processing pT bin [" << pTMin << ", " << pTMax << "], pTCenter: " << pTCenter << RESET << std::endl;
+        std::cout << CYAN << "Efficient triggers at this pT:" << RESET << std::endl;
+        for (const auto& etrig : efficientTriggers) {
+            std::cout << CYAN << "  - " << etrig << RESET << std::endl;
+        }
+        std::cout << CYAN << "Selected trigger to use: " << triggerToUse << RESET << std::endl;
+
+        // For the main plot, check if data from the selected trigger is available
+        auto dataIt = triggerDataMap.find(triggerToUse);
+        if (dataIt != triggerDataMap.end()) {
+            const DataStructures::HistogramData& selectedData = dataIt->second;
+
+            // Validate meanPi0 and meanEta before adding
+            bool validPi0 = selectedData.meanPi0 > 0.0 && selectedData.meanPi0 < 0.4;
+            bool validEta = selectedData.meanEta > 0.3 && selectedData.meanEta < 1.0;
+
+            // Debugging output
+            std::cout << GREEN << "Data found for trigger " << triggerToUse << " at pT bin [" << pTMin << ", " << pTMax << "]" << RESET << std::endl;
+            if (validPi0) {
+                std::cout << GREEN << "  Valid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
+            } else {
+                std::cout << YELLOW << "  Invalid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
+            }
+
+            if (validEta) {
+                std::cout << GREEN << "  Valid Eta mean: " << selectedData.meanEta << RESET << std::endl;
+            } else {
+                std::cout << YELLOW << "  Invalid Eta mean: " << selectedData.meanEta << RESET << std::endl;
+            }
+
+            if (validPi0) {
+                result.pTCentersPi0.push_back(pTCenter);
+                result.meanPi0Values.push_back(selectedData.meanPi0);
+                result.meanPi0Errors.push_back(selectedData.meanPi0Error);
+                result.triggersUsedPi0.push_back(triggerToUse); // Track the trigger used
+            }
+
+            if (validEta) {
+                result.pTCentersEta.push_back(pTCenter);
+                result.meanEtaValues.push_back(selectedData.meanEta);
+                result.meanEtaErrors.push_back(selectedData.meanEtaError);
+                result.triggersUsedEta.push_back(triggerToUse); // Track the trigger used
+            }
+        } else {
+            std::cout << RED << "Warning: Data not found for pT bin [" << pTMin << ", " << pTMax << "] and trigger " << triggerToUse << RESET << std::endl;
+            // Debugging output: List available triggers for this pT bin
+            std::cout << YELLOW << "Available triggers for this pT bin:" << RESET << std::endl;
+            for (const auto& tDataPair : triggerDataMap) {
+                std::cout << YELLOW << "  - " << tDataPair.first << RESET << std::endl;
+            }
+        }
+
+        // Collect triggers for overlay plots
+        for (const auto& tDataPair : triggerDataMap) {
+            result.triggersInData.insert(tDataPair.first);
+        }
+
+        // Collect data for overlay plots
+        for (const auto& tDataPair : triggerDataMap) {
+            const std::string& triggerName = tDataPair.first;
+            const DataStructures::HistogramData& data = tDataPair.second;
+
+            // Validate meanPi0 and meanEta before adding
+            bool validPi0 = data.meanPi0 > 0.0 && data.meanPi0 < 0.4;
+            bool validEta = data.meanEta > 0.3 && data.meanEta < 1.0;
+
+            if (validPi0) {
+                result.triggerToPtCentersPi0[triggerName].push_back(pTCenter);
+                result.triggerToMeanPi0Values[triggerName].push_back(data.meanPi0);
+                result.triggerToMeanPi0Errors[triggerName].push_back(data.meanPi0Error);
+            }
+
+            if (validEta) {
+                result.triggerToPtCentersEta[triggerName].push_back(pTCenter);
+                result.triggerToMeanEtaValues[triggerName].push_back(data.meanEta);
+                result.triggerToMeanEtaErrors[triggerName].push_back(data.meanEtaError);
+            }
+        }
     }
 
+    return result;
+}
+
+void generateOverlayInvariantMassPlot(
+    const std::map<std::string, std::vector<double>>& triggerToPtCenters,
+    const std::map<std::string, std::vector<double>>& triggerToMeanValues,
+    const std::map<std::string, std::vector<double>>& triggerToMeanErrors,
+    const std::set<std::string>& triggersInData,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    const std::string& mesonName, // e.g., "#pi^{0}" or "#eta"
+    const std::string& yAxisTitle, // e.g., "Mean #pi^{0} Mass [GeV]"
+    const double yBufferFraction, // e.g., 0.1 for 10% buffer
+    const double pTExclusionMax,
+    const std::string& outputFilePath,
+    const std::string& plotDirectory,
+    const std::string& cutCombination,
+    const DataStructures::CutCombinationData& cutData,
+    const std::map<std::string, int>& triggerColorMap,
+    const std::map<std::string, std::string>& triggerNameMap) {
+
+    if (triggerToPtCenters.empty()) {
+        std::cout << "No data to plot." << std::endl;
+        return;
+    }
+
+    // Create canvas
+    TCanvas canvas("canvas", "", 800, 600);
+
+    // Prepare bin edges for variable bin widths
+    std::vector<double> binEdges;
+    for (const auto& bin : pT_bins) {
+        if (bin.first >= pTExclusionMax) {
+            break;
+        }
+        binEdges.push_back(bin.first);
+    }
+    // Add the upper edge of the last included bin
+    binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+
+    int nBins = binEdges.size() - 1;
+    double* binEdgesArray = &binEdges[0];
+
+    // Create a dummy histogram to set up the axes
+    TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+    hFrame->SetStats(0);
+    hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+    hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
+
+    // Remove x-axis labels and ticks
+    hFrame->GetXaxis()->SetLabelOffset(999);
+    hFrame->GetXaxis()->SetTickLength(0);
+
+    // Draw the frame
+    hFrame->Draw();
+
+    // Create legend
+    TLegend* legend = new TLegend(0.6, 0.68, 0.9, 0.88);
+    legend->SetTextSize(0.035);
+
+    // Keep track of graphs to delete later
+    std::vector<TGraphErrors*> graphs;
+
+    // Variables to adjust y-axis range
+    double yMinData = std::numeric_limits<double>::max();
+    double yMaxData = std::numeric_limits<double>::lowest();
+
+    // Convert triggersInData to a vector for indexing
+    std::vector<std::string> triggerNames(triggersInData.begin(), triggersInData.end());
+    int numTriggers = triggerNames.size();
+
+    /*
+     ADJUST OFFSET VALUE AS NECESSARY
+     */
+    double offsetValue = 0.05;
+
+    // Calculate offsets based on the number of triggers
+    std::vector<double> offsets;
+    if (numTriggers == 1) {
+        offsets.push_back(0.0);
+    } else if (numTriggers == 2) {
+        offsets.push_back(-offsetValue);
+        offsets.push_back(+offsetValue);
+    } else if (numTriggers == 3) {
+        offsets.push_back(-offsetValue);
+        offsets.push_back(0.0);
+        offsets.push_back(+offsetValue);
+    } else if (numTriggers == 4) {
+        offsets.push_back(-2 * offsetValue);
+        offsets.push_back(-offsetValue);
+        offsets.push_back(+offsetValue);
+        offsets.push_back(+2 * offsetValue);
+    } else {
+        // For N > 4, distribute offsets symmetrically around zero
+        int midIndex = numTriggers / 2;
+        for (int i = 0; i < numTriggers; ++i) {
+            double offset = (i - midIndex) * offsetValue;
+            // Adjust for even number of triggers
+            if (numTriggers % 2 == 0) {
+                offset += offsetValue / 2.0;
+            }
+            offsets.push_back(offset);
+        }
+    }
+
+    // Loop over triggers with indexing
+    for (size_t triggerIndex = 0; triggerIndex < triggerNames.size(); ++triggerIndex) {
+        const std::string& triggerName = triggerNames[triggerIndex];
+        double xOffset = offsets[triggerIndex];
+
+        // Get the data
+        auto it_pT = triggerToPtCenters.find(triggerName);
+        auto it_meanValues = triggerToMeanValues.find(triggerName);
+        auto it_meanErrors = triggerToMeanErrors.find(triggerName);
+
+        if (it_pT == triggerToPtCenters.end() || it_meanValues == triggerToMeanValues.end() || it_meanErrors == triggerToMeanErrors.end()) {
+            continue;
+        }
+
+        const std::vector<double>& pTCenters = it_pT->second;
+        const std::vector<double>& meanValues = it_meanValues->second;
+        const std::vector<double>& meanErrors = it_meanErrors->second;
+
+        if (pTCenters.empty()) {
+            continue; // Skip if no data for this trigger
+        }
+
+        TGraphErrors* graph = new TGraphErrors();
+
+        for (size_t i = 0; i < pTCenters.size(); ++i) {
+            double pT = pTCenters[i];
+            double mean = meanValues[i];
+            double meanError = meanErrors[i];
+
+            // Exclude points beyond pTExclusionMax
+            if (pT >= pTExclusionMax) {
+                continue;
+            }
+
+            // Find the bin corresponding to this pT
+            int binIndex = -1;
+            for (size_t j = 0; j < pT_bins.size(); ++j) {
+                if (pT_bins[j].first >= pTExclusionMax) {
+                    break;
+                }
+                if (pT >= pT_bins[j].first && pT < pT_bins[j].second) {
+                    binIndex = j;
+                    break;
+                }
+            }
+            if (binIndex == -1) {
+                continue;
+            }
+
+            // Calculate the bin center
+            double binLowEdge = pT_bins[binIndex].first;
+            double binUpEdge = pT_bins[binIndex].second;
+            double binCenter = (binLowEdge + binUpEdge) / 2.0;
+
+            // Apply xOffset
+            double xPos = binCenter + xOffset;
+
+            int pointIndex = graph->GetN();
+            graph->SetPoint(pointIndex, xPos, mean);
+            graph->SetPointError(pointIndex, 0, meanError); // No x errors
+
+            // Update y-axis range
+            if (mean - meanError < yMinData) yMinData = mean - meanError;
+            if (mean + meanError > yMaxData) yMaxData = mean + meanError;
+        }
+
+        if (graph->GetN() == 0) {
+            delete graph;
+            continue;
+        }
+
+        // Set marker style and color
+        int markerStyle = 20;
+        int markerColor = kBlack;
+        auto it_color = triggerColorMap.find(triggerName);
+        if (it_color != triggerColorMap.end()) {
+            markerColor = it_color->second;
+        }
+        graph->SetMarkerStyle(markerStyle);
+        graph->SetMarkerSize(0.8); // Adjust marker size if needed
+        graph->SetLineWidth(2);
+        graph->SetMarkerColor(markerColor);
+        graph->SetLineColor(markerColor);
+
+        // Draw the graph
+        graph->Draw("P SAME");
+
+        // Add to legend
+        std::string displayTriggerName = triggerName;
+        if (triggerNameMap.find(triggerName) != triggerNameMap.end()) {
+            displayTriggerName = triggerNameMap.at(triggerName);
+        }
+        legend->AddEntry(graph, displayTriggerName.c_str(), "p");
+
+        // Store the graph for cleanup
+        graphs.push_back(graph);
+    }
+
+    // Adjust y-axis range with buffer
+    if (yMinData >= yMaxData) {
+        // If no valid data points were found, set default y-axis range
+        yMinData = 0.0;
+        yMaxData = 1.0;
+    }
+    double yRange = yMaxData - yMinData;
+    double yBuffer = yRange * yBufferFraction;
+    double yMin = yMinData - yBuffer;
+    double yMax = yMaxData + yBuffer;
+
+    hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+
+    // Draw legend
+    legend->Draw();
+
+    // Draw custom x-axis ticks and labels
+    double xMin = binEdges.front();
+    double xMax = binEdges.back();
+    double yAxisMin = hFrame->GetMinimum();
+    double yAxisMax = hFrame->GetMaximum();
+
+    double tickSize = (yAxisMax - yAxisMin) * 0.02; // Adjust as needed
+    double labelOffset = (yAxisMax - yAxisMin) * 0.05; // Adjust as needed
+    TLatex latex;
+    latex.SetTextSize(0.035);
+    latex.SetTextAlign(22); // Center alignment
+
+    // Draw x-axis line
+    TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+    xAxisLine.Draw();
+
+    // Draw ticks and labels at bin edges
+    for (size_t i = 0; i < binEdges.size(); ++i) {
+        double xPos = binEdges[i];
+        double yPos = yAxisMin;
+
+        // Draw tick
+        TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+        tick->Draw();
+
+        // Get pT value for label
+        double pTValue = binEdges[i];
+
+        // Format label to show one decimal place
+        std::ostringstream labelStream;
+        labelStream << std::fixed << std::setprecision(1) << pTValue;
+        std::string label = labelStream.str();
+
+        // Draw label
+        latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
+    }
+
+    // Redraw the axes to ensure labels are on top
+    canvas.RedrawAxis();
+
+    // Add cut combination information to the canvas
+    TLatex labelText;
+    labelText.SetNDC();
+    labelText.SetTextSize(0.032);
+
+    TLatex valueText;
+    valueText.SetNDC();
+    valueText.SetTextSize(0.028);
+
+    // Use cutData to get the values
+    labelText.DrawLatex(0.2, 0.87, "#font[62]{ECore #geq}");
+    std::ostringstream eCoreWithUnit;
+    eCoreWithUnit << cutData.clusECore << "   GeV";
+    valueText.DrawLatex(0.42, 0.87, eCoreWithUnit.str().c_str());
+
+    labelText.DrawLatex(0.2, 0.82, "#font[62]{#chi^{2} <}");
+    std::ostringstream chiStr;
+    chiStr << cutData.chi;
+    valueText.DrawLatex(0.42, 0.82, chiStr.str().c_str());
+
+    labelText.DrawLatex(0.2, 0.77, "#font[62]{Asymmetry <}");
+    std::ostringstream asymmetryStr;
+    asymmetryStr << cutData.asymmetry;
+    valueText.DrawLatex(0.42, 0.77, asymmetryStr.str().c_str());
+
+    // Ensure the directory exists
+    gSystem->mkdir((plotDirectory + "/" + cutCombination).c_str(), true);
+
+    // Save plot
+    canvas.SaveAs(outputFilePath.c_str());
+    std::cout << "Saved overlay plot: " << outputFilePath << std::endl;
+
+    // Clean up
+    for (auto graph : graphs) {
+        delete graph;
+    }
+    delete legend;
+    delete hFrame;
+}
+
+
+
+
+void ProcessMesonMassVsPt(
+    const std::string& plotDirectory,
+    const std::string& combinationName,
+    const std::vector<std::string>& triggers,
+    const std::map<std::string, double>& triggerEfficiencyPoints,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax = std::numeric_limits<double>::infinity(),
+    double yBufferFractionPi0 = 0.1,
+    double yBufferFractionEta = 0.1) {
+    // Construct the CSV file path
+    std::string csvFilePath = plotDirectory + "/InvariantMassInformation_" + combinationName + ".csv";
+
+    std::vector<DataStructures::HistogramData> dataVector;
+    std::set<std::string> triggersInDataFile;
+
+    // Read the CSV data
+    readHistogramDataForInvariantMasses(csvFilePath, dataVector, triggersInDataFile);
+
+    // Check if dataVector is empty
+    if (dataVector.empty()) {
+        std::cerr << "Error: No data read from CSV file." << std::endl;
+        return;
+    }
 
     // Organize data by cut combinations
     std::map<std::string, std::vector<DataStructures::HistogramData>> dataByCuts;
@@ -1910,6 +2458,7 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
 
         dataByCuts[cutCombination].push_back(data);
     }
+
     // Define a map from trigger names to photon thresholds
     std::map<std::string, double> triggerThresholds = {
         {"MBD_NandS_geq_1", 0.0},
@@ -1917,442 +2466,127 @@ void ProcessMesonMassVsPt(const std::string& plotDirectory,
         {"Photon_3_GeV_plus_MBD_NS_geq_1", 3.0},
         {"Photon_4_GeV_plus_MBD_NS_geq_1", 4.0},
         {"Photon_5_GeV_plus_MBD_NS_geq_1", 5.0},
-
-//        {"Photon_2_GeV", 2.0},
-//        {"Photon_3_GeV", 3.0},
-//        {"Photon_4_GeV", 4.0},
-//        {"Photon_5_GeV", 5.0},
         // Add other triggers if necessary
-    };
-    // Function to extract photon threshold from trigger name if not in the map
-    auto extractPhotonThreshold = [](const std::string& triggerName) -> double {
-        std::regex re("Photon_(\\d+)_GeV");
-        std::smatch match;
-        if (std::regex_search(triggerName, match, re)) {
-            if (match.size() >= 2) {
-                return std::stod(match[1]);
-            }
-        }
-        return 0.0; // Default to 0 if parsing fails
     };
 
     for (const auto& cutPair : dataByCuts) {
         const std::string& cutCombination = cutPair.first;
         const std::vector<DataStructures::HistogramData>& dataList = cutPair.second;
 
-        // Collect pT centers and mean values for the main plot
-        std::vector<double> pTCentersPi0;
-        std::vector<double> meanPi0Values;
-        std::vector<double> meanPi0Errors;
-        std::vector<std::string> triggersUsedPi0; // New vector to track triggers used
-
-        std::vector<double> pTCentersEta;
-        std::vector<double> meanEtaValues;
-        std::vector<double> meanEtaErrors;
-        std::vector<std::string> triggersUsedEta; // New vector to track triggers used
-
-        double clusECore = dataList[0].cuts.clusECore;
-        double chi = dataList[0].cuts.chi;
-        double asymmetry = dataList[0].cuts.asymmetry;
-
-        // Organize data per pT bin and trigger
-        std::map<std::pair<double, double>, std::map<std::string, DataStructures::HistogramData>> dataPerPtBin;
-
-        for (const auto& data : dataList) {
-            if (data.cuts.pTMin == -1 || data.cuts.pTMax == -1) {
-                continue; // Skip data without pT bins
-            }
-
-            std::pair<double, double> pTBin = std::make_pair(data.cuts.pTMin, data.cuts.pTMax);
-            dataPerPtBin[pTBin][data.cuts.triggerName] = data;
-
-            // Debugging output
-            std::cout << BLUE << "Added data for pT bin [" << data.cuts.pTMin << ", " << data.cuts.pTMax << "], "
-                      << "trigger: " << data.cuts.triggerName << RESET << std::endl;
-        }
-
-        // Maps to store data for the overlay plots
-        std::set<std::string> triggersInData; // To keep track of triggers present in data
-
-        // For π⁰
-        std::map<std::string, std::vector<double>> triggerToPtCentersPi0;
-        std::map<std::string, std::vector<double>> triggerToMeanPi0Values;
-        std::map<std::string, std::vector<double>> triggerToMeanPi0Errors;
-
-        // For η
-        std::map<std::string, std::vector<double>> triggerToPtCentersEta;
-        std::map<std::string, std::vector<double>> triggerToMeanEtaValues;
-        std::map<std::string, std::vector<double>> triggerToMeanEtaErrors;
-
-        for (const auto& ptBinData : dataPerPtBin) {
-            double pTMin = ptBinData.first.first;
-            double pTMax = ptBinData.first.second;
-            double pTCenter = (pTMin + pTMax) / 2.0;
-
-            const auto& triggerDataMap = ptBinData.second;
-
-            // Decide which trigger to use for the main plot
-            std::string triggerToUse = "MBD_NandS_geq_1";
-            double maxPhotonThreshold = 0.0;
-
-            // List to keep track of efficient triggers at this pT bin
-            std::vector<std::string> efficientTriggers;
-
-            if (!triggerEfficiencyPoints.empty()) {
-                for (const auto& photonTrigger : triggers) {
-                    if (photonTrigger != "MBD_NandS_geq_1") {
-                        auto it = triggerEfficiencyPoints.find(photonTrigger);
-                        if (it != triggerEfficiencyPoints.end()) {
-                            double x99 = it->second;
-                            if (pTCenter >= x99) {
-                                // Get the photon threshold
-                                double photonThreshold = 0.0;
-                                auto thresholdIt = triggerThresholds.find(photonTrigger);
-                                if (thresholdIt != triggerThresholds.end()) {
-                                    photonThreshold = thresholdIt->second;
-                                } else {
-                                    // Extract threshold from trigger name if not in the map
-                                    photonThreshold = extractPhotonThreshold(photonTrigger);
-                                }
-
-                                if (photonThreshold > maxPhotonThreshold) {
-                                    maxPhotonThreshold = photonThreshold;
-                                    triggerToUse = photonTrigger;
-                                }
-                                efficientTriggers.push_back(photonTrigger);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Debugging output
-            std::cout << CYAN << "Processing pT bin [" << pTMin << ", " << pTMax << "], pTCenter: " << pTCenter << RESET << std::endl;
-            std::cout << CYAN << "Efficient triggers at this pT:" << RESET << std::endl;
-            for (const auto& etrig : efficientTriggers) {
-                std::cout << CYAN << "  - " << etrig << RESET << std::endl;
-            }
-            std::cout << CYAN << "Selected trigger to use: " << triggerToUse << RESET << std::endl;
-
-            // For the main plot, check if data from the selected trigger is available
-            auto dataIt = triggerDataMap.find(triggerToUse);
-            if (dataIt != triggerDataMap.end()) {
-                const DataStructures::HistogramData& selectedData = dataIt->second;
-
-                // Validate meanPi0 and meanEta before adding
-                bool validPi0 = selectedData.meanPi0 > 0.0 && selectedData.meanPi0 < 0.4;
-                bool validEta = selectedData.meanEta > 0.3 && selectedData.meanEta < 1.0;
-
-                // Debugging output
-                std::cout << GREEN << "Data found for trigger " << triggerToUse << " at pT bin [" << pTMin << ", " << pTMax << "]" << RESET << std::endl;
-                if (validPi0) {
-                    std::cout << GREEN << "  Valid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
-                } else {
-                    std::cout << YELLOW << "  Invalid Pi0 mean: " << selectedData.meanPi0 << RESET << std::endl;
-                }
-
-                if (validEta) {
-                    std::cout << GREEN << "  Valid Eta mean: " << selectedData.meanEta << RESET << std::endl;
-                } else {
-                    std::cout << YELLOW << "  Invalid Eta mean: " << selectedData.meanEta << RESET << std::endl;
-                }
-
-                if (validPi0) {
-                    pTCentersPi0.push_back(pTCenter);
-                    meanPi0Values.push_back(selectedData.meanPi0);
-                    meanPi0Errors.push_back(selectedData.meanPi0Error);
-                    triggersUsedPi0.push_back(triggerToUse); // Track the trigger used
-                }
-
-                if (validEta) {
-                    pTCentersEta.push_back(pTCenter);
-                    meanEtaValues.push_back(selectedData.meanEta);
-                    meanEtaErrors.push_back(selectedData.meanEtaError);
-                    triggersUsedEta.push_back(triggerToUse); // Track the trigger used
-                }
-            } else {
-                std::cout << RED << "Warning: Data not found for pT bin [" << pTMin << ", " << pTMax << "] and trigger " << triggerToUse << RESET << std::endl;
-                // Debugging output: List available triggers for this pT bin
-                std::cout << YELLOW << "Available triggers for this pT bin:" << RESET << std::endl;
-                for (const auto& tDataPair : triggerDataMap) {
-                    std::cout << YELLOW << "  - " << tDataPair.first << RESET << std::endl;
-                }
-            }
-        }
+        // Process data for this cut combination
+        DataStructures::CutCombinationData cutData = processCutCombination(
+            dataList,
+            triggers,
+            triggerEfficiencyPoints,
+            triggerThresholds,
+            pTExclusionMax
+        );
 
         // Generate π⁰ mass vs pT plot if we have valid data
-        if (!pTCentersPi0.empty()) {
+        if (!cutData.pTCentersPi0.empty()) {
             std::string outputFilePathPi0 = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors, triggersUsedPi0,
-                                  "Mean #pi^{0} Mass [GeV]", outputFilePathPi0, combinationName,
-                                  cutCombination, clusECore, chi, asymmetry,
-                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
-                                  0.13, 0.19, 2.0, 7.0);
+            generateMesonPlotVsPt(
+                cutData.pTCentersPi0,
+                cutData.meanPi0Values,
+                cutData.meanPi0Errors,
+                cutData.triggersUsedPi0,
+                "Mean #pi^{0} Mass [GeV]",
+                outputFilePathPi0,
+                combinationName,
+                cutCombination,
+                cutData.clusECore,
+                cutData.chi,
+                cutData.asymmetry,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap,
+                pT_bins,
+                8.0,  // pTExclusionMax for π⁰ plots
+                0.13, 0.2 // yMin and yMax
+            );
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
         }
 
         // Generate η mass vs pT plot if we have valid data
-        if (!pTCentersEta.empty()) {
+        if (!cutData.pTCentersEta.empty()) {
             std::string outputFilePathEta = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors, triggersUsedEta,
-                                  "Mean #eta Mass [GeV]", outputFilePathEta, combinationName,
-                                  cutCombination, clusECore, chi, asymmetry,
-                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
-                                  0.55, 0.72, 2.0, 15.0);
+            generateMesonPlotVsPt(
+                cutData.pTCentersEta,
+                cutData.meanEtaValues,
+                cutData.meanEtaErrors,
+                cutData.triggersUsedEta,
+                "Mean #eta Mass [GeV]",
+                outputFilePathEta,
+                combinationName,
+                cutCombination,
+                cutData.clusECore,
+                cutData.chi,
+                cutData.asymmetry,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap,
+                pT_bins,
+                20.0, // pTExclusionMax for η plots
+                0.45, 0.75 // yMin and yMax
+            );
         } else {
             std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
         }
+        // Proceed with the overlay plots using cutData.triggerToPtCentersPi0, etc.
 
-        // Generate π⁰ mass vs pT plot if we have valid data
-        if (!pTCentersPi0.empty()) {
-            std::string outputFilePathPi0 = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersPi0, meanPi0Values, meanPi0Errors, triggersUsedPi0,
-                                  "Mean #pi^{0} Mass [GeV]", outputFilePathPi0, combinationName,
-                                  cutCombination, clusECore, chi, asymmetry,
-                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
-                                  0.13, 0.19, 2.0, 7.0);
+        if (!cutData.triggerToPtCentersPi0.empty()) {
+            double pTExclusionMaxPi0 = 8.0; // For π⁰
+            std::string outputFilePath = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT_Overlay.png";
+
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersPi0,
+                cutData.triggerToMeanPi0Values,
+                cutData.triggerToMeanPi0Errors,
+                cutData.triggersInData,
+                pT_bins,
+                "#pi^{0}",
+                "Mean #pi^{0} Mass [GeV]",
+                yBufferFractionPi0,
+                pTExclusionMaxPi0,
+                outputFilePath,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
         }
 
-        // Generate η mass vs pT plot if we have valid data
-        if (!pTCentersEta.empty()) {
-            std::string outputFilePathEta = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT.png";
-            generateMesonPlotVsPt(pTCentersEta, meanEtaValues, meanEtaErrors, triggersUsedEta,
-                                  "Mean #eta Mass [GeV]", outputFilePathEta, combinationName,
-                                  cutCombination, clusECore, chi, asymmetry,
-                                  TriggerConfig::triggerColorMap, TriggerConfig::triggerNameMap,
-                                  0.55, 0.72, 2.0, 20.0);
+        // Similarly for η meson plots
+
+        if (!cutData.triggerToPtCentersEta.empty()) {
+            double pTExclusionMaxEta = 20.0; // For η
+            std::string outputFilePath = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT_Overlay.png";
+
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersEta,
+                cutData.triggerToMeanEtaValues,
+                cutData.triggerToMeanEtaErrors,
+                cutData.triggersInData,
+                pT_bins,
+                "#eta",
+                "Mean #eta Mass [GeV]",
+                yBufferFractionEta,
+                pTExclusionMaxEta,
+                outputFilePath,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
         } else {
             std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
-        }
-
-        // Generate overlay plot for π⁰ mass vs pT
-        if (!triggerToPtCentersPi0.empty()) {
-            // Create canvas
-            TCanvas canvas;
-
-            // Create multigraph
-            TMultiGraph* mg = new TMultiGraph();
-
-            // Create legend
-            TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
-            legend->SetTextSize(0.03);
-
-            // Offset per trigger to avoid overlapping points
-            double offsetStep = 0.1;
-            int triggerIndex = 0;
-            int numTriggers = triggersInData.size();
-
-            for (const auto& triggerName : triggersInData) {
-                // Get the data
-                const std::vector<double>& pTCenters = triggerToPtCentersPi0[triggerName];
-                const std::vector<double>& meanValues = triggerToMeanPi0Values[triggerName];
-                const std::vector<double>& meanErrors = triggerToMeanPi0Errors[triggerName];
-
-                // Create a new TGraphErrors
-                TGraphErrors* graph = new TGraphErrors(pTCenters.size());
-                for (size_t i = 0; i < pTCenters.size(); ++i) {
-                    // Apply offset to pT center
-                    double pTOffset = -offsetStep * (numTriggers - 1) / 2.0 + offsetStep * triggerIndex;
-                    double pT = pTCenters[i] + pTOffset;
-                    graph->SetPoint(i, pT, meanValues[i]);
-                    graph->SetPointError(i, 0, meanErrors[i]);
-                }
-
-                // Set marker style and color
-                int markerStyle = 20; // Use the same marker style for all triggers
-                int markerColor = kBlack;
-                // Get color from triggerColorMap if available
-                auto it_color = TriggerConfig::triggerColorMap.find(triggerName);
-                if (it_color != TriggerConfig::triggerColorMap.end()) {
-                    markerColor = it_color->second;
-                }
-                graph->SetMarkerStyle(markerStyle);
-                graph->SetMarkerSize(1);
-                graph->SetLineWidth(2);
-                graph->SetMarkerColor(markerColor);
-                graph->SetLineColor(markerColor);
-
-                // Add to multigraph
-                mg->Add(graph, "P");
-
-                // Add to legend
-                std::string displayTriggerName = triggerName;
-                if (TriggerConfig::triggerNameMap.find(triggerName) != TriggerConfig::triggerNameMap.end()) {
-                    displayTriggerName = TriggerConfig::triggerNameMap.at(triggerName);
-                }
-                legend->AddEntry(graph, displayTriggerName.c_str(), "p");
-
-                ++triggerIndex;
-            }
-
-            // Draw multigraph
-            mg->Draw("A");
-            mg->SetTitle(("Mean #pi^{0} Mass vs p_{T} (" + cutCombination + ")").c_str());
-            mg->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-            mg->GetYaxis()->SetTitle("Mean #pi^{0} Mass [GeV]");
-            mg->GetXaxis()->SetLimits(2.0, 7.0);
-            mg->GetXaxis()->SetNdivisions(505);
-            mg->GetYaxis()->SetRangeUser(0.14, 0.19);
-
-            // Draw legend
-            legend->Draw();
-
-            // Add cut combination information to the canvas
-            TLatex labelText;
-            labelText.SetNDC();
-            labelText.SetTextSize(0.035);
-
-            TLatex valueText;
-            valueText.SetNDC();
-            valueText.SetTextSize(0.042);
-
-            labelText.DrawLatex(0.2, 0.87, "#font[62]{ECore #geq}");
-            std::ostringstream eCoreWithUnit;
-            eCoreWithUnit << clusECore << "   GeV";
-            valueText.DrawLatex(0.35, 0.87, eCoreWithUnit.str().c_str());
-
-            labelText.DrawLatex(0.2, 0.82, "#font[62]{#chi^{2} <}");
-            std::ostringstream chiStr;
-            chiStr << chi;
-            valueText.DrawLatex(0.35, 0.82, chiStr.str().c_str());
-
-            labelText.DrawLatex(0.2, 0.77, "#font[62]{Asymmetry <}");
-            std::ostringstream asymmetryStr;
-            asymmetryStr << asymmetry;
-            valueText.DrawLatex(0.38, 0.77, asymmetryStr.str().c_str());
-
-            // Ensure the directory exists
-            std::string outputDirPath = plotDirectory + "/" + cutCombination;
-            gSystem->mkdir(outputDirPath.c_str(), true);
-
-            // Save plot
-            std::string outputFilePath = outputDirPath + "/meanPi0_vs_pT_Overlay.png";
-            canvas.SaveAs(outputFilePath.c_str());
-            std::cout << "Saved overlay plot: " << outputFilePath << std::endl;
-
-            // Clean up
-            delete mg;
-            delete legend;
-        }
-
-        // Generate overlay plot for η mass vs pT
-        if (!triggerToPtCentersEta.empty()) {
-            // Create canvas
-            TCanvas canvas;
-
-            // Create multigraph
-            TMultiGraph* mgEta = new TMultiGraph();
-
-            // Create legend
-            TLegend* legendEta = new TLegend(0.6, 0.68, 0.9, 0.88);
-            legendEta->SetTextSize(0.035);
-
-            // Offset per trigger to avoid overlapping points
-            double offsetStep = 0.1;
-            int triggerIndex = 0;
-            int numTriggers = triggersInData.size();
-
-            for (const auto& triggerName : triggersInData) {
-                // Get the data
-                const std::vector<double>& pTCenters = triggerToPtCentersEta[triggerName];
-                const std::vector<double>& meanValues = triggerToMeanEtaValues[triggerName];
-                const std::vector<double>& meanErrors = triggerToMeanEtaErrors[triggerName];
-
-                if (pTCenters.empty()) {
-                    continue; // Skip if no data for this trigger
-                }
-
-                // Create a new TGraphErrors
-                TGraphErrors* graph = new TGraphErrors(pTCenters.size());
-                for (size_t i = 0; i < pTCenters.size(); ++i) {
-                    // Apply offset to pT center
-                    double pTOffset = -offsetStep * (numTriggers - 1) / 2.0 + offsetStep * triggerIndex;
-                    double pT = pTCenters[i] + pTOffset;
-                    graph->SetPoint(i, pT, meanValues[i]);
-                    graph->SetPointError(i, 0, meanErrors[i]);
-                }
-
-                // Set marker style and color
-                int markerStyle = 20; // Use the same marker style for all triggers
-                int markerColor = kBlack;
-                // Get color from triggerColorMap if available
-                auto it_color = TriggerConfig::triggerColorMap.find(triggerName);
-                if (it_color != TriggerConfig::triggerColorMap.end()) {
-                    markerColor = it_color->second;
-                }
-                graph->SetMarkerStyle(markerStyle);
-                graph->SetMarkerSize(1);
-                graph->SetLineWidth(2);
-                graph->SetMarkerColor(markerColor);
-                graph->SetLineColor(markerColor);
-
-                // Add to multigraph
-                mgEta->Add(graph, "P");
-
-                // Add to legend
-                std::string displayTriggerName = triggerName;
-                if (TriggerConfig::triggerNameMap.find(triggerName) != TriggerConfig::triggerNameMap.end()) {
-                    displayTriggerName = TriggerConfig::triggerNameMap.at(triggerName);
-                }
-                legendEta->AddEntry(graph, displayTriggerName.c_str(), "p");
-
-                ++triggerIndex;
-            }
-
-            // Draw multigraph
-            mgEta->Draw("A");
-            mgEta->SetTitle(("Mean #eta Mass vs p_{T} (" + cutCombination + ")").c_str());
-            mgEta->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-            mgEta->GetYaxis()->SetTitle("Mean #eta Mass [GeV]");
-            mgEta->GetXaxis()->SetLimits(2.0, 15.0);
-            mgEta->GetXaxis()->SetNdivisions(505);
-            mgEta->GetYaxis()->SetRangeUser(0.45, 0.75);
-
-            // Draw legend
-            legendEta->Draw();
-
-            // Add cut combination information to the canvas
-            TLatex labelText;
-            labelText.SetNDC();
-            labelText.SetTextSize(0.035);
-
-            TLatex valueText;
-            valueText.SetNDC();
-            valueText.SetTextSize(0.035);
-
-            labelText.DrawLatex(0.2, 0.9, "#font[62]{ECore #geq}");
-            std::ostringstream eCoreWithUnit;
-            eCoreWithUnit << clusECore << "   GeV";
-            valueText.DrawLatex(0.4, 0.9, eCoreWithUnit.str().c_str());
-
-            labelText.DrawLatex(0.2, 0.85, "#font[62]{#chi^{2} <}");
-            std::ostringstream chiStr;
-            chiStr << chi;
-            valueText.DrawLatex(0.4, 0.85, chiStr.str().c_str());
-
-            labelText.DrawLatex(0.2, 0.8, "#font[62]{Asymmetry <}");
-            std::ostringstream asymmetryStr;
-            asymmetryStr << asymmetry;
-            valueText.DrawLatex(0.4, 0.8, asymmetryStr.str().c_str());
-
-            // Ensure the directory exists
-            std::string outputDirPath = plotDirectory + "/" + cutCombination;
-            gSystem->mkdir(outputDirPath.c_str(), true);
-
-            // Save plot
-            std::string outputFilePath = outputDirPath + "/meanEta_vs_pT_Overlay.png";
-            canvas.SaveAs(outputFilePath.c_str());
-            std::cout << "Saved η overlay plot: " << outputFilePath << std::endl;
-
-            // Clean up
-            delete mgEta;
-            delete legendEta;
         }
     }
 }
+
 
 void AddLabelsToCanvas_isoHistsWithCuts(
     const DataStructures::CutValues& cuts,
@@ -3615,8 +3849,6 @@ void GenerateCombinedSpectraPlots(
     std::cout << "\033[1;34m[INFO]\033[0m Finished GenerateCombinedSpectraPlots function.\n";
 }
 
-
-
 // Helper Function to Generate Per-Trigger Plots
 void GeneratePerTriggerIsoPlots(
     const std::map<std::tuple<
@@ -4765,9 +4997,6 @@ void PlotRunByRunHistograms(
             // Close the run file
             runFile->Close();
             delete runFile;
-
-            // Do not delete the histograms and legend used in the canvas here
-            // They will be deleted after saving the canvas
         }
 
         // Draw the firmware status on the overlay canvas
@@ -4776,9 +5005,9 @@ void PlotRunByRunHistograms(
             TLatex firmwareStatusText;
             firmwareStatusText.SetNDC();
             firmwareStatusText.SetTextAlign(22); // Centered
-            firmwareStatusText.SetTextSize(0.03);
+            firmwareStatusText.SetTextSize(0.02);
             firmwareStatusText.SetTextColor(kBlack);
-            firmwareStatusText.DrawLatex(0.5, 1.0, firmwareStatus.c_str());
+            firmwareStatusText.DrawLatex(0.5, 0.95, firmwareStatus.c_str());
         }
 
         // Update the canvas
@@ -4804,8 +5033,6 @@ void PlotRunByRunHistograms(
         delete canvas;
     }
 }
-
-
 
 void PlotCombinedHistograms(
     const std::string& outputDirectory,
@@ -5363,14 +5590,19 @@ void PlotCombinedHistograms(
         // The following code will only execute if fitOnly is false
         // -------------------- Process Invariant Mass Histograms --------------------
         ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers, triggerColorMap, combinationName);
+        
+        std::vector<std::pair<double, double>> pT_bins = {
+            {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0},
+            {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0},
+            {10.0, 12.0}, {12.0, 15.0}, {15.0, 20.0}, {20.0, 30.0}
+        };
 
         // -------------------- Process Meson Mass vs Pt --------------------
-        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints);
+        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints, pT_bins);
 
         // -------------------- Process Isolation Energy Histograms --------------------
         ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory, triggers, combinationName);
 
-        
         inputFile->Close();
         delete inputFile;
         
@@ -5791,9 +6023,11 @@ void ProcessAllIsolationEnergies(
         ProcessIsolationEnergyHistograms(rootFilePath, combinationName, triggerCombinationNameMap);
     }
 }
-
-
-void AnalyzeTriggerGroupings() {
+/*
+ To process only a specific trigger combination, you can call AnalyzeTriggerGroupings with the desired combination name:
+ */
+// AnalyzeTriggerGroupings("MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate");
+void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     gROOT->LoadMacro("sPhenixStyle.C");
     SetsPhenixStyle();
 
@@ -5992,7 +6226,10 @@ void AnalyzeTriggerGroupings() {
     while ((entry = gSystem->GetDirEntry(dirp))) {
         std::string fileName = entry;
         if (Utils::EndsWith(fileName, "_Combined.root")) {
-            combinedRootFiles.push_back(fileName);
+            // If specificCombinationName is set, only add matching files
+            if (specificCombinationName.empty() || fileName.find(specificCombinationName + "_Combined.root") != std::string::npos) {
+                combinedRootFiles.push_back(fileName);
+            }
         }
     }
     gSystem->FreeDirectory(dirp);
