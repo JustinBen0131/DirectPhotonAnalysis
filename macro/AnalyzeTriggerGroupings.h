@@ -161,6 +161,29 @@ namespace DataStructures {
         std::string triggerName;
     };
 
+    struct CutCombinationData {
+        // Outputs from the processing
+        double clusECore;
+        double chi;
+        double asymmetry;
+        std::vector<double> pTCentersPi0;
+        std::vector<double> meanPi0Values;
+        std::vector<double> meanPi0Errors;
+        std::vector<std::string> triggersUsedPi0;
+        std::vector<double> pTCentersEta;
+        std::vector<double> meanEtaValues;
+        std::vector<double> meanEtaErrors;
+        std::vector<std::string> triggersUsedEta;
+        std::set<std::string> triggersInData;
+        std::map<std::string, std::vector<double>> triggerToPtCentersPi0;
+        std::map<std::string, std::vector<double>> triggerToMeanPi0Values;
+        std::map<std::string, std::vector<double>> triggerToMeanPi0Errors;
+        std::map<std::string, std::vector<double>> triggerToPtCentersEta;
+        std::map<std::string, std::vector<double>> triggerToMeanEtaValues;
+        std::map<std::string, std::vector<double>> triggerToMeanEtaErrors;
+    };
+
+
 
 } // namespace DataStructures
 
@@ -357,9 +380,9 @@ namespace TriggerConfig {
             0.63,  // slopeMin
             0.65,  // slopeMax
             
-            7.95,  // xOffsetEstimate
-            7.9,  // xOffsetMin
-            8.0,  // xOffsetMax
+            7.85,  // xOffsetEstimate
+            7.8,  // xOffsetMin
+            7.9,  // xOffsetMax
 
             // Error function parameters
             0.5,   // sigmaEstimate (placeholder value)
