@@ -2476,16 +2476,6 @@ void ProcessMesonMassVsPt(
         dataByCuts[cutCombination].push_back(data);
     }
 
-    // Define a map from trigger names to photon thresholds
-    std::map<std::string, double> triggerThresholds = {
-        {"MBD_NandS_geq_1", 0.0},
-        {"Photon_2_GeV_plus_MBD_NS_geq_1", 2.0},
-        {"Photon_3_GeV_plus_MBD_NS_geq_1", 3.0},
-        {"Photon_4_GeV_plus_MBD_NS_geq_1", 4.0},
-        {"Photon_5_GeV_plus_MBD_NS_geq_1", 5.0},
-        // Add other triggers if necessary
-    };
-
     for (const auto& cutPair : dataByCuts) {
         const std::string& cutCombination = cutPair.first;
         const std::vector<DataStructures::HistogramData>& dataList = cutPair.second;
@@ -2495,7 +2485,7 @@ void ProcessMesonMassVsPt(
             dataList,
             triggers,
             triggerEfficiencyPoints,
-            triggerThresholds,
+            TriggerConfig::triggerThresholds,
             pTExclusionMax
         );
 
@@ -4157,6 +4147,7 @@ void GeneratePerTriggerIsoPlots(
 void SortAndCombineTriggers(
     const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
     const std::map<std::string, double>& triggerEfficiencyPoints,
+    const std::map<std::string, double>& triggerThresholds,
     std::map<std::string, std::vector<std::string>>& sortedTriggersByGroupName,
     std::map<std::string, std::map<std::pair<float, float>,
     std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap) {
@@ -4189,44 +4180,51 @@ void SortAndCombineTriggers(
         }
     }
 
-    // Step 3: Sort triggers within each group based on their efficiency thresholds in descending order
-    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on efficiency thresholds...\n";
+    // Step 3: Sort triggers within each group based on their photon thresholds in descending order
+    std::cout << "\033[34m[INFO]\033[0m Sorting triggers within each group based on photon thresholds...\n";
     for (auto& [triggerGroupName, triggerList] : sortedTriggersByGroupName) {
         std::sort(triggerList.begin(), triggerList.end(),
                   [&](const std::string& a, const std::string& b) -> bool {
-                      bool aHasEff = triggerEfficiencyPoints.find(a) != triggerEfficiencyPoints.end();
-                      bool bHasEff = triggerEfficiencyPoints.find(b) != triggerEfficiencyPoints.end();
-                      
-                      if (aHasEff && bHasEff) {
-                          double effA = triggerEfficiencyPoints.at(a);
-                          double effB = triggerEfficiencyPoints.at(b);
-                          if (effA != effB)
-                              return effA > effB; // Higher efficiency threshold first
-                          else
-                              return triggerPriorityMap[a] < triggerPriorityMap[b];
-                      } else if (aHasEff) {
-                          return true;  // a has efficiency, b does not
-                      } else if (bHasEff) {
-                          return false; // b has efficiency, a does not
+                      double thresholdA = triggerThresholds.count(a) ? triggerThresholds.at(a) : 0.0;
+                      double thresholdB = triggerThresholds.count(b) ? triggerThresholds.at(b) : 0.0;
+
+                      if (thresholdA != thresholdB) {
+                          return thresholdA > thresholdB; // Higher photon threshold first
                       } else {
-                          return triggerPriorityMap[a] < triggerPriorityMap[b];
+                          // If thresholds are equal, sort by efficiency threshold (x99)
+                          bool aHasEff = triggerEfficiencyPoints.find(a) != triggerEfficiencyPoints.end();
+                          bool bHasEff = triggerEfficiencyPoints.find(b) != triggerEfficiencyPoints.end();
+                          if (aHasEff && bHasEff) {
+                              double x99A = triggerEfficiencyPoints.at(a);
+                              double x99B = triggerEfficiencyPoints.at(b);
+                              if (x99A != x99B) {
+                                  return x99A < x99B; // Lower x99 (more efficient) first
+                              } else {
+                                  return triggerPriorityMap[a] < triggerPriorityMap[b];
+                              }
+                          } else if (aHasEff) {
+                              return true;  // a has efficiency, b does not
+                          } else if (bHasEff) {
+                              return false; // b has efficiency, a does not
+                          } else {
+                              return triggerPriorityMap[a] < triggerPriorityMap[b];
+                          }
                       }
                   });
-        
+
         // Debugging output
         std::cout << "\033[1;32mTrigger Group Name\033[0m: " << triggerGroupName << "\n";
         std::cout << "\033[1;32mSorted Trigger List\033[0m: ";
         for (const auto& trigger : triggerList) {
+            double threshold = triggerThresholds.count(trigger) ? triggerThresholds.at(trigger) : 0.0;
             if (triggerEfficiencyPoints.find(trigger) != triggerEfficiencyPoints.end()) {
-                std::cout << trigger << " (Eff Threshold: " << triggerEfficiencyPoints.at(trigger) << "), ";
+                std::cout << trigger << " (Photon Threshold: " << threshold << ", x99: " << triggerEfficiencyPoints.at(trigger) << "), ";
             } else {
-                std::cout << trigger << " (Eff Threshold: N/A), ";
+                std::cout << trigger << " (Photon Threshold: " << threshold << ", x99: N/A), ";
             }
         }
         std::cout << "\n";
     }
-
-
 
     // Step 4: Combine triggers for each group and isoEtRange
     std::cout << "\033[34m[INFO]\033[0m Combining triggers within each group...\n";
@@ -4270,9 +4268,7 @@ void SortAndCombineTriggers(
                     }
                 }
                 if (!foundGroupKey) {
-                    std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
-                              << triggerName << "'\n";
-                    continue;
+                    continue; // Skip if group key not found
                 }
 
                 // Get isoDataList for this isoEtRange
@@ -4295,110 +4291,90 @@ void SortAndCombineTriggers(
             // Iterate over each pT bin and select appropriate trigger data
             std::vector<DataStructures::IsolationDataWithPt> selectedDataPoints;
 
-            // Iterate over each pT bin and select appropriate trigger data
             for (const auto& ptBin : allPtBins) {
                 std::cout << "\033[32m[DEBUG]\033[0m Processing pT bin: [" << ptBin.first
                           << ", " << ptBin.second << "]\n";
                 double pTCenter = (ptBin.first + ptBin.second) / 2.0;
+                double pTMin = ptBin.first;
+                double pTMax = ptBin.second;
                 bool triggerAssigned = false;
                 DataStructures::IsolationDataWithPt selectedIsoData;
 
-                std::cout << "\033[32m[DEBUG]\033[0m pTCenter: " << pTCenter << " GeV\n";
-
-                // Iterate triggers in sorted order (now descending efficiency thresholds)
+                // Collect efficient triggers for this pT bin
+                std::vector<std::string> efficientTriggers;
                 for (const auto& triggerName : sortedTriggerList) {
-                    // Declare efficiencyThreshold at the beginning of the loop
-                    double efficiencyThreshold = 0.0; // Initialize to 0.0 or another appropriate default
-
-                    // When checking for efficiency thresholds
                     auto effIt = triggerEfficiencyPoints.find(triggerName);
-                    if (effIt == triggerEfficiencyPoints.end()) {
-                        std::cout << "\033[31m[WARNING]\033[0m No efficiency threshold for trigger '"
-                                  << triggerName << "'. Assigning default value 0.0.\n";
-                        // efficiencyThreshold is already initialized to 0.0
-                    } else {
-                        efficiencyThreshold = effIt->second;
-                    }
-
-                    std::cout << "\033[32m[DEBUG]\033[0m Evaluating trigger '" << triggerName
-                              << "' with efficiency threshold " << efficiencyThreshold
-                              << " GeV against pTCenter " << pTCenter << " GeV\n";
-
-
-                    if (pTCenter >= efficiencyThreshold) {
-                        // Find the isoData for this trigger and pT bin
-                        bool foundGroupKey = false;
-                        GroupKey currentGroupKey;
-                        for (const auto& [gk, isoEtMap] : groupedData) {
-                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerName) {
-                                currentGroupKey = gk;
-                                foundGroupKey = true;
-                                break;
-                            }
-                        }
-                        if (!foundGroupKey) {
-                            std::cerr << "\033[31m[ERROR]\033[0m Group key not found for trigger '"
-                                      << triggerName << "'\n";
-                            continue;
-                        }
-
-                        // Get the isoDataList for this isoEtRange
-                        auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
-                        if (isoIt != groupedData.at(currentGroupKey).end()) {
-                            // Find the isoData that contains pTCenter
-                            auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
-                                [&](const DataStructures::IsolationDataWithPt& id) {
-                                    return id.ptMin <= pTCenter && pTCenter < id.ptMax;
-                                });
-                            if (dataIt != isoIt->second.end()) {
-                                selectedIsoData = *dataIt;
-                                triggerAssigned = true;
-                                std::cout << "\033[32m[DEBUG]\033[0m Assigned to trigger '"
-                                          << triggerName << "'\n";
-                                break; // Trigger selected for this pT bin
-                            } else {
-                                std::cout << "\033[31m[DEBUG]\033[0m Data not found for trigger '"
-                                          << triggerName << "' with pT bin ["
-                                          << ptBin.first << ", " << ptBin.second << "]\n";
-                            }
+                    if (effIt != triggerEfficiencyPoints.end()) {
+                        double x99 = effIt->second;
+                        if (x99 <= pTMax) {
+                            efficientTriggers.push_back(triggerName);
                         }
                     } else {
-                        std::cout << "\033[33m[DEBUG]\033[0m pTCenter " << pTCenter
-                                  << " GeV is below threshold for trigger '" << triggerName << "'\n";
+                        // Triggers without x99 are considered efficient everywhere
+                        efficientTriggers.push_back(triggerName);
                     }
                 }
-                // If no trigger met the efficiency threshold, use "Minbias" if available
-                if (!triggerAssigned) {
+
+                // If no efficient triggers, use minbias if available
+                if (efficientTriggers.empty()) {
                     const std::string minbiasTrigger = "MBD_NandS_geq_1";
                     if (std::find(sortedTriggerList.begin(), sortedTriggerList.end(), minbiasTrigger) != sortedTriggerList.end()) {
-                        // Find the isoData for "Minbias"
-                        bool foundGroupKey = false;
-                        GroupKey currentGroupKey;
-                        for (const auto& [gk, isoEtMap] : groupedData) {
-                            if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == minbiasTrigger) {
-                                currentGroupKey = gk;
-                                foundGroupKey = true;
-                                break;
-                            }
-                        }
-                        if (foundGroupKey) {
-                            // Get the isoDataList for this isoEtRange
-                            auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
-                            if (isoIt != groupedData.at(currentGroupKey).end()) {
-                                // Find the isoData with this pT bin
-                                auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
-                                    [&](const DataStructures::IsolationDataWithPt& id) {
-                                        return std::abs(id.ptMin - ptBin.first) < 1e-6 && std::abs(id.ptMax - ptBin.second) < 1e-6;
-                                    });
-                                if (dataIt != isoIt->second.end()) {
-                                    selectedIsoData = *dataIt;
-                                    triggerAssigned = true;
-                                    std::cout << "\033[32m[DEBUG]\033[0m Assigned to Minbias trigger '"
-                                              << minbiasTrigger << "'\n";
-                                }
+                        efficientTriggers.push_back(minbiasTrigger);
+                    }
+                }
+
+                if (!efficientTriggers.empty()) {
+                    // Select trigger with highest photon threshold
+                    std::string triggerToUse = efficientTriggers.front();
+                    double maxPhotonThreshold = triggerThresholds.count(triggerToUse) ? triggerThresholds.at(triggerToUse) : 0.0;
+                    double minX99 = triggerEfficiencyPoints.count(triggerToUse) ? triggerEfficiencyPoints.at(triggerToUse) : std::numeric_limits<double>::infinity();
+
+                    for (const auto& efficientTrigger : efficientTriggers) {
+                        double photonThreshold = triggerThresholds.count(efficientTrigger) ? triggerThresholds.at(efficientTrigger) : 0.0;
+                        if (photonThreshold > maxPhotonThreshold) {
+                            maxPhotonThreshold = photonThreshold;
+                            triggerToUse = efficientTrigger;
+                            minX99 = triggerEfficiencyPoints.count(efficientTrigger) ? triggerEfficiencyPoints.at(efficientTrigger) : std::numeric_limits<double>::infinity();
+                        } else if (photonThreshold == maxPhotonThreshold) {
+                            // If thresholds are equal, prefer the one with lower x99
+                            double x99_candidate = triggerEfficiencyPoints.count(efficientTrigger) ? triggerEfficiencyPoints.at(efficientTrigger) : std::numeric_limits<double>::infinity();
+                            if (x99_candidate < minX99) {
+                                triggerToUse = efficientTrigger;
+                                minX99 = x99_candidate;
                             }
                         }
                     }
+
+                    // Now find the isoData for triggerToUse
+                    bool foundGroupKey = false;
+                    GroupKey currentGroupKey;
+                    for (const auto& [gk, isoEtMap] : groupedData) {
+                        if (std::get<0>(gk) == triggerGroupName && std::get<1>(gk) == triggerToUse) {
+                            currentGroupKey = gk;
+                            foundGroupKey = true;
+                            break;
+                        }
+                    }
+                    if (!foundGroupKey) {
+                        continue;
+                    }
+
+                    // Get the isoDataList for this isoEtRange
+                    auto isoIt = groupedData.at(currentGroupKey).find(isoEtRange);
+                    if (isoIt != groupedData.at(currentGroupKey).end()) {
+                        // Find the isoData that matches the pT bin
+                        auto dataIt = std::find_if(isoIt->second.begin(), isoIt->second.end(),
+                            [&](const DataStructures::IsolationDataWithPt& id) {
+                                return std::abs(id.ptMin - ptBin.first) < 1e-6 && std::abs(id.ptMax - ptBin.second) < 1e-6;
+                            });
+                        if (dataIt != isoIt->second.end()) {
+                            selectedIsoData = *dataIt;
+                            triggerAssigned = true;
+                            std::cout << "\033[32m[DEBUG]\033[0m Assigned to trigger '"
+                                      << triggerToUse << "'\n";
+                        }
+                    }
+
                 }
 
                 // If still not assigned, skip this pT bin
@@ -4424,39 +4400,33 @@ void SortAndCombineTriggers(
     std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
 }
 
+
 void GenerateCombinedRatioPlot(
-    const std::map<std::string, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap,
-    const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
-                               const std::string& basePlotDirectory) {
-    
-    // Define pT bins (adjust as needed or pass as a parameter)
-    std::vector<std::pair<double, double>> pT_bins = {
-        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0},
-        {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0},
-        {10.0, 12.0}, {12.0, 15.0}, {15.0, 20.0}, {20.0, 30.0}
-    };
-    
-    double pTExclusionMax = 20.0; // Upper bound for pT
-    
+    const std::map<std::string, std::map<std::pair<float, float>,
+    std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap,
+    const std::map<GroupKey, std::map<std::pair<float, float>,
+    std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
+    const std::string& basePlotDirectory,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax) {
     // Iterate over combinedTriggerDataMap to generate plots
     for (const auto& [triggerGroupName, isoEtMap] : combinedTriggerDataMap) {
         std::cout << "\033[34m[INFO]\033[0m Processing trigger group: \033[1m" << triggerGroupName << "\033[0m\n";
-        
+
         for (const auto& [isoEtRange, dataPoints] : isoEtMap) {
             const float isoMin = isoEtRange.first;
             const float isoMax = isoEtRange.second;
-            
+
             // Check if this isoEtRange has data
             if (dataPoints.empty()) {
                 std::cerr << "\033[31m[WARNING]\033[0m No combined data for isoEtRange ["
-                << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
+                          << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
                 continue;
             }
             std::cout << "\033[32m[DEBUG]\033[0m Found " << dataPoints.size()
-            << " data points for isoEtRange [" << isoMin << ", " << isoMax << "].\n";
-            
-            
-            // Find corresponding groupKey
+                      << " data points for isoEtRange [" << isoMin << ", " << isoMax << "].\n";
+
+            // Find associated groupKey to extract cut values and massWindowLabel
             GroupKey correspondingGroupKey;
             bool foundGroupKey = false;
             for (const auto& [gk, isoMap] : groupedData) {
@@ -4468,25 +4438,25 @@ void GenerateCombinedRatioPlot(
             }
             if (!foundGroupKey) {
                 std::cerr << "\033[31m[ERROR]\033[0m Could not find corresponding groupKey for TriggerGroupName: "
-                << triggerGroupName << " and isoEtRange: [" << isoMin << ", " << isoMax << "]. Skipping plot." << std::endl;
+                          << triggerGroupName << " and isoEtRange: [" << isoMin << ", " << isoMax << "]. Skipping plot." << std::endl;
                 continue;
             }
-            
+
             float eCore = std::get<2>(correspondingGroupKey);
             float chi = std::get<3>(correspondingGroupKey);
             float asym = std::get<4>(correspondingGroupKey);
             std::string massWindowLabel = std::get<5>(correspondingGroupKey);
-            
-            // Map triggerGroupName and triggerName to human-readable names
+
+            // Map triggerGroupName to human-readable name
             std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-                                                                                    triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+                triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
             
             // Create output directories
             std::ostringstream dirStream;
             dirStream << basePlotDirectory << "/" << triggerGroupName
-            << "/E" << Utils::formatToThreeSigFigs(eCore)
-            << "_Chi" << Utils::formatToThreeSigFigs(chi)
-            << "_Asym" << Utils::formatToThreeSigFigs(asym);
+                      << "/E" << Utils::formatToThreeSigFigs(eCore)
+                      << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                      << "_Asym" << Utils::formatToThreeSigFigs(asym);
             std::string dirPath = dirStream.str();
             gSystem->mkdir(dirPath.c_str(), true);
             
@@ -4496,13 +4466,14 @@ void GenerateCombinedRatioPlot(
             // Create a folder for mass window type
             std::string massWindowDir = isolationDir + "/" + massWindowLabel;
             gSystem->mkdir(massWindowDir.c_str(), true);
-            
+
             // Create a TCanvas for the combined plot
             std::ostringstream canvasNameStream;
             canvasNameStream << "CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax;
             TCanvas combinedCanvas(canvasNameStream.str().c_str(), "Combined Trigger Data", 800, 600);
-            
-            // Prepare bin edges up to pTExclusionMax
+            combinedCanvas.cd();
+
+            // Prepare bin edges for variable bin widths
             std::vector<double> binEdges;
             for (const auto& bin : pT_bins) {
                 if (bin.first >= pTExclusionMax) {
@@ -4511,92 +4482,121 @@ void GenerateCombinedRatioPlot(
                 binEdges.push_back(bin.first);
             }
             // Add the upper edge of the last included bin
-            if (!pT_bins.empty()) {
-                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            if (!binEdges.empty()) {
+                if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
+                    binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+                } else {
+                    binEdges.push_back(pTExclusionMax);
+                }
+            } else {
+                // No bins to plot
+                std::cerr << "\033[31m[WARNING]\033[0m No pT bins to plot. Skipping plot.\n";
+                continue;
             }
-            
+
             int nBins = binEdges.size() - 1;
             double* binEdgesArray = binEdges.data();
-            
+
             // Create a dummy histogram to set up the axes
             TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
-            hFrame->SetStats(0); // Hide statistics box
-            hFrame->GetXaxis()->SetTitle("p_{T} Bin Center [GeV]");
-            std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
-            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
-            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+            hFrame->SetStats(0);
+            hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+            // Set y-axis title
+            const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
+                "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
+                "#frac{Isolated Prompt Photons}{All Prompt Photons}";
             hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
-            
-            // Set y-axis range
             hFrame->GetYaxis()->SetRangeUser(0, 2.0);
-            
-            // Remove x-axis labels and ticks from the dummy histogram
-            hFrame->GetXaxis()->SetLabelOffset(999); // Hide labels
-            hFrame->GetXaxis()->SetTickLength(0);    // Hide ticks
-            
-            // Draw the dummy histogram
-            hFrame->Draw();
-            
-            // Create a TMultiGraph for the combined data
-            TMultiGraph* combinedMultiGraph = new TMultiGraph();
-            
+
+            // Remove x-axis labels and ticks
+            hFrame->GetXaxis()->SetLabelOffset(999);
+            hFrame->GetXaxis()->SetTickLength(0);
+
+            // Draw the frame
+            hFrame->Draw("AXIS");
+
             // Create a legend
-            TLegend combinedLegend(0.18, 0.75, 0.48, 0.9);
+            TLegend combinedLegend(0.55, 0.67, 0.88, 0.87);
             combinedLegend.SetBorderSize(0);
-            combinedLegend.SetTextSize(0.024);
-            
+            combinedLegend.SetTextSize(0.03);
+
             // Group data points by triggerName for coloring
             std::map<std::string, std::vector<DataStructures::IsolationDataWithPt>> dataByTrigger;
             for (const auto& isoData : dataPoints) {
                 dataByTrigger[isoData.triggerName].push_back(isoData);
             }
-            
-            // Iterate over each trigger's data points
+
+            // Keep track of graphs to delete later
+            std::vector<TGraphErrors*> graphs;
+
+            // For each trigger, create a TGraphErrors and add to the canvas
             for (const auto& [triggerName, triggerDataPoints] : dataByTrigger) {
-                std::vector<double> binCenters;
+                std::vector<double> ptCenters;
                 std::vector<double> ratios;
                 std::vector<double> errors;
-                
+
                 for (const auto& isoData : triggerDataPoints) {
-                    double pT = isoData.weightedPt;
-                    if (pT >= pTExclusionMax) {
-                        continue; // Exclude points beyond pTExclusionMax
+                    double ptMin = isoData.ptMin;
+                    double ptMax = isoData.ptMax;
+
+                    // Find the pT bin that matches ptMin and ptMax
+                    bool foundBin = false;
+                    double ptCenter = 0.0;
+                    for (const auto& pT_bin : pT_bins) {
+                        if (std::abs(pT_bin.first - ptMin) < 1e-6 && std::abs(pT_bin.second - ptMax) < 1e-6) {
+                            // Found matching pT bin
+                            ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                            foundBin = true;
+                            break;
+                        }
                     }
-                    
-                    // Calculate the bin center from pTMin and pTMax
-                    double binCenter = (isoData.ptMin + isoData.ptMax) / 2.0;
-                    binCenters.push_back(binCenter);
+                    if (!foundBin) {
+                        std::cerr << "\033[31m[WARNING]\033[0m Could not find matching pT bin for ptMin: " << ptMin << ", ptMax: " << ptMax << ". Skipping data point.\n";
+                        continue;
+                    }
+
+                    // Exclude data points where ptCenter >= pTExclusionMax
+                    if (ptCenter >= pTExclusionMax) {
+                        continue;
+                    }
+
+                    ptCenters.push_back(ptCenter);
                     ratios.push_back(isoData.ratio);
                     errors.push_back(isoData.error);
                 }
-                
-                if (binCenters.empty()) {
+
+                if (ptCenters.empty()) {
                     std::cerr << "\033[31m[WARNING]\033[0m No valid data points for trigger: " << triggerName
-                    << ". Skipping.\n";
+                              << ". Skipping.\n";
                     continue;
                 }
-                
+
                 // Create a TGraphErrors for this trigger
-                TGraphErrors* graph = new TGraphErrors(binCenters.size(),
-                                                       binCenters.data(),
-                                                       ratios.data(),
-                                                       nullptr,
-                                                       errors.data());
-                graph->SetMarkerStyle(20);
-                // Assign color based on triggerName
-                auto colorIt = TriggerConfig::triggerColorMap.find(triggerName);
-                if (colorIt != TriggerConfig::triggerColorMap.end()) {
-                    graph->SetMarkerColor(colorIt->second);
-                    graph->SetLineColor(colorIt->second);
-                } else {
-                    graph->SetMarkerColor(kBlack);
-                    graph->SetLineColor(kBlack);
+                TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                                      ptCenters.data(),
+                                                      ratios.data(),
+                                                      nullptr,
+                                                      errors.data());
+
+                // Set marker style and color
+                int markerStyle = 20;
+                int markerColor = kBlack;
+
+                auto it_color = TriggerConfig::triggerColorMap.find(triggerName);
+                if (it_color != TriggerConfig::triggerColorMap.end()) {
+                    markerColor = it_color->second;
                 }
+                graph->SetMarkerStyle(markerStyle);
+
+                graph->SetMarkerSize(1.0);
+
                 graph->SetLineWidth(2);
-                
-                // Add to the multigraph
-                combinedMultiGraph->Add(graph, "P");
-                
+                graph->SetMarkerColor(markerColor);
+                graph->SetLineColor(markerColor);
+
+                // Draw the graph
+                graph->Draw("P SAME");
+
                 // Add entry to legend
                 std::string readableTriggerName = triggerName;
                 auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
@@ -4606,106 +4606,120 @@ void GenerateCombinedRatioPlot(
                 combinedLegend.AddEntry(graph, readableTriggerName.c_str(), "p");
                 
                 std::cout << "\033[32m[DEBUG]\033[0m Added data for trigger: " << triggerName
-                << " (" << readableTriggerName << ") with " << binCenters.size() << " points.\n";
+                          << " (" << readableTriggerName << ") with " << ptCenters.size() << " points.\n";
+
+                // Store the graph for cleanup
+                graphs.push_back(graph);
             }
-            
-            // *** Key Change: Remove axis settings from TMultiGraph ***
-            // Instead, rely on the dummy histogram (hFrame) to define the axes
-            
-            // Draw the TMultiGraph on top of the dummy histogram
-            combinedMultiGraph->Draw("P SAME");
-            
-            // Draw a dashed line at y = 1 across the x-axis range
-            TLine* combinedLine = new TLine(pT_bins[0].first, 1.0, pTExclusionMax, 1.0);
+
+            // Draw a dashed line at y = 1
+            TLine* combinedLine = new TLine(binEdges.front(), 1, binEdges.back(), 1);
             combinedLine->SetLineStyle(2); // Dashed line
-            combinedLine->Draw();
-            
+            combinedLine->Draw("SAME");
+
             // Draw the legend
-            combinedLegend.Draw();
-            
-            // Add custom x-axis ticks and labels
-            TLatex latex;
-            latex.SetTextSize(0.035);
-            latex.SetTextAlign(22); // Center alignment
-            
-            // Draw x-axis line
+            combinedLegend.Draw("SAME");
+
+            // Draw custom x-axis ticks and labels
             double xMin = binEdges.front();
             double xMax = binEdges.back();
             double yAxisMin = hFrame->GetMinimum();
             double yAxisMax = hFrame->GetMaximum();
-            
-            double tickSizeVal = (yAxisMax - yAxisMin) * 0.02;
-            double labelOffsetVal = (yAxisMax - yAxisMin) * 0.05;
-            // Draw the x-axis line
+
+            double tickSize = (yAxisMax - yAxisMin) * 0.02;
+            double labelOffset = (yAxisMax - yAxisMin) * 0.05;
+            TLatex latex;
+            latex.SetTextSize(0.035);
+            latex.SetTextAlign(22); // Center alignment
+
+            // Draw x-axis line
             TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
-            xAxisLine.Draw();
-            
-            // Iterate over bin edges to draw ticks and labels
+            xAxisLine.Draw("SAME");
+
+            // Draw ticks and labels at bin edges
             for (size_t i = 0; i < binEdges.size(); ++i) {
                 double xPos = binEdges[i];
                 double yPos = yAxisMin;
-                
+
                 // Draw tick
-                TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSizeVal);
-                tick->Draw();
-                
+                TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+                tick->Draw("SAME");
+
                 // Get pT value for label
                 double pTValue = binEdges[i];
-                
-                // Format label to one decimal place
+
+                // Format label to show one decimal place
                 std::ostringstream labelStream;
                 labelStream << std::fixed << std::setprecision(1) << pTValue;
                 std::string label = labelStream.str();
-                
+
                 // Draw label
-                latex.DrawLatex(xPos, yPos - labelOffsetVal, label.c_str());
+                latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
             }
-            
-            // Define label positioning variables before using them
-            double xStart = 0.55;        // Starting x-coordinate (normalized device coordinates)
-            double yStartLabel = 0.9;    // Starting y-coordinate
-            double yStepLabel = 0.04;    // Vertical spacing between lines
-            
+
+            // Redraw the axes to ensure labels are on top
+            combinedCanvas.RedrawAxis();
+
             // Add labels using TLatex in the top-left corner
             TLatex labelText;
             labelText.SetNDC();
-            labelText.SetTextSize(0.026);       // Adjust text size as needed
-            labelText.SetTextColor(kBlack);     // Ensure text color is black
-            
+            labelText.SetTextSize(0.032);       // Adjust text size as needed
+
+            TLatex valueText;
+            valueText.SetNDC();
+            valueText.SetTextSize(0.028);
+
+            double xStart = 0.2; // Starting x-coordinate (left side)
+            double yStartLabel = 0.9; // Starting y-coordinate
+            double yStepLabel = 0.07;  // Vertical spacing between lines
+
             // Prepare label strings
-            std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
-            std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
-            std::string chiLabel = "#chi^{2}/NDF < " + Utils::formatToThreeSigFigs(chi);
-            std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
-            std::string massWindowLabelStr = "Mass Window: " + massWindowLabel;
-            std::string coneRadiusLabel = "#Delta R_{cone} < 0.3";
-            
-            // Draw labels
-            labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
-            labelText.DrawLatex(xStart, yStartLabel - yStepLabel, eCoreLabel.c_str());
-            labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, chiLabel.c_str());
-            labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, asymLabel.c_str());
-            labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, massWindowLabelStr.c_str());
-            labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, coneRadiusLabel.c_str());
-            
+            labelText.DrawLatex(xStart, yStartLabel, "#font[62]{Active Trigger Group:}");
+            valueText.DrawLatex(xStart + 0.22, yStartLabel, readableTriggerGroupName.c_str());
+
+            labelText.DrawLatex(xStart, yStartLabel - yStepLabel, "#font[62]{ECore #geq}");
+            std::ostringstream eCoreWithUnit;
+            eCoreWithUnit << eCore << "   GeV";
+            valueText.DrawLatex(xStart + 0.22, yStartLabel - yStepLabel, eCoreWithUnit.str().c_str());
+
+            labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, "#font[62]{#chi^{2} <}");
+            std::ostringstream chiStr;
+            chiStr << chi;
+            valueText.DrawLatex(xStart + 0.22, yStartLabel - 2 * yStepLabel, chiStr.str().c_str());
+
+            labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, "#font[62]{Asymmetry <}");
+            std::ostringstream asymmetryStr;
+            asymmetryStr << asym;
+            valueText.DrawLatex(xStart + 0.22, yStartLabel - 3 * yStepLabel, asymmetryStr.str().c_str());
+
+            labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, "#font[62]{Mass Window:}");
+            valueText.DrawLatex(xStart + 0.22, yStartLabel - 4 * yStepLabel, massWindowLabel.c_str());
+
+            labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, "#font[62]{#Delta R_{cone} <}");
+            valueText.DrawLatex(xStart + 0.22, yStartLabel - 5 * yStepLabel, "0.3");
+
             // Force canvas update before saving
             combinedCanvas.Modified();
             combinedCanvas.Update();
-            
+
             // Save the combined canvas
             std::ostringstream combinedOutputPathStream;
             combinedOutputPathStream << massWindowDir << "/CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax << ".png";
             std::string combinedOutputPath = combinedOutputPathStream.str();
             combinedCanvas.SaveAs(combinedOutputPath.c_str());
             std::cout << "\033[33m[INFO]\033[0m Saved combined plot to " << combinedOutputPath << std::endl;
-            
+
             // Clean up
-            delete combinedMultiGraph;
-            delete combinedLine;
             delete hFrame;
-            // The graphs are managed by TMultiGraph and ROOT's memory management
+            delete combinedLine;
+            for (auto graph : graphs) {
+                delete graph;
+            }
+            // The tick lines are managed by ROOT and don't need explicit deletion
         }
     }
+
+    std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
 }
 
 
@@ -4814,9 +4828,9 @@ void ProcessIsolationData(
     // Map to hold combined data: TriggerGroupName -> isoEtRange -> vector of selected IsolationDataWithPt
     std::map<std::string, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>> combinedTriggerDataMap;
     
-    SortAndCombineTriggers(groupedData, triggerEfficiencyPoints, sortedTriggersByGroupName, combinedTriggerDataMap);
+    SortAndCombineTriggers(groupedData, triggerEfficiencyPoints, TriggerConfig::triggerThresholds, sortedTriggersByGroupName, combinedTriggerDataMap);
 
-    GenerateCombinedRatioPlot(combinedTriggerDataMap, groupedData, basePlotDirectory);
+    GenerateCombinedRatioPlot(combinedTriggerDataMap, groupedData, basePlotDirectory, DataStructures::pT_bins, 20.0);
     
     // Prepare trigger combination and name maps
     const std::map<std::string, std::string>& triggerCombinationNameMap = TriggerCombinationNames::triggerCombinationNameMap;
@@ -5688,15 +5702,9 @@ void PlotCombinedHistograms(
         // The following code will only execute if fitOnly is false
         // -------------------- Process Invariant Mass Histograms --------------------
         ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers, triggerColorMap, combinationName);
-        
-        std::vector<std::pair<double, double>> pT_bins = {
-            {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0},
-            {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0},
-            {10.0, 12.0}, {12.0, 15.0}, {15.0, 20.0}, {20.0, 30.0}
-        };
 
         // -------------------- Process Meson Mass vs Pt --------------------
-        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints, pT_bins);
+        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints, DataStructures::pT_bins);
 
         // -------------------- Process Isolation Energy Histograms --------------------
         ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory, triggers, combinationName);
@@ -6136,80 +6144,6 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     bool debugMode = false;
     std::map<int, std::map<std::string, std::string>> overrideTriggerStatus; // Empty map
     overrideTriggerStatus[46697]["Photon_3_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    
-//    // Override the status of "Photon_5_GeV_plus_MBD_NS_geq_1" to "OFF" for run 46697
-//    overrideTriggerStatus[47289]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47303]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47323]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47332]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47334]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47375]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47807]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47846]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47848]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47887]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[47962]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48080]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48100]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48287]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48293]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48295]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48338]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48342]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48343]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48346]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48352]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48357]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48409]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48410]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48412]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48417]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48418]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48422]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48423]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48454]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48459]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48461]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48462]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48638]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48645]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48656]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48701]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48720]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48726]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48734]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48859]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48868]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48884]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48903]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48936]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48984]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48986]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[48991]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49028]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49029]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49044]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49061]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49138]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49219]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49247]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49250]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49263]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49266]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49270]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49310]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49317]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49329]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49336]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49337]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49348]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49363]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49377]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49433]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49434]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49435]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49467]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
-//    overrideTriggerStatus[49748]["Photon_5_GeV_plus_MBD_NS_geq_1"] = "OFF";
 
     // Get the map of trigger combinations to run numbers
     std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath, debugMode, overrideTriggerStatus);
