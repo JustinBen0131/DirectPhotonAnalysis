@@ -96,6 +96,52 @@ using GroupKey = std::tuple<
     std::string  // MassWindowLabel
 >;
 
+void estimateSigmoidParameters(TH1* ratioHist, double& amplitude, double& xOffset, double& slope) {
+    // Estimate amplitude as the maximum value of the histogram
+    amplitude = ratioHist->GetMaximum();
+
+    // Find the x value where the histogram reaches 50% of the amplitude
+    double halfMax = amplitude / 2.0;
+    int nBins = ratioHist->GetNbinsX();
+    double x50 = 0.0;
+    bool found50 = false;
+    
+    for (int i = 1; i <= nBins; ++i) {
+        double y = ratioHist->GetBinContent(i);
+        if (y >= halfMax) {
+            x50 = ratioHist->GetBinCenter(i);
+            found50 = true;
+            break;
+        }
+    }
+    
+    if (!found50) x50 = 1.0;  // Fallback if half-max point isn't found
+    xOffset = x50;
+
+    // Estimate slope based on the width over which the histogram rises from 20% to 80% of the amplitude
+    double y20 = amplitude * 0.2;
+    double y80 = amplitude * 0.8;
+    double x20 = 0.0, x80 = 0.0;
+    bool found20 = false, found80 = false;
+    for (int i = 1; i <= nBins; ++i) {
+        double y = ratioHist->GetBinContent(i);
+        if (!found20 && y >= y20) {
+            x20 = ratioHist->GetBinCenter(i);
+            found20 = true;
+        }
+        if (!found80 && y >= y80) {
+            x80 = ratioHist->GetBinCenter(i);
+            found80 = true;
+        }
+        if (found20 && found80) {
+            break;
+        }
+    }
+
+    double deltaX = x80 - x20;
+    slope = (deltaX > 0) ? 4.0 / deltaX : 0.1;  // Default to a gentle slope if deltaX is zero
+}
+
 std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(
     const std::string& csvFilePath,
     bool debugMode,
@@ -1205,8 +1251,8 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
 
     
     // Add the 'Active Trigger Group' label above the current trigger label
-    labelText.DrawLatex(0.45, 0.9, "Active Trigger Group:");
-    valueText.DrawLatex(0.65, 0.9, triggerGroupName.c_str());
+    labelText.DrawLatex(0.2, 0.9, "Active Trigger Group:");
+    valueText.DrawLatex(0.32, 0.9, triggerGroupName.c_str());
 
     std::string readableTriggerName = data.cuts.triggerName;
     auto triggerNameIt = TriggerConfig::triggerNameMap.find(data.cuts.triggerName);
@@ -1568,55 +1614,7 @@ void ProcessInvariantMassHistograms(TFile* inputFile, const std::string& plotDir
             delete obj;
         }
     }
-
-    // Call printHistogramData to write the CSV file
     printHistogramData(histogramDataVector, plotDirectory, combinationName);
-}
-
-void estimateSigmoidParameters(TH1* ratioHist, double& amplitude, double& xOffset, double& slope) {
-    // Estimate amplitude as the maximum value of the histogram
-    amplitude = ratioHist->GetMaximum();
-
-    // Find the x value where the histogram reaches 50% of the amplitude
-    double halfMax = amplitude / 2.0;
-    int nBins = ratioHist->GetNbinsX();
-    double x50 = 0.0;
-    bool found50 = false;
-    
-    for (int i = 1; i <= nBins; ++i) {
-        double y = ratioHist->GetBinContent(i);
-        if (y >= halfMax) {
-            x50 = ratioHist->GetBinCenter(i);
-            found50 = true;
-            break;
-        }
-    }
-    
-    if (!found50) x50 = 1.0;  // Fallback if half-max point isn't found
-    xOffset = x50;
-
-    // Estimate slope based on the width over which the histogram rises from 20% to 80% of the amplitude
-    double y20 = amplitude * 0.2;
-    double y80 = amplitude * 0.8;
-    double x20 = 0.0, x80 = 0.0;
-    bool found20 = false, found80 = false;
-    for (int i = 1; i <= nBins; ++i) {
-        double y = ratioHist->GetBinContent(i);
-        if (!found20 && y >= y20) {
-            x20 = ratioHist->GetBinCenter(i);
-            found20 = true;
-        }
-        if (!found80 && y >= y80) {
-            x80 = ratioHist->GetBinCenter(i);
-            found80 = true;
-        }
-        if (found20 && found80) {
-            break;
-        }
-    }
-
-    double deltaX = x80 - x20;
-    slope = (deltaX > 0) ? 4.0 / deltaX : 0.1;  // Default to a gentle slope if deltaX is zero
 }
 
 void generateMesonPlotVsPt(
@@ -1869,8 +1867,6 @@ void generateMesonPlotVsPt(
     delete legend;
     delete hFrame;
 }
-
-
 
 void readHistogramDataForInvariantMasses(const std::string& csvFilePath,
                        std::vector<DataStructures::HistogramData>& dataVector,
@@ -2176,9 +2172,18 @@ void generateOverlayInvariantMassPlot(
     // Draw the frame
     hFrame->Draw();
 
-    // Create legend
-    TLegend* legend = new TLegend(0.6, 0.68, 0.9, 0.88);
-    legend->SetTextSize(0.035);
+    // Declare legend pointer outside the conditional blocks
+    TLegend* legend = nullptr;
+
+    if (mesonName == "#pi^{0}") {
+        // Create legend with specific coordinates for #pi^{0}
+        legend = new TLegend(0.2, 0.2, 0.4, 0.4);
+        legend->SetTextSize(0.03);
+    } else {
+        // Create legend with specific coordinates for other meson names
+        legend = new TLegend(0.2, 0.2, 0.4, 0.4);
+        legend->SetTextSize(0.03);
+    }
 
     // Keep track of graphs to delete later
     std::vector<TGraphErrors*> graphs;
@@ -2194,24 +2199,29 @@ void generateOverlayInvariantMassPlot(
     /*
      ADJUST OFFSET VALUE AS NECESSARY
      */
-    double offsetValue = 0.05;
+    double offsetValue;
+    if (mesonName == "#eta") {
+        offsetValue = 0.098;
+    } else {
+        offsetValue = 0.08;
+    }
 
     // Calculate offsets based on the number of triggers
     std::vector<double> offsets;
     if (numTriggers == 1) {
         offsets.push_back(0.0);
     } else if (numTriggers == 2) {
-        offsets.push_back(-offsetValue);
-        offsets.push_back(+offsetValue);
+        offsets.push_back(-0.5 * offsetValue);
+        offsets.push_back(+0.5 * offsetValue);
     } else if (numTriggers == 3) {
-        offsets.push_back(-offsetValue);
+        offsets.push_back(-0.5 * offsetValue);
         offsets.push_back(0.0);
-        offsets.push_back(+offsetValue);
+        offsets.push_back(+0.5 * offsetValue);
     } else if (numTriggers == 4) {
-        offsets.push_back(-2 * offsetValue);
-        offsets.push_back(-offsetValue);
-        offsets.push_back(+offsetValue);
-        offsets.push_back(+2 * offsetValue);
+        offsets.push_back(-1.5 * offsetValue);
+        offsets.push_back(-0.5 * offsetValue);
+        offsets.push_back(+0.5 * offsetValue);
+        offsets.push_back(+1.5 * offsetValue);
     } else {
         // For N > 4, distribute offsets symmetrically around zero
         int midIndex = numTriggers / 2;
@@ -2304,7 +2314,13 @@ void generateOverlayInvariantMassPlot(
             markerColor = it_color->second;
         }
         graph->SetMarkerStyle(markerStyle);
-        graph->SetMarkerSize(0.8); // Adjust marker size if needed
+        double markerSize;
+        if (mesonName == "#eta") {
+            markerSize = 0.72;
+        } else {
+            markerSize = 0.85;
+        }
+        graph->SetMarkerSize(markerSize); // Adjust marker size if needed
         graph->SetLineWidth(2);
         graph->SetMarkerColor(markerColor);
         graph->SetLineColor(markerColor);
@@ -2334,7 +2350,11 @@ void generateOverlayInvariantMassPlot(
     double yMin = yMinData - yBuffer;
     double yMax = yMaxData + yBuffer;
 
-    hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+    if (mesonName == "#eta") {
+        hFrame->GetYaxis()->SetRangeUser(0.4, 0.75);
+    } else {
+        hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+    }
 
     // Draw legend
     legend->Draw();
@@ -2392,17 +2412,17 @@ void generateOverlayInvariantMassPlot(
     labelText.DrawLatex(0.2, 0.87, "#font[62]{ECore #geq}");
     std::ostringstream eCoreWithUnit;
     eCoreWithUnit << cutData.clusECore << "   GeV";
-    valueText.DrawLatex(0.42, 0.87, eCoreWithUnit.str().c_str());
+    valueText.DrawLatex(0.32, 0.87, eCoreWithUnit.str().c_str());
 
     labelText.DrawLatex(0.2, 0.82, "#font[62]{#chi^{2} <}");
     std::ostringstream chiStr;
     chiStr << cutData.chi;
-    valueText.DrawLatex(0.42, 0.82, chiStr.str().c_str());
+    valueText.DrawLatex(0.27, 0.82, chiStr.str().c_str());
 
     labelText.DrawLatex(0.2, 0.77, "#font[62]{Asymmetry <}");
     std::ostringstream asymmetryStr;
     asymmetryStr << cutData.asymmetry;
-    valueText.DrawLatex(0.42, 0.77, asymmetryStr.str().c_str());
+    valueText.DrawLatex(0.37, 0.77, asymmetryStr.str().c_str());
 
     // Ensure the directory exists
     gSystem->mkdir((plotDirectory + "/" + cutCombination).c_str(), true);
@@ -2418,9 +2438,6 @@ void generateOverlayInvariantMassPlot(
     delete legend;
     delete hFrame;
 }
-
-
-
 
 void ProcessMesonMassVsPt(
     const std::string& plotDirectory,
@@ -2501,7 +2518,7 @@ void ProcessMesonMassVsPt(
                 TriggerConfig::triggerNameMap,
                 pT_bins,
                 8.0,  // pTExclusionMax for π⁰ plots
-                0.13, 0.2 // yMin and yMax
+                0.13, 0.35 // yMin and yMax
             );
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
@@ -4410,30 +4427,36 @@ void SortAndCombineTriggers(
 void GenerateCombinedRatioPlot(
     const std::map<std::string, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& combinedTriggerDataMap,
     const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
-    const std::string& basePlotDirectory) {
-    // -----------------------------
-    // ** Combined Plot Generation **
-    // -----------------------------
+                               const std::string& basePlotDirectory) {
+    
+    // Define pT bins (adjust as needed or pass as a parameter)
+    std::vector<std::pair<double, double>> pT_bins = {
+        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0},
+        {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0},
+        {10.0, 12.0}, {12.0, 15.0}, {15.0, 20.0}, {20.0, 30.0}
+    };
+    
+    double pTExclusionMax = 20.0; // Upper bound for pT
+    
     // Iterate over combinedTriggerDataMap to generate plots
     for (const auto& [triggerGroupName, isoEtMap] : combinedTriggerDataMap) {
         std::cout << "\033[34m[INFO]\033[0m Processing trigger group: \033[1m" << triggerGroupName << "\033[0m\n";
-
+        
         for (const auto& [isoEtRange, dataPoints] : isoEtMap) {
             const float isoMin = isoEtRange.first;
             const float isoMax = isoEtRange.second;
-
+            
             // Check if this isoEtRange has data
             if (dataPoints.empty()) {
                 std::cerr << "\033[31m[WARNING]\033[0m No combined data for isoEtRange ["
-                          << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
+                << isoMin << ", " << isoMax << "]. Skipping combined plot." << std::endl;
                 continue;
             }
             std::cout << "\033[32m[DEBUG]\033[0m Found " << dataPoints.size()
-                      << " data points for isoEtRange [" << isoMin << ", " << isoMax << "].\n";
-
-
-            // Find associated groupKey to extract cut values and massWindowLabel
-            // Assuming all dataPoints have the same groupKey attributes
+            << " data points for isoEtRange [" << isoMin << ", " << isoMax << "].\n";
+            
+            
+            // Find corresponding groupKey
             GroupKey correspondingGroupKey;
             bool foundGroupKey = false;
             for (const auto& [gk, isoMap] : groupedData) {
@@ -4445,25 +4468,25 @@ void GenerateCombinedRatioPlot(
             }
             if (!foundGroupKey) {
                 std::cerr << "\033[31m[ERROR]\033[0m Could not find corresponding groupKey for TriggerGroupName: "
-                          << triggerGroupName << " and isoEtRange: [" << isoMin << ", " << isoMax << "]. Skipping plot." << std::endl;
+                << triggerGroupName << " and isoEtRange: [" << isoMin << ", " << isoMax << "]. Skipping plot." << std::endl;
                 continue;
             }
-
+            
             float eCore = std::get<2>(correspondingGroupKey);
             float chi = std::get<3>(correspondingGroupKey);
             float asym = std::get<4>(correspondingGroupKey);
             std::string massWindowLabel = std::get<5>(correspondingGroupKey);
-
+            
             // Map triggerGroupName and triggerName to human-readable names
             std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-                triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+                                                                                    triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
             
             // Create output directories
             std::ostringstream dirStream;
             dirStream << basePlotDirectory << "/" << triggerGroupName
-                      << "/E" << Utils::formatToThreeSigFigs(eCore)
-                      << "_Chi" << Utils::formatToThreeSigFigs(chi)
-                      << "_Asym" << Utils::formatToThreeSigFigs(asym);
+            << "/E" << Utils::formatToThreeSigFigs(eCore)
+            << "_Chi" << Utils::formatToThreeSigFigs(chi)
+            << "_Asym" << Utils::formatToThreeSigFigs(asym);
             std::string dirPath = dirStream.str();
             gSystem->mkdir(dirPath.c_str(), true);
             
@@ -4473,49 +4496,92 @@ void GenerateCombinedRatioPlot(
             // Create a folder for mass window type
             std::string massWindowDir = isolationDir + "/" + massWindowLabel;
             gSystem->mkdir(massWindowDir.c_str(), true);
-
+            
             // Create a TCanvas for the combined plot
             std::ostringstream canvasNameStream;
             canvasNameStream << "CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax;
             TCanvas combinedCanvas(canvasNameStream.str().c_str(), "Combined Trigger Data", 800, 600);
-
+            
+            // Prepare bin edges up to pTExclusionMax
+            std::vector<double> binEdges;
+            for (const auto& bin : pT_bins) {
+                if (bin.first >= pTExclusionMax) {
+                    break;
+                }
+                binEdges.push_back(bin.first);
+            }
+            // Add the upper edge of the last included bin
+            if (!pT_bins.empty()) {
+                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            }
+            
+            int nBins = binEdges.size() - 1;
+            double* binEdgesArray = binEdges.data();
+            
+            // Create a dummy histogram to set up the axes
+            TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+            hFrame->SetStats(0); // Hide statistics box
+            hFrame->GetXaxis()->SetTitle("p_{T} Bin Center [GeV]");
+            std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
+            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
+            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+            hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
+            
+            // Set y-axis range
+            hFrame->GetYaxis()->SetRangeUser(0, 2.0);
+            
+            // Remove x-axis labels and ticks from the dummy histogram
+            hFrame->GetXaxis()->SetLabelOffset(999); // Hide labels
+            hFrame->GetXaxis()->SetTickLength(0);    // Hide ticks
+            
+            // Draw the dummy histogram
+            hFrame->Draw();
+            
             // Create a TMultiGraph for the combined data
             TMultiGraph* combinedMultiGraph = new TMultiGraph();
-
+            
             // Create a legend
             TLegend combinedLegend(0.18, 0.75, 0.48, 0.9);
             combinedLegend.SetBorderSize(0);
             combinedLegend.SetTextSize(0.024);
-
+            
             // Group data points by triggerName for coloring
             std::map<std::string, std::vector<DataStructures::IsolationDataWithPt>> dataByTrigger;
             for (const auto& isoData : dataPoints) {
                 dataByTrigger[isoData.triggerName].push_back(isoData);
             }
-
+            
             // Iterate over each trigger's data points
             for (const auto& [triggerName, triggerDataPoints] : dataByTrigger) {
-                std::vector<double> weightedPts;
+                std::vector<double> binCenters;
                 std::vector<double> ratios;
                 std::vector<double> errors;
-
+                
                 for (const auto& isoData : triggerDataPoints) {
-                    weightedPts.push_back(isoData.weightedPt);
+                    double pT = isoData.weightedPt;
+                    if (pT >= pTExclusionMax) {
+                        continue; // Exclude points beyond pTExclusionMax
+                    }
+                    
+                    // Calculate the bin center from pTMin and pTMax
+                    double binCenter = (isoData.ptMin + isoData.ptMax) / 2.0;
+                    binCenters.push_back(binCenter);
                     ratios.push_back(isoData.ratio);
                     errors.push_back(isoData.error);
                 }
-                if (weightedPts.empty()) {
+                
+                if (binCenters.empty()) {
                     std::cerr << "\033[31m[WARNING]\033[0m No valid data points for trigger: " << triggerName
-                              << ". Skipping.\n";
+                    << ". Skipping.\n";
                     continue;
                 }
-
+                
                 // Create a TGraphErrors for this trigger
-                TGraphErrors* graph = new TGraphErrors(weightedPts.size(),
-                                                      weightedPts.data(),
-                                                      ratios.data(),
-                                                      nullptr,
-                                                      errors.data());
+                TGraphErrors* graph = new TGraphErrors(binCenters.size(),
+                                                       binCenters.data(),
+                                                       ratios.data(),
+                                                       nullptr,
+                                                       errors.data());
                 graph->SetMarkerStyle(20);
                 // Assign color based on triggerName
                 auto colorIt = TriggerConfig::triggerColorMap.find(triggerName);
@@ -4527,10 +4593,10 @@ void GenerateCombinedRatioPlot(
                     graph->SetLineColor(kBlack);
                 }
                 graph->SetLineWidth(2);
-
+                
                 // Add to the multigraph
                 combinedMultiGraph->Add(graph, "P");
-
+                
                 // Add entry to legend
                 std::string readableTriggerName = triggerName;
                 auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
@@ -4540,49 +4606,80 @@ void GenerateCombinedRatioPlot(
                 combinedLegend.AddEntry(graph, readableTriggerName.c_str(), "p");
                 
                 std::cout << "\033[32m[DEBUG]\033[0m Added data for trigger: " << triggerName
-                          << " (" << readableTriggerName << ") with " << weightedPts.size() << " points.\n";
+                << " (" << readableTriggerName << ") with " << binCenters.size() << " points.\n";
             }
-
-            // Set titles
-            std::string plotTitle = "Isolation Ratio vs pT (" + massWindowLabel + ")";
-            combinedMultiGraph->SetTitle(plotTitle.c_str());
-            combinedMultiGraph->GetXaxis()->SetTitle("Weighted p_{T} of Leading Cluster [GeV]");
-            const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
-                "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
-                "#frac{Isolated Prompt Photons}{All Prompt Photons}";
             
-            combinedMultiGraph->GetYaxis()->SetTitle(yAxisTitle.c_str());
-            combinedMultiGraph->GetYaxis()->SetRangeUser(0, 2.0);
-            combinedMultiGraph->GetXaxis()->SetLimits(2.0, 25.0);
-
-            // Draw multigraph
-            combinedMultiGraph->Draw("A P");
-
-            // Draw a dashed line at y = 1
-            TLine* combinedLine = new TLine(2, 1, 25, 1);
+            // *** Key Change: Remove axis settings from TMultiGraph ***
+            // Instead, rely on the dummy histogram (hFrame) to define the axes
+            
+            // Draw the TMultiGraph on top of the dummy histogram
+            combinedMultiGraph->Draw("P SAME");
+            
+            // Draw a dashed line at y = 1 across the x-axis range
+            TLine* combinedLine = new TLine(pT_bins[0].first, 1.0, pTExclusionMax, 1.0);
             combinedLine->SetLineStyle(2); // Dashed line
             combinedLine->Draw();
-
+            
             // Draw the legend
             combinedLegend.Draw();
-
+            
+            // Add custom x-axis ticks and labels
+            TLatex latex;
+            latex.SetTextSize(0.035);
+            latex.SetTextAlign(22); // Center alignment
+            
+            // Draw x-axis line
+            double xMin = binEdges.front();
+            double xMax = binEdges.back();
+            double yAxisMin = hFrame->GetMinimum();
+            double yAxisMax = hFrame->GetMaximum();
+            
+            double tickSizeVal = (yAxisMax - yAxisMin) * 0.02;
+            double labelOffsetVal = (yAxisMax - yAxisMin) * 0.05;
+            // Draw the x-axis line
+            TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+            xAxisLine.Draw();
+            
+            // Iterate over bin edges to draw ticks and labels
+            for (size_t i = 0; i < binEdges.size(); ++i) {
+                double xPos = binEdges[i];
+                double yPos = yAxisMin;
+                
+                // Draw tick
+                TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSizeVal);
+                tick->Draw();
+                
+                // Get pT value for label
+                double pTValue = binEdges[i];
+                
+                // Format label to one decimal place
+                std::ostringstream labelStream;
+                labelStream << std::fixed << std::setprecision(1) << pTValue;
+                std::string label = labelStream.str();
+                
+                // Draw label
+                latex.DrawLatex(xPos, yPos - labelOffsetVal, label.c_str());
+            }
+            
+            // Define label positioning variables before using them
+            double xStart = 0.55;        // Starting x-coordinate (normalized device coordinates)
+            double yStartLabel = 0.9;    // Starting y-coordinate
+            double yStepLabel = 0.04;    // Vertical spacing between lines
+            
             // Add labels using TLatex in the top-left corner
             TLatex labelText;
             labelText.SetNDC();
             labelText.SetTextSize(0.026);       // Adjust text size as needed
-            labelText.SetTextColor(kBlack);    // Ensure text color is black
-            
-            double xStart = 0.55; // Starting x-coordinate (left side)
-            double yStartLabel = 0.9; // Starting y-coordinate
-            double yStepLabel = 0.04;  // Vertical spacing between lines
+            labelText.SetTextColor(kBlack);     // Ensure text color is black
             
             // Prepare label strings
             std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
             std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
-            std::string chiLabel = "Chi2/NDF < " + Utils::formatToThreeSigFigs(chi);
+            std::string chiLabel = "#chi^{2}/NDF < " + Utils::formatToThreeSigFigs(chi);
             std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
             std::string massWindowLabelStr = "Mass Window: " + massWindowLabel;
             std::string coneRadiusLabel = "#Delta R_{cone} < 0.3";
+            
             // Draw labels
             labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
             labelText.DrawLatex(xStart, yStartLabel - yStepLabel, eCoreLabel.c_str());
@@ -4590,21 +4687,22 @@ void GenerateCombinedRatioPlot(
             labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, asymLabel.c_str());
             labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, massWindowLabelStr.c_str());
             labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, coneRadiusLabel.c_str());
-
+            
             // Force canvas update before saving
             combinedCanvas.Modified();
             combinedCanvas.Update();
-
+            
             // Save the combined canvas
             std::ostringstream combinedOutputPathStream;
             combinedOutputPathStream << massWindowDir << "/CombinedIsolationRatio_vs_pT_" << isoMin << "_" << isoMax << ".png";
             std::string combinedOutputPath = combinedOutputPathStream.str();
             combinedCanvas.SaveAs(combinedOutputPath.c_str());
             std::cout << "\033[33m[INFO]\033[0m Saved combined plot to " << combinedOutputPath << std::endl;
-
+            
             // Clean up
             delete combinedMultiGraph;
             delete combinedLine;
+            delete hFrame;
             // The graphs are managed by TMultiGraph and ROOT's memory management
         }
     }
