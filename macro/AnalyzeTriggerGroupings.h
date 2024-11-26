@@ -7,6 +7,15 @@
 #include <algorithm>
 #include <cctype>
 
+enum class PlotVariable {
+    Mean,
+    Sigma,
+    MassRatio,
+    Resolution,
+    SignalToBackgroundRatio
+    // Add more as needed
+};
+
 namespace ReferenceData {
     // Define first reference dataset
     const std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
@@ -162,28 +171,61 @@ namespace DataStructures {
     };
 
     struct CutCombinationData {
-        // Outputs from the processing
         double clusECore;
         double chi;
         double asymmetry;
+
         std::vector<double> pTCentersPi0;
         std::vector<double> meanPi0Values;
         std::vector<double> meanPi0Errors;
+        std::vector<double> sigmaPi0Values;         
+        std::vector<double> sigmaPi0Errors;         
+        std::vector<double> resolutionPi0Values;    
+        std::vector<double> resolutionPi0Errors;    
+        std::vector<double> signalToBackgroundPi0Ratios; 
+        std::vector<double> signalToBackgroundPi0Errors; 
         std::vector<std::string> triggersUsedPi0;
+
         std::vector<double> pTCentersEta;
         std::vector<double> meanEtaValues;
         std::vector<double> meanEtaErrors;
+        std::vector<double> sigmaEtaValues;         
+        std::vector<double> sigmaEtaErrors;         
+        std::vector<double> resolutionEtaValues;    
+        std::vector<double> resolutionEtaErrors;    
+        std::vector<double> signalToBackgroundEtaRatios; 
+        std::vector<double> signalToBackgroundEtaErrors; 
         std::vector<std::string> triggersUsedEta;
+
         std::set<std::string> triggersInData;
+
+        // For overlay plots
         std::map<std::string, std::vector<double>> triggerToPtCentersPi0;
         std::map<std::string, std::vector<double>> triggerToMeanPi0Values;
         std::map<std::string, std::vector<double>> triggerToMeanPi0Errors;
+        std::map<std::string, std::vector<double>> triggerToSigmaPi0Values;      
+        std::map<std::string, std::vector<double>> triggerToSigmaPi0Errors;      
+        std::map<std::string, std::vector<double>> triggerToResolutionPi0Values; 
+        std::map<std::string, std::vector<double>> triggerToResolutionPi0Errors; 
+        std::map<std::string, std::vector<double>> triggerToSignalToBackgroundPi0Ratios; 
+        std::map<std::string, std::vector<double>> triggerToSignalToBackgroundPi0Errors; 
+
         std::map<std::string, std::vector<double>> triggerToPtCentersEta;
         std::map<std::string, std::vector<double>> triggerToMeanEtaValues;
         std::map<std::string, std::vector<double>> triggerToMeanEtaErrors;
+        std::map<std::string, std::vector<double>> triggerToSigmaEtaValues;      
+        std::map<std::string, std::vector<double>> triggerToSigmaEtaErrors;      
+        std::map<std::string, std::vector<double>> triggerToResolutionEtaValues; 
+        std::map<std::string, std::vector<double>> triggerToResolutionEtaErrors; 
+        std::map<std::string, std::vector<double>> triggerToSignalToBackgroundEtaRatios; 
+        std::map<std::string, std::vector<double>> triggerToSignalToBackgroundEtaErrors; 
     };
 
-
+    std::vector<std::pair<double, double>> pT_bins = {
+        {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0},
+        {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0},
+        {10.0, 12.0}, {12.0, 15.0}, {15.0, 20.0}, {20.0, 30.0}
+    };
 
 } // namespace DataStructures
 
@@ -601,6 +643,17 @@ namespace TriggerConfig {
             10.6    // xOffsetMax
         } }
     };
+
+    // Define a map from trigger names to photon thresholds
+    std::map<std::string, double> triggerThresholds = {
+        {"MBD_NandS_geq_1", 0.0},
+        {"Photon_2_GeV_plus_MBD_NS_geq_1", 2.0},
+        {"Photon_3_GeV_plus_MBD_NS_geq_1", 3.0},
+        {"Photon_4_GeV_plus_MBD_NS_geq_1", 4.0},
+        {"Photon_5_GeV_plus_MBD_NS_geq_1", 5.0},
+        // Add other triggers if necessary
+    };
+
 }
 
 
