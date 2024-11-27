@@ -155,6 +155,7 @@ namespace DataStructures {
         double binCenter;
         double isolatedYield;
         double isolatedYieldError;
+        std::string massWindowLabel;
     };
 
 
@@ -169,6 +170,7 @@ namespace DataStructures {
         float isoMin;
         float isoMax;
         std::string triggerName;
+        IsolationData isoData; // Add this line to include isoData as a member
     };
 
     struct CutCombinationData {
