@@ -143,7 +143,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "input_fi
     /*
      Relevent code from Calo_Calib.C since production p007 do not contain the TOWERS_CEMCnode that the Process_Calo_Calib() call needs
      */
-    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate(dst_calo_run2pp-000"EmcRawClusterBuilderTemplate");
+    RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
     ClusterBuilder->Detector("CEMC");
     ClusterBuilder->set_threshold_energy(0.030);  // for when using basic calibration
     std::string emc_prof = getenv("CALIBRATIONROOT");
