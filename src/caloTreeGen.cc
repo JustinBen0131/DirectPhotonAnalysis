@@ -49,6 +49,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <locale>
 
 #define ANSI_COLOR_RED_BOLD "\033[1;31m"
 #define ANSI_COLOR_BLUE_BOLD "\033[1;34m"
@@ -85,6 +86,9 @@ caloTreeGen::~caloTreeGen() {
 }
 
 bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
+    // Set the global locale to classic (C locale)
+    std::locale::global(std::locale::classic());
+
     std::ifstream csvFile(csvFilePath);
     if (!csvFile.is_open()) {
         std::cerr << "Error: Could not open CSV file " << csvFilePath << std::endl;
@@ -99,32 +103,48 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
     // Skip the header line
     std::getline(csvFile, line);
 
-    int lineNumber = 1;
+    int lineNumber = 2; // Start from line 2 since we skipped the header
     int entriesLoaded = 0;
 
     while (std::getline(csvFile, line)) {
         std::istringstream lineStream(line);
         std::string cell;
-        
+
         try {
             // Read and parse each field from the CSV line
-            int triggerIndex;
-            float Ecore, Chi2, Asym, pTMin, pTMax, meanPi0, sigmaPi0, meanEta, sigmaEta;
+            std::string triggerName;
+            float Ecore, Chi2, Asym, pTMin, pTMax;
+            float meanPi0, sigmaPi0, meanEta, sigmaEta;
 
-            std::getline(lineStream, cell, ','); triggerIndex = std::stoi(cell);
-            std::getline(lineStream, cell, ','); Ecore = std::stof(cell);
-            std::getline(lineStream, cell, ','); Chi2 = std::stof(cell);
-            std::getline(lineStream, cell, ','); Asym = std::stof(cell);
-            std::getline(lineStream, cell, ','); pTMin = std::stof(cell);
-            std::getline(lineStream, cell, ','); pTMax = std::stof(cell);
-            std::getline(lineStream, cell, ','); meanPi0 = std::stof(cell);
-            std::getline(lineStream, cell, ','); sigmaPi0 = std::stof(cell);
-            std::getline(lineStream, cell, ','); meanEta = std::stof(cell);
-            std::getline(lineStream, cell, ','); sigmaEta = std::stof(cell);
+            // Trim function to remove whitespace
+            auto trim = [](std::string& s) {
+                s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }));
+                s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }).base(), s.end());
+            };
+
+            // Read the columns using ',' as delimiter
+            std::getline(lineStream, cell, ','); triggerName = cell;
+            std::getline(lineStream, cell, ','); trim(cell); Ecore = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); Chi2 = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); Asym = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); pTMin = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); pTMax = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); meanPi0 = std::stof(cell);
+            std::getline(lineStream, cell, ','); /* Skip meanPi0Error */
+            std::getline(lineStream, cell, ','); trim(cell); sigmaPi0 = std::stof(cell);
+            std::getline(lineStream, cell, ','); /* Skip sigmaPi0Error */
+            std::getline(lineStream, cell, ','); trim(cell); meanEta = std::stof(cell);
+            std::getline(lineStream, cell, ','); /* Skip meanEtaError */
+            std::getline(lineStream, cell, ','); trim(cell); sigmaEta = std::stof(cell);
+            std::getline(lineStream, cell, ','); /* Skip sigmaEtaError */
 
             // Create the MesonMassWindow struct and tuple key
-            MesonMassWindow massWindow = {triggerIndex, Ecore, Chi2, Asym, pTMin, pTMax, meanPi0, sigmaPi0, meanEta, sigmaEta};
-            auto key = std::make_tuple(triggerIndex, Ecore, Chi2, Asym, pTMin, pTMax);
+            MesonMassWindow massWindow = {triggerName, Ecore, Chi2, Asym, pTMin, pTMax, meanPi0, sigmaPi0, meanEta, sigmaEta};
+            auto key = std::make_tuple(triggerName, Ecore, Chi2, Asym, pTMin, pTMax);
 
             // Insert into the map
             mesonMassWindowsMap[key] = massWindow;
@@ -132,7 +152,7 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
 
             if (verbose) {
                 std::cout << "Loaded entry " << entriesLoaded << " (Line " << lineNumber << "):" << std::endl;
-                std::cout << " - Trigger Index: " << triggerIndex << std::endl;
+                std::cout << " - Trigger Name: " << triggerName << std::endl;
                 std::cout << " - Ecore: " << Ecore << ", Chi2: " << Chi2 << ", Asym: " << Asym << std::endl;
                 std::cout << " - pT Range: [" << pTMin << ", " << pTMax << "]" << std::endl;
                 std::cout << " - Mean Pi0: " << meanPi0 << " ± " << sigmaPi0 << std::endl;
@@ -140,6 +160,8 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
             }
         } catch (const std::exception& e) {
             std::cerr << "Error parsing line " << lineNumber << " in CSV file: " << e.what() << std::endl;
+            std::cerr << "Line content: " << line << std::endl;
+            std::cerr << "Exception occurred when parsing cell: '" << cell << "'" << std::endl;
             continue;  // Skip this line and continue
         }
 
@@ -156,6 +178,7 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
 
     return true;
 }
+
 
 void caloTreeGen::setTriggerNameMapForRun(int runNumber) {
     if (std::find(runNumbersForMap1.begin(), runNumbersForMap1.end(), runNumber) != runNumbersForMap1.end()) {
@@ -184,7 +207,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
     }
     
     // Load meson mass windows from the CSV file if it exists
-    const std::string csvFilePath = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/InvMassCsvFiles/InvariantMassInformation_runnumber46623_runnumber47230.csv";
+    const std::string csvFilePath = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/InvMassCsvFiles/InvariantMassInformation_MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate.csv";
 
     if (std::filesystem::exists(csvFilePath)) {
         if (!loadMesonMassWindows(csvFilePath)) {
@@ -1046,8 +1069,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
                 }
 
-                // Retrieve custom mass window if available and valid
-                auto massWindowKey = std::make_tuple(triggerIndex, minClusEcore, maxChi2, maxAsym, pT_min, pT_max);
+                auto massWindowKey = std::make_tuple(triggerName, minClusEcore, maxChi2, maxAsym, pT_min, pT_max);
                 if (!mesonMassWindowsMap.empty() && mesonMassWindowsMap.count(massWindowKey)) {
                     const MesonMassWindow& massWindow = mesonMassWindowsMap[massWindowKey];
 
@@ -2148,4 +2170,3 @@ bool caloTreeGen::IsAcceptableTower(TowerInfo *tower) {
   }
   return true;
 }
-
