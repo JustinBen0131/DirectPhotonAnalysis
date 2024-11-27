@@ -1240,19 +1240,19 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     // Create two TLatex objects for the formatted output
     TLatex labelText, valueText;
     labelText.SetNDC();
-    labelText.SetTextSize(0.03);
+    labelText.SetTextSize(0.025);
     labelText.SetTextColor(kRed);       // Set text color to red
     labelText.SetTextFont(62);          // Bold font for labels
 
     valueText.SetNDC();
-    valueText.SetTextSize(0.03);
+    valueText.SetTextSize(0.025);
     valueText.SetTextColor(kBlack);     // Default color for values
     valueText.SetTextFont(42);          // Normal font for values
 
     
     // Add the 'Active Trigger Group' label above the current trigger label
-    labelText.DrawLatex(0.2, 0.9, "Active Trigger Group:");
-    valueText.DrawLatex(0.32, 0.9, triggerGroupName.c_str());
+    labelText.DrawLatex(0.45, 0.9, "Active Trigger Group:");
+    valueText.DrawLatex(0.57, 0.9, triggerGroupName.c_str());
 
     std::string readableTriggerName = data.cuts.triggerName;
     auto triggerNameIt = TriggerConfig::triggerNameMap.find(data.cuts.triggerName);
@@ -3146,6 +3146,7 @@ void readDataFromCSV(
             isoData.binCenter = binCenter;
             isoData.isolatedYield = isolatedYield;
             isoData.isolatedYieldError = isolatedYieldError;
+            isoData.massWindowLabel = massWindowLabel;
 
             // Debugging output
             std::cout << "\033[32m[DEBUG]\033[0m Line " << lineNumber << ": Read data - "
@@ -3220,12 +3221,14 @@ void GeneratePerTriggerSpectraPlots(
     const std::string& basePlotDirectory,
     const std::map<std::string, std::string>& triggerCombinationNameMap,
     const std::map<std::string, std::string>& triggerNameMap,
-    const std::vector<std::pair<float, float>>& exclusionRanges) {
-    
+    const std::vector<std::pair<float, float>>& exclusionRanges,
+    const std::vector<std::pair<double, double>>& pT_bins, // Added pT_bins
+    double pTExclusionMax // Added pTExclusionMax
+) {
     // Define a list of marker styles to cycle through for different isoEt ranges
     std::vector<int> markerStyles = {20, 21, 22, 23, 29, 34, 35, 36, 38, 39};
     size_t markerStyleCount = markerStyles.size();
-    
+
     // Structure to hold unique group keys
     struct GroupKey {
         std::string triggerGroupName;
@@ -3233,13 +3236,13 @@ void GeneratePerTriggerSpectraPlots(
         float eCore;
         float chi;
         float asymmetry;
-        
+
         bool operator<(const GroupKey& other) const {
             return std::tie(triggerGroupName, triggerName, eCore, chi, asymmetry) <
-            std::tie(other.triggerGroupName, other.triggerName, other.eCore, other.chi, other.asymmetry);
+                   std::tie(other.triggerGroupName, other.triggerName, other.eCore, other.chi, other.asymmetry);
         }
     };
-    
+
     // Structure to hold grouped data entries
     struct GroupedDataEntry {
         std::pair<float, float> isoEtRange; // {isoMin, isoMax}
@@ -3247,10 +3250,10 @@ void GeneratePerTriggerSpectraPlots(
         float ptMax;
         DataStructures::IsolationData isoData_in;
     };
-    
+
     // Organize dataMap_inMassWindow into groups
     std::map<GroupKey, std::vector<GroupedDataEntry>> groupedData;
-    
+
     for (const auto& [key, isoData_in] : dataMap_inMassWindow) {
         // Extract group key (excluding MassWindowLabel)
         GroupKey groupKey = {
@@ -3260,20 +3263,19 @@ void GeneratePerTriggerSpectraPlots(
             std::get<3>(key), // Chi
             std::get<4>(key)  // Asymmetry
         };
-        
+
         // Extract isoEt range and pT bins
         float isoMin = std::get<7>(key);
         float isoMax = std::get<8>(key);
         float ptMin = std::get<5>(key);
         float ptMax = std::get<6>(key);
-        
+
         // Check if the current isoEt range is in the exclusion list
         std::pair<float, float> currentIsoEtRange = {isoMin, isoMax};
         if (std::find(exclusionRanges.begin(), exclusionRanges.end(), currentIsoEtRange) != exclusionRanges.end()) {
             continue;  // Skip excluded isoEt ranges
         }
-        
-        
+
         // Create a GroupedDataEntry
         GroupedDataEntry entry = {
             {isoMin, isoMax},
@@ -3281,11 +3283,11 @@ void GeneratePerTriggerSpectraPlots(
             ptMax,
             isoData_in
         };
-        
+
         // Append to groupedData
         groupedData[groupKey].emplace_back(entry);
     }
-    
+
     // Iterate over each group to create plots
     for (const auto& [groupKey, isoEtDataVec] : groupedData) {
         const std::string& triggerGroupName = groupKey.triggerGroupName;
@@ -3293,53 +3295,90 @@ void GeneratePerTriggerSpectraPlots(
         float eCore = groupKey.eCore;
         float chi = groupKey.chi;
         float asym = groupKey.asymmetry;
-        
+
         // Map to human-readable names
         std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-                                                                                triggerGroupName, triggerCombinationNameMap);
-        
+            triggerGroupName, triggerCombinationNameMap);
+
         std::string readableTriggerName = triggerName;
         auto triggerNameIt = triggerNameMap.find(triggerName);
         if (triggerNameIt != triggerNameMap.end()) {
             readableTriggerName = triggerNameIt->second;
         }
-        
+
         // Define output directory
         std::ostringstream dirStream;
         dirStream << basePlotDirectory << "/" << triggerGroupName
-        << "/E" << Utils::formatToThreeSigFigs(eCore)
-        << "_Chi" << Utils::formatToThreeSigFigs(chi)
-        << "_Asym" << Utils::formatToThreeSigFigs(asym)
-        << "/Spectra/Overlay";
+                  << "/E" << Utils::formatToThreeSigFigs(eCore)
+                  << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                  << "_Asym" << Utils::formatToThreeSigFigs(asym)
+                  << "/Spectra/Overlay";
         std::string dirPath = dirStream.str();
         gSystem->mkdir(dirPath.c_str(), true);
-        
+
         // Create a TCanvas
         TCanvas* canvas = new TCanvas("canvas", "Isolated Photon Spectra Overlay", 800, 600);
         canvas->SetLogy();
 
-        // Create a TMultiGraph to hold all TGraphErrors
-        TMultiGraph* multiGraph = new TMultiGraph();
-        
-        // Create a legend
-        TLegend* legend = new TLegend(0.38, 0.78, 0.7, 0.9); // Adjust positions as needed
+        // Prepare bin edges for variable bin widths (same as GenerateCombinedRatioPlot)
+        std::vector<double> binEdges;
+        for (const auto& bin : pT_bins) {
+            if (bin.first >= pTExclusionMax) {
+                break;
+            }
+            binEdges.push_back(bin.first);
+        }
+        // Add the upper edge of the last included bin
+        if (!binEdges.empty()) {
+            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
+                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            } else {
+                binEdges.push_back(pTExclusionMax);
+            }
+        } else {
+            // No bins to plot
+            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
+            delete canvas;
+            continue;
+        }
+
+        int nBins = binEdges.size() - 1;
+        double* binEdgesArray = binEdges.data();
+
+        // Create a dummy histogram to set up the axes
+        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+        hFrame->SetStats(0);
+        hFrame->GetXaxis()->SetTitle("Cluster p_{T} [GeV]");
+        hFrame->GetYaxis()->SetTitle("Yield");
+
+        // Remove x-axis labels and ticks
+        hFrame->GetXaxis()->SetLabelOffset(999);
+        hFrame->GetXaxis()->SetTickLength(0);
+
+        // Draw the frame
+        hFrame->Draw("AXIS");
+
+        TLegend* legend = new TLegend(0.38, 0.55, 0.7, 0.7); // Adjust positions as needed
         legend->SetBorderSize(0);
         legend->SetFillStyle(0);
         legend->SetTextSize(0.024);
-        
-        // Assign marker styles to isoEt ranges
-        // Create a map from isoEt range to marker style
-        std::map<std::pair<float, float>, int> isoEtRangeMarkerMap;
-        size_t currentMarkerIndex = 0;
-        for (const auto& entry : isoEtDataVec) {
-            const auto& isoEtRange = entry.isoEtRange;
-            if (isoEtRangeMarkerMap.find(isoEtRange) == isoEtRangeMarkerMap.end()) {
-                isoEtRangeMarkerMap[isoEtRange] = markerStyles[currentMarkerIndex % markerStyleCount];
-                currentMarkerIndex++;
-            }
-        }
+
+        // Keep track of graphs to delete later
+        std::vector<TGraphErrors*> graphs;
+
         // Track the global maximum Y value for scaling
         double globalMaxY = 0.0;
+        double globalMinY = std::numeric_limits<double>::max();
+
+        // Map to hold data for inMassWindow and outsideMassWindow
+        std::vector<double> ptCenters_in;
+        std::vector<double> yields_in;
+        std::vector<double> errors_in;
+
+        std::vector<double> ptCenters_out;
+        std::vector<double> yields_out;
+        std::vector<double> errors_out;
+
         // Iterate over each isoEt range within the group
         for (const auto& entry : isoEtDataVec) {
             const auto& isoEtRange = entry.isoEtRange;
@@ -3348,159 +3387,228 @@ void GeneratePerTriggerSpectraPlots(
             float ptMin = entry.ptMin;
             float ptMax = entry.ptMax;
             const DataStructures::IsolationData& isoData_in = entry.isoData_in;
-            
-            // Retrieve the assigned marker style
-            int markerStyle = isoEtRangeMarkerMap[isoEtRange];
-            
+
             // Construct the key for outsideMassWindow using the full tuple
             std::tuple<std::string, std::string, float, float, float, float, float, float, float, std::string> outsideKey =
-            std::make_tuple(
-                            triggerGroupName,
-                            triggerName,
-                            eCore,
-                            chi,
-                            asym,
-                            ptMin,
-                            ptMax,
-                            isoMin,
-                            isoMax,
-                            "outsideMassWindow"
-                            );
-            
+                std::make_tuple(
+                    triggerGroupName,
+                    triggerName,
+                    eCore,
+                    chi,
+                    asym,
+                    ptMin,
+                    ptMax,
+                    isoMin,
+                    isoMax,
+                    "outsideMassWindow"
+                );
+
             // Find the corresponding outsideMassWindow data
             auto it_outside = dataMap_outsideMassWindow.find(outsideKey);
             if (it_outside == dataMap_outsideMassWindow.end()) {
                 std::cerr << "\033[31m[WARNING]\033[0m No 'outsideMassWindow' data found for isoEt range ["
-                << isoMin << ", " << isoMax << "] in group '" << readableTriggerName << "'. Skipping.\n";
+                          << isoMin << ", " << isoMax << "] in group '" << readableTriggerName << "'. Skipping.\n";
                 continue;
             }
             const DataStructures::IsolationData& isoData_out = it_outside->second;
-            globalMaxY = std::max(globalMaxY, std::max(isoData_in.isolatedYield, isoData_out.isolatedYield));
-            
-            // Create TGraphErrors for inMassWindow (blue)
-            TGraphErrors* graphIn = new TGraphErrors();
-            graphIn->SetPoint(0, isoData_in.binCenter, isoData_in.isolatedYield);
-            graphIn->SetPointError(0, 0.0, isoData_in.isolatedYieldError);
-            graphIn->SetMarkerStyle(markerStyle);
-            graphIn->SetMarkerColor(kBlue);
-            graphIn->SetLineColor(kBlue);
-            graphIn->SetLineWidth(2);
-            graphIn->SetTitle("Isolated Photon Spectra");
-            
-            // Create TGraphErrors for outsideMassWindow (red)
-            TGraphErrors* graphOut = new TGraphErrors();
-            graphOut->SetPoint(0, isoData_out.binCenter, isoData_out.isolatedYield);
-            graphOut->SetPointError(0, 0.0, isoData_out.isolatedYieldError);
-            graphOut->SetMarkerStyle(markerStyle);
-            graphOut->SetMarkerColor(kRed);
-            graphOut->SetLineColor(kRed);
-            graphOut->SetLineWidth(2);
-            graphOut->SetTitle("Isolated Photon Spectra");
-            
-            // Add graphs to the multigraph
-            multiGraph->Add(graphIn, "P");
-            multiGraph->Add(graphOut, "P");
-            
-            // Create descriptive legend entries
-            std::ostringstream legendEntryIn, legendEntryOut;
-            legendEntryIn << "Isolated Photons from Meson Decay Yield  (" << isoMin << " #leq E_{T,iso} < " << isoMax << " GeV)";
-            legendEntryOut << "Prompt Photon Candidate Yield (" << isoMin << " #leq E_{T,iso} < " << isoMax << " GeV)";
-            
-            // To avoid duplicate legend entries, check if already added
-            bool entryExistsIn = false;
-            bool entryExistsOut = false;
-            int entryCount = legend->GetListOfPrimitives()->GetEntries();
-            for (int i = 0; i < entryCount; ++i) {
-                TLegendEntry* entry = dynamic_cast<TLegendEntry*>(legend->GetListOfPrimitives()->At(i));
-                if (entry) {
-                    std::string label = entry->GetLabel();
-                    if (label == legendEntryIn.str()) {
-                        entryExistsIn = true;
-                    }
-                    if (label == legendEntryOut.str()) {
-                        entryExistsOut = true;
-                    }
+
+            // Find the pT bin that matches ptMin and ptMax
+            bool foundBin = false;
+            double ptCenter = 0.0;
+            for (const auto& pT_bin : pT_bins) {
+                if (std::abs(pT_bin.first - ptMin) < 1e-6 && std::abs(pT_bin.second - ptMax) < 1e-6) {
+                    // Found matching pT bin
+                    ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                    foundBin = true;
+                    break;
                 }
             }
-            if (!entryExistsIn) {
-                legend->AddEntry(graphIn, legendEntryIn.str().c_str(), "p");
+            if (!foundBin) {
+                std::cerr << "\033[31m[WARNING]\033[0m Could not find matching pT bin for ptMin: " << ptMin << ", ptMax: " << ptMax << ". Skipping data point.\n";
+                continue;
             }
-            if (!entryExistsOut) {
-                legend->AddEntry(graphOut, legendEntryOut.str().c_str(), "p");
+
+            // Exclude data points where ptCenter >= pTExclusionMax
+            if (ptCenter >= pTExclusionMax) {
+                continue;
+            }
+
+            // Apply slight offsets
+            double offset_in = 0.1; // Adjust as needed
+            double offset_out = -0.1; // Adjust as needed
+
+            ptCenters_in.push_back(ptCenter + offset_in);
+            yields_in.push_back(isoData_in.isolatedYield);
+            errors_in.push_back(isoData_in.isolatedYieldError);
+
+            ptCenters_out.push_back(ptCenter + offset_out);
+            yields_out.push_back(isoData_out.isolatedYield);
+            errors_out.push_back(isoData_out.isolatedYieldError);
+
+            // Update global Y-axis max and min
+            globalMaxY = std::max({globalMaxY, isoData_in.isolatedYield, isoData_out.isolatedYield});
+            if (isoData_in.isolatedYield > 0.0) {
+                globalMinY = std::min(globalMinY, isoData_in.isolatedYield);
+            }
+            if (isoData_out.isolatedYield > 0.0) {
+                globalMinY = std::min(globalMinY, isoData_out.isolatedYield);
             }
         }
-        
-        // Determine Y-axis range based on globalMaxY
-        // Ensure that globalMaxY is positive
-        if (globalMaxY <= 0.0) {
-            std::cerr << "\033[31m[ERROR]\033[0m Maximum Y value is non-positive for group '"
-                      << readableTriggerName << "'. Skipping plot.\n";
-            // Clean up and continue to next group
-            delete multiGraph;
-            delete legend;
-            delete canvas;
-            continue;
+
+        // Access triggerColorMap from TriggerConfig namespace
+        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
+
+        // Determine marker color based on triggerName
+        int markerColor = kBlack; // Default color
+        auto it_color = triggerColorMap.find(triggerName);
+        if (it_color != triggerColorMap.end()) {
+            markerColor = it_color->second;
         }
-        double yMax = globalMaxY * 1.5; // Scale maximum Y by 1.5 for better visualization
-        
-        // Set axis titles and dynamic Y-axis range
-        std::string plotTitle = ("Isolated Photon Spectra for Trigger: " + readableTriggerName);
-        multiGraph->SetTitle(plotTitle.c_str());
-        multiGraph->GetXaxis()->SetTitle("Cluster p_{T} [GeV]");
-        multiGraph->GetYaxis()->SetTitle("Yield");
-        
-        // Set the Y-axis range with a minimum to avoid log scale issues
-        multiGraph->SetMinimum(1e-1);               // Set a minimum above zero for log scale
-        multiGraph->SetMaximum(yMax);               // Set maximum based on data
-        
-        // Draw the multigraph
-        multiGraph->Draw("A");
-        
-        // Draw the legend
+
+
+        // **Set marker styles and colors for inMassWindow data**
+        TGraphErrors* graphIn = new TGraphErrors(ptCenters_in.size(),
+                                                 ptCenters_in.data(),
+                                                 yields_in.data(),
+                                                 nullptr,
+                                                 errors_in.data());
+        graphIn->SetMarkerStyle(20); // Closed circle
+        graphIn->SetMarkerColor(markerColor);
+        graphIn->SetLineColor(markerColor);
+        graphIn->SetLineWidth(2);
+        graphIn->SetTitle("Isolated Photon Spectra");
+
+        // **Set marker styles and colors for outsideMassWindow data**
+        TGraphErrors* graphOut = new TGraphErrors(ptCenters_out.size(),
+                                                  ptCenters_out.data(),
+                                                  yields_out.data(),
+                                                  nullptr,
+                                                  errors_out.data());
+        graphOut->SetMarkerStyle(24); // Open circle
+        graphOut->SetMarkerColor(markerColor);
+        graphOut->SetLineColor(markerColor);
+        graphOut->SetLineWidth(2);
+        graphOut->SetTitle("Isolated Photon Spectra");
+
+        // Draw the graphs
+        graphIn->Draw("P SAME");
+        graphOut->Draw("P SAME");
+
+        // Add entries to legend
+        legend->AddEntry(graphIn, "Isolated Photons from Meson Decay Yield", "p");
+        legend->AddEntry(graphOut, "Prompt Photon Candidate Yield", "p");
+
+        // **Draw the legend**
         legend->Draw();
+
+        // Keep track of graphs for cleanup
+        graphs.push_back(graphIn);
+        graphs.push_back(graphOut);
+
+        // Set Y-axis range based on data
+        if (globalMaxY > 0.0 && globalMinY > 0.0 && globalMinY < std::numeric_limits<double>::max()) {
+            double yMin = globalMinY * 0.8;
+            double yMax = globalMaxY * 1.2;
+            yMin = std::max(yMin, 1e-6); // Ensure yMin is positive for log scale
+            hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+        } else {
+            // Set default range if no valid data
+            hFrame->GetYaxis()->SetRangeUser(1e-6, 1.0);
+        }
+
+        // Force canvas update to get correct axis ranges
+        canvas->Modified();
+        canvas->Update();
+
+        // Get y-axis minimum and maximum from the histogram's Y-axis
+        double yAxisMin = hFrame->GetMinimum();
+        double yAxisMax = hFrame->GetMaximum();
+
+        // Compute tick size and label offset in logarithmic space
+        double tickSize = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.02;
+        double labelOffset = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.05;
+
+        // Declare and initialize the TLatex object
+        TLatex latex;
+        latex.SetTextSize(0.035);
+        latex.SetTextAlign(22); // Center alignment
+
+        // Draw x-axis line
+        double xMin = binEdges.front();
+        double xMax = binEdges.back();
+        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+        xAxisLine.Draw("SAME");
+
+        // Draw ticks and labels at bin edges
+        for (size_t i = 0; i < binEdges.size(); ++i) {
+            double xPos = binEdges[i];
+            double yPos = yAxisMin;
+
+            // Draw tick
+            TLine* tick = new TLine(xPos, yPos, xPos, yPos / pow(10, tickSize));
+            tick->Draw("SAME");
+
+            // Get pT value for label
+            double pTValue = binEdges[i];
+
+            // Format label to show one decimal place
+            std::ostringstream labelStream;
+            labelStream << std::fixed << std::setprecision(1) << pTValue;
+            std::string label = labelStream.str();
+
+            // Draw label
+            latex.DrawLatex(xPos, yPos / pow(10, labelOffset), label.c_str());
+        }
+
+        // Redraw the axes to ensure labels are on top
+        canvas->RedrawAxis();
         
         // Add labels using TLatex in the top-left corner
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.025);       // Adjusted text size
+        labelText.SetTextSize(0.0235);       // Adjusted text size
         labelText.SetTextColor(kBlack);    // Ensured text color is black for readability
-        
-        double xStart = 0.55; // Starting x-coordinate (left side)
-        double yStartLabel = 0.72; // Starting y-coordinate
+
+        double xStart = 0.4; // Starting x-coordinate (left side)
+        double yStartLabel = 0.905; // Starting y-coordinate
         double yStepLabel = 0.05;  // Vertical spacing between lines
-        
+
         // Prepare label strings
         std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
         std::string triggerNameLabel = "Trigger: " + readableTriggerName;
-        std::string eCoreLabel = "ECore > " + Utils::formatToThreeSigFigs(eCore) + " GeV";
-        std::string chiLabel = "Chi2 < " + Utils::formatToThreeSigFigs(chi);
+        std::string eCoreLabel = "ECore #geq " + Utils::formatToThreeSigFigs(eCore) + " GeV";
+        std::string chiLabel = "#chi^{2} < " + Utils::formatToThreeSigFigs(chi);
         std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
-        
+
         // Draw labels
         labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
         labelText.DrawLatex(xStart, yStartLabel - yStepLabel, triggerNameLabel.c_str());
         labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, eCoreLabel.c_str());
         labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, chiLabel.c_str());
         labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, asymLabel.c_str());
-        
+
         // Force canvas update before saving
         canvas->Modified();
         canvas->Update();
-        
+
         // Save the canvas
         std::ostringstream outputFilePathStream;
         outputFilePathStream << dirPath << "/OverlaySpectra_" << readableTriggerName << ".png";
         std::string outputFilePath = outputFilePathStream.str();
         canvas->SaveAs(outputFilePath.c_str());
         std::cout << "\033[33m[INFO]\033[0m Saved overlay spectra plot to " << outputFilePath << std::endl;
-        
+
         // Clean up
-        delete multiGraph;
+        delete hFrame;
+        for (auto graph : graphs) {
+            delete graph;
+        }
         delete legend;
         delete canvas;
-        // Note: TGraphErrors objects are managed by ROOT's ownership model once added to TMultiGraph
+        // Note: The tick lines are managed by ROOT and don't need explicit deletion
     }
 }
+
 
 // Define SpectraGroupKey structure
 struct SpectraGroupKey {
@@ -3760,14 +3868,47 @@ void GenerateCombinedSpectraPlots(
         TCanvas* canvas = new TCanvas("canvas", "Combined Isolated Photon Spectra", 800, 600);
         canvas->SetLogy();
 
-        // Map to store graphs for cleanup
-        std::vector<TGraphErrors*> graphs_in;
-        std::vector<TGraphErrors*> graphs_out;
+        // Prepare bin edges for variable bin widths
+        std::vector<double> binEdges;
+        for (const auto& bin : pT_bins) {
+            if (bin.first >= pTExclusionMax) {
+                break;
+            }
+            binEdges.push_back(bin.first);
+        }
+        // Add the upper edge of the last included bin
+        if (!binEdges.empty()) {
+            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
+                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            } else {
+                binEdges.push_back(pTExclusionMax);
+            }
+        } else {
+            // No bins to plot
+            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
+            continue;
+        }
+
+        int nBins = binEdges.size() - 1;
+        double* binEdgesArray = binEdges.data();
+
+        // Create a dummy histogram to set up the axes
+        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+        hFrame->SetStats(0);
+        hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+        hFrame->GetYaxis()->SetTitle("Isolated Photon Yield");
+
+        // Remove x-axis labels and ticks
+        hFrame->GetXaxis()->SetLabelOffset(999);
+        hFrame->GetXaxis()->SetTickLength(0);
+
+        // Draw the frame
+        hFrame->Draw("AXIS");
 
         // Legend
-        TLegend* legend = new TLegend(0.55, 0.67, 0.88, 0.87);
+        TLegend* legend = new TLegend(0.55, 0.75, 0.88, 0.9);
         legend->SetBorderSize(0);
-        legend->SetTextSize(0.03);
+        legend->SetTextSize(0.025);
 
         // Map to organize data per trigger
         std::map<std::string, std::vector<CombinedSpectraData>> dataPerTrigger;
@@ -3777,6 +3918,10 @@ void GenerateCombinedSpectraPlots(
             const CombinedSpectraData& data = dataEntry.second;
             dataPerTrigger[data.triggerUsed].push_back(data);
         }
+
+        // Keep track of graphs for cleanup
+        std::vector<TGraphErrors*> graphs_in;
+        std::vector<TGraphErrors*> graphs_out;
 
         // Keep track of global Y-axis max and min
         double globalMaxY = 0.0;
@@ -3799,13 +3944,37 @@ void GenerateCombinedSpectraPlots(
                     continue;
                 }
 
-                pTValues.push_back(data.pTCenter);
+                // Find the pT bin that matches data.pTCenter
+                bool foundBin = false;
+                double ptCenter = 0.0;
+                for (const auto& pT_bin : pT_bins) {
+                    if (data.pTCenter >= pT_bin.first && data.pTCenter < pT_bin.second) {
+                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                        foundBin = true;
+                        break;
+                    }
+                }
+                if (!foundBin) {
+                    std::cerr << "[WARNING] Could not find matching pT bin for pTCenter: " << data.pTCenter << ". Skipping data point.\n";
+                    continue;
+                }
+
+                pTValues.push_back(ptCenter);
                 isolatedYields_in.push_back(data.isolatedYield_in);
                 isolatedYieldsError_in.push_back(data.isolatedYieldError_in);
                 isolatedYields_out.push_back(data.isolatedYield_out);
                 isolatedYieldsError_out.push_back(data.isolatedYieldError_out);
-                globalMaxY = std::max({globalMaxY, data.isolatedYield_in, data.isolatedYield_out});
-                globalMinY = std::min({globalMinY, data.isolatedYield_in, data.isolatedYield_out});
+
+                // Update global Y-axis max and min
+                if (data.isolatedYield_in > 0) {
+                    globalMaxY = std::max(globalMaxY, data.isolatedYield_in);
+                    globalMinY = std::min(globalMinY, data.isolatedYield_in);
+                }
+
+                if (data.isolatedYield_out > 0) {
+                    globalMaxY = std::max(globalMaxY, data.isolatedYield_out);
+                    globalMinY = std::min(globalMinY, data.isolatedYield_out);
+                }
             }
 
             // Skip if no valid data points
@@ -3844,12 +4013,8 @@ void GenerateCombinedSpectraPlots(
             graphOut->SetLineColor(markerColor);
             graphOut->SetLineWidth(2);
 
-            // Draw graphs
-            if (graphs_in.empty()) {
-                graphIn->Draw("AP");
-            } else {
-                graphIn->Draw("P SAME");
-            }
+            // Draw the graphs
+            graphIn->Draw("P SAME");
             graphOut->Draw("P SAME");
 
             // Add entries to legend
@@ -3864,15 +4029,13 @@ void GenerateCombinedSpectraPlots(
 
         // Set Y-axis range
         if (globalMaxY > 0.0 && globalMinY > 0.0) {
-            double yMin = globalMinY * 0.8;
-            double yMax = globalMaxY * 1.2;
-            gPad->Update();
-            gPad->SetLogy();
-            gPad->GetUymax();
-            gPad->GetUymin();
-            gPad->Update();
-            graphs_in[0]->GetHistogram()->SetMinimum(yMin);
-            graphs_in[0]->GetHistogram()->SetMaximum(yMax);
+            double yMin = globalMinY * 5.0;
+            double yMax = globalMaxY * 10.0;
+            yMin = std::max(yMin, 1e-6); // Ensure yMin is positive for log scale
+            hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
+        } else {
+            // Set default range if no valid data
+            hFrame->GetYaxis()->SetRangeUser(1e-6, 1.0);
         }
 
         // Draw legend
@@ -3881,11 +4044,11 @@ void GenerateCombinedSpectraPlots(
         // Add labels using TLatex
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.028);
+        labelText.SetTextSize(0.023);
         labelText.SetTextColor(kBlack);
 
-        double xStart = 0.2;
-        double yStartLabel = 0.85;
+        double xStart = 0.4;
+        double yStartLabel = 0.905;
         double yStepLabel = 0.05;
 
         // Prepare label strings
@@ -3905,6 +4068,46 @@ void GenerateCombinedSpectraPlots(
         oss << "#font[62]{Asymmetry <} " << asym;
         labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
 
+        // Draw custom x-axis ticks and labels
+        double xMin = binEdges.front();
+        double xMax = binEdges.back();
+        double yAxisMin = hFrame->GetMinimum();
+        double yAxisMax = hFrame->GetMaximum();
+
+        double tickSize = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.02;
+        double labelOffset = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.05;
+        TLatex latex;
+        latex.SetTextSize(0.035);
+        latex.SetTextAlign(22); // Center alignment
+
+        // Draw x-axis line
+        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+        xAxisLine.Draw("SAME");
+
+        // Draw ticks and labels at bin edges
+        for (size_t i = 0; i < binEdges.size(); ++i) {
+            double xPos = binEdges[i];
+            double yPos = yAxisMin;
+
+            // Draw tick
+            TLine* tick = new TLine(xPos, yPos, xPos, yPos / pow(10, tickSize));
+            tick->Draw("SAME");
+
+            // Get pT value for label
+            double pTValue = binEdges[i];
+
+            // Format label to show one decimal place
+            std::ostringstream labelStream;
+            labelStream << std::fixed << std::setprecision(1) << pTValue;
+            std::string label = labelStream.str();
+
+            // Draw label
+            latex.DrawLatex(xPos, yPos / pow(10, labelOffset), label.c_str());
+        }
+
+        // Redraw the axes to ensure labels are on top
+        canvas->RedrawAxis();
+
         // Update canvas and save
         canvas->Modified();
         canvas->Update();
@@ -3915,6 +4118,7 @@ void GenerateCombinedSpectraPlots(
         std::cout << "[INFO] Saved combined overlay spectra plot to " << outputFilePath << std::endl;
 
         // Clean up
+        delete hFrame;
         for (auto graph : graphs_in) {
             delete graph;
         }
@@ -3929,7 +4133,6 @@ void GenerateCombinedSpectraPlots(
 }
 
 
-// Helper Function to Generate Per-Trigger Plots
 void GeneratePerTriggerIsoPlots(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -3952,7 +4155,10 @@ void GeneratePerTriggerIsoPlots(
     const std::map<std::string, std::string>& triggerNameMap,
     bool drawRefA,
     bool drawRefB,
-    const std::vector<std::pair<float, float>>& exclusionRanges) {
+    const std::vector<std::pair<float, float>>& exclusionRanges,
+    const std::vector<std::pair<double, double>>& pT_bins, // Added pT_bins
+    double pTExclusionMax                                  // Added pTExclusionMax
+) {
     int groupCounter = 0;  // Initialize groupCounter
 
     // Now, generate standard plots for each trigger group
@@ -3971,16 +4177,16 @@ void GeneratePerTriggerIsoPlots(
         
         // Map triggerGroupName and triggerName to human-readable names
         std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-            triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
+            triggerGroupName, triggerCombinationNameMap);
         
         std::string readableTriggerName = triggerName;
-        auto triggerNameIt = TriggerConfig::triggerNameMap.find(triggerName);
-        if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
+        auto triggerNameIt = triggerNameMap.find(triggerName);
+        if (triggerNameIt != triggerNameMap.end()) {
             readableTriggerName = triggerNameIt->second;
         }
 
         // Debugging output to verify mapping
-        std::cout << "\033[34m[INFO]\033[0m Processing group " << groupCounter << ": "
+        std::cout << "[INFO] Processing group " << groupCounter << ": "
                   << "TriggerGroupName: " << triggerGroupName << ", "
                   << "ReadableTriggerGroupName: " << readableTriggerGroupName << ", "
                   << "TriggerName: " << triggerName << ", "
@@ -3992,7 +4198,7 @@ void GeneratePerTriggerIsoPlots(
     
         // Check if isoEtDataMap is empty
         if (isoEtDataMap.empty()) {
-            std::cerr << "\033[31m[WARNING]\033[0m Group " << groupCounter << " has no data. Skipping." << std::endl;
+            std::cerr << "[WARNING] Group " << groupCounter << " has no data. Skipping." << std::endl;
             continue;
         }
         
@@ -4015,45 +4221,73 @@ void GeneratePerTriggerIsoPlots(
         // Create a TCanvas
         TCanvas canvas("canvas", "Isolation Data", 800, 600);
 
-        // Create a TMultiGraph to overlay graphs
-        TMultiGraph* multiGraph = new TMultiGraph();
-        
-        // Create a legend in the top-left corner
-        TLegend legend(0.7, 0.65, 0.9, 0.8); // Adjust as needed
-        legend.SetBorderSize(0);
-        legend.SetTextSize(0.025);
+        // Prepare bin edges for variable bin widths
+        std::vector<double> binEdges;
+        for (const auto& bin : pT_bins) {
+            if (bin.first >= pTExclusionMax) {
+                break;
+            }
+            binEdges.push_back(bin.first);
+        }
+        // Add the upper edge of the last included bin
+        if (!binEdges.empty()) {
+            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
+                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            } else {
+                binEdges.push_back(pTExclusionMax);
+            }
+        } else {
+            // No bins to plot
+            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
+            continue;
+        }
 
-        // Create the reference graphs and add to legend
+        int nBins = binEdges.size() - 1;
+        double* binEdgesArray = binEdges.data();
+
+        // Create a dummy histogram to set up the axes
+        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+        hFrame->SetStats(0);
+        hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+        // Define y-axis title based on mass window type
+        const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
+            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
+            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+
+        hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
+        hFrame->GetYaxis()->SetRangeUser(0, 2.0);
+
+        // Remove x-axis labels and ticks
+        hFrame->GetXaxis()->SetLabelOffset(999);
+        hFrame->GetXaxis()->SetTickLength(0);
+
+        // Draw the frame
+        hFrame->Draw("AXIS");
+
+        // Create a legend
+        TLegend legend(0.4, 0.72, 0.85, 0.87);
+        legend.SetBorderSize(0);
+        legend.SetTextSize(0.024);
+
+        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
+
+        // **Determine marker color based on triggerName**
+        int markerColor = kBlack; // Default color
+        auto it_color = triggerColorMap.find(triggerName);
+        if (it_color != triggerColorMap.end()) {
+            markerColor = it_color->second;
+        }
+
+        // Declare refGraphOne and refGraphTwo here so they are accessible later
         TGraphErrors* refGraphOne = nullptr;
         TGraphErrors* refGraphTwo = nullptr;
 
-        if (drawRefA) {
-            refGraphOne = new TGraphErrors(ReferenceData::referencePTGamma.size(),
-                                           ReferenceData::referencePTGamma.data(),
-                                           ReferenceData::referenceRatio.data(),
-                                           nullptr,
-                                           ReferenceData::referenceStatError.data());
-            refGraphOne->SetMarkerStyle(20);
-            refGraphOne->SetMarkerColor(kOrange);
-            refGraphOne->SetLineColor(kOrange);
-            refGraphOne->SetLineWidth(2);
-            legend.AddEntry(refGraphOne, "#font[62]{PHENIX 2003 pp Run:} #frac{Isolated Direct}{All Direct}", "p");
-        }
+        // **Prepare vectors to collect all data points across isoEtRanges**
+        std::vector<double> ptCenters;
+        std::vector<double> ratios;
+        std::vector<double> errors;
 
-        if (drawRefB) {
-            refGraphTwo = new TGraphErrors(ReferenceData::referenceTwoPTGamma.size(),
-                                           ReferenceData::referenceTwoPTGamma.data(),
-                                           ReferenceData::referenceTwoRatio.data(),
-                                           nullptr,
-                                           ReferenceData::referenceTwoStatError.data());
-            refGraphTwo->SetMarkerStyle(20);
-            refGraphTwo->SetMarkerColor(kOrange);
-            refGraphTwo->SetLineColor(kOrange);
-            refGraphTwo->SetLineWidth(2);
-            legend.AddEntry(refGraphTwo, "#font[62]{PHENIX 2003 pp Run:} #frac{Isolated #pi^{0} Decay}{All #pi^{0} Decay}", "p");
-        }
-
-        // Loop over isoEt ranges and collect data for multigraph
+        // Loop over isoEt ranges and collect data for plotting
         for (size_t i = 0; i < isoEtRanges.size(); ++i) {
             const auto& isoEtRange = isoEtRanges[i];
 
@@ -4069,133 +4303,273 @@ void GeneratePerTriggerIsoPlots(
             }
 
             const auto& isoDataList = it->second;
-            int color = isoEtColors[i];
+            // **No longer using isoEtColors[i]**
 
-            // Prepare data vectors for plotting
-            std::vector<double> weightedPts;
-            std::vector<double> ratios;
-            std::vector<double> errors;
-            
             for (const auto& isoData : isoDataList) {
-                if (isoData.weightedPt > 0) {
-                    weightedPts.push_back(isoData.weightedPt);
-                    ratios.push_back(isoData.ratio);
-                    errors.push_back(isoData.error);
-                } else {
-                    std::cerr << "\033[31m[WARNING]\033[0m Invalid weightedPt (" << isoData.weightedPt
-                              << ") in group " << groupCounter << ". Skipping this data point." << std::endl;
+                double ptMin = isoData.ptMin;
+                double ptMax = isoData.ptMax;
+
+                // Find the pT bin that matches ptMin and ptMax
+                bool foundBin = false;
+                double ptCenter = 0.0;
+                for (const auto& pT_bin : pT_bins) {
+                    if (std::abs(pT_bin.first - ptMin) < 1e-6 && std::abs(pT_bin.second - ptMax) < 1e-6) {
+                        // Found matching pT bin
+                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                        foundBin = true;
+                        break;
+                    }
                 }
+                if (!foundBin) {
+                    std::cerr << "[WARNING] Could not find matching pT bin for ptMin: " << ptMin << ", ptMax: " << ptMax << ". Skipping data point.\n";
+                    continue;
+                }
+
+                // Exclude data points where ptCenter >= pTExclusionMax
+                if (ptCenter >= pTExclusionMax) {
+                    continue;
+                }
+
+                // Add data point
+                ptCenters.push_back(ptCenter);
+                ratios.push_back(isoData.ratio);
+                errors.push_back(isoData.error);
             }
-            
-            if (weightedPts.empty()) {
-                std::cerr << "\033[31m[WARNING]\033[0m No valid data points with positive weightedPt for isoEt range ["
-                          << isoEtRange.first << ", " << isoEtRange.second << "] in group "
-                          << groupCounter << ". Skipping this isoEt range." << std::endl;
-                continue;
-            }
-            
-            // Sort the data by weightedPt for better plotting
-            std::vector<size_t> indices(weightedPts.size());
-            std::iota(indices.begin(), indices.end(), 0);
-            std::sort(indices.begin(), indices.end(), [&](size_t i1, size_t i2) {
-                return weightedPts[i1] < weightedPts[i2];
-            });
-            
-            std::vector<double> sortedWeightedPts, sortedRatios, sortedErrors;
-            for (size_t idx : indices) {
-                sortedWeightedPts.push_back(weightedPts[idx]);
-                sortedRatios.push_back(ratios[idx]);
-                sortedErrors.push_back(errors[idx]);
-            }
-            
-            // Debugging output
-            std::cout << "\033[32m[DEBUG]\033[0m Data points for isoEt range [" << isoEtRange.first << ", " << isoEtRange.second << "] in group " << groupCounter << ":" << std::endl;
-            for (size_t j = 0; j < sortedWeightedPts.size(); ++j) { // Changed loop variable to 'j' to avoid shadowing
-                std::cout << "\033[32m[DEBUG]\033[0m   weightedPt: " << sortedWeightedPts[j]
-                          << ", ratio: " << sortedRatios[j]
-                          << ", error: " << sortedErrors[j] << std::endl;
+        }
+
+        if (ptCenters.empty()) {
+            std::cerr << "[WARNING] No valid data points for trigger '" << readableTriggerName << "'. Skipping.\n";
+            delete hFrame;
+            continue;
+        }
+
+        // **Create a single TGraphErrors for all data points**
+        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                               ptCenters.data(),
+                                               ratios.data(),
+                                               nullptr,
+                                               errors.data());
+
+        graph->SetMarkerStyle(20); // You can choose a marker style
+        graph->SetMarkerColor(markerColor);
+        graph->SetLineColor(markerColor);
+        graph->SetLineWidth(2);
+
+        // Draw the graph
+        graph->Draw("P SAME");
+
+        // **Add entry to legend with the trigger information**
+        std::ostringstream legendEntry;
+        legendEntry << "Run 24 sPHENIX pp: " << readableTriggerName;
+        legend.AddEntry(graph, legendEntry.str().c_str(), "p");
+
+        // Draw a dashed line at y = 1
+        TLine* line = new TLine(binEdges.front(), 1, binEdges.back(), 1);
+        line->SetLineStyle(2); // Dashed line
+        line->Draw("SAME");
+
+        // Process and draw the reference data
+        if (drawRefA) {
+            // Process reference data A
+            std::vector<double> refPtCenters;
+            std::vector<double> refRatios;
+            std::vector<double> refErrors;
+
+            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
+                double refPt = referencePTGamma[i];
+                double ratio = referenceRatio[i];
+                double error = referenceStatError[i];
+
+                // Exclude data points where refPt >= pTExclusionMax
+                if (refPt >= pTExclusionMax) {
+                    continue;
+                }
+
+                // Find the pT bin that refPt falls into
+                bool foundBin = false;
+                double ptCenter = 0.0;
+                for (const auto& pT_bin : pT_bins) {
+                    if (refPt >= pT_bin.first && refPt < pT_bin.second) {
+                        // Found the bin
+                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                        foundBin = true;
+                        break;
+                    }
+                }
+                if (!foundBin) {
+                    std::cerr << "[WARNING] Could not find pT bin for reference pT: " << refPt << ". Skipping data point.\n";
+                    continue;
+                }
+
+                // Apply a slight offset to the ptCenter to distinguish from user's data
+                double offset = 0.25; // Adjust as needed
+                ptCenter += offset; // Move slightly to the right
+
+                refPtCenters.push_back(ptCenter);
+                refRatios.push_back(ratio);
+                refErrors.push_back(error);
             }
 
             // Create a TGraphErrors
-            TGraphErrors* graph = new TGraphErrors(sortedWeightedPts.size(),
-                                                   sortedWeightedPts.data(),
-                                                   sortedRatios.data(),
-                                                   nullptr,
-                                                   sortedErrors.data());
+            refGraphOne = new TGraphErrors(refPtCenters.size(),
+                                           refPtCenters.data(),
+                                           refRatios.data(),
+                                           nullptr,
+                                           refErrors.data());
 
-            graph->SetMarkerStyle(20);
-            graph->SetMarkerColor(color);
-            graph->SetLineColor(color);
-            graph->SetLineWidth(2);
+            refGraphOne->SetMarkerStyle(24); // Open circle
+            refGraphOne->SetMarkerColor(kOrange + 2);
+            refGraphOne->SetLineColor(kOrange + 2);
+            refGraphOne->SetLineWidth(2);
 
-            // Add to the multigraph
-            multiGraph->Add(graph, "P");
-
-            // Add entry to legend with the desired prefix
-            std::ostringstream legendEntry;
-            legendEntry << "Run 24 sPHENIX pp: " << isoEtRange.first << " #leq E_{T, iso} < " << isoEtRange.second << " GeV";
-            legend.AddEntry(graph, legendEntry.str().c_str(), "p");
-        }
-        
-        // Set titles
-        std::string plotTitle = "Isolation Ratio vs pT (" + massWindowLabel + ")";
-        multiGraph->SetTitle(plotTitle.c_str());
-        multiGraph->GetXaxis()->SetTitle("Weighted p_{T} of Leading Cluster [GeV]");
-        // Define y-axis title based on mass window type
-        const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
-            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
-            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
-        
-        multiGraph->GetYaxis()->SetTitle(yAxisTitle.c_str());
-        multiGraph->GetYaxis()->SetRangeUser(0, 2.0);
-        multiGraph->GetXaxis()->SetLimits(2.0, 25.0);
-        
-        // Draw multigraph
-        multiGraph->Draw("A");
-        
-        // Draw a dashed line at y = 1
-        TLine* line = new TLine(2, 1, 25, 1);
-        line->SetLineStyle(2); // Dashed line
-        line->Draw();
-
-        // Draw the reference graphs
-        if (drawRefA && refGraphOne) {
+            // Draw the reference graph
             refGraphOne->Draw("P SAME");
+
+            // Add entry to legend
+            legend.AddEntry(refGraphOne, "#font[62]{PHENIX 2003 pp:} Isolated Direct Photons / All Direct Photons", "p");
         }
 
-        if (drawRefB && refGraphTwo) {
+        if (drawRefB) {
+            // Process reference data B
+            std::vector<double> refTwoPtCenters;
+            std::vector<double> refTwoRatios;
+            std::vector<double> refTwoErrors;
+
+            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
+                double refPt = referenceTwoPTGamma[i];
+                double ratio = referenceTwoRatio[i];
+                double error = referenceTwoStatError[i];
+
+                // Exclude data points where refPt >= pTExclusionMax
+                if (refPt >= pTExclusionMax) {
+                    continue;
+                }
+
+                // Find the pT bin that refPt falls into
+                bool foundBin = false;
+                double ptCenter = 0.0;
+                for (const auto& pT_bin : pT_bins) {
+                    if (refPt >= pT_bin.first && refPt < pT_bin.second) {
+                        // Found the bin
+                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
+                        foundBin = true;
+                        break;
+                    }
+                }
+                if (!foundBin) {
+                    std::cerr << "[WARNING] Could not find pT bin for reference pT: " << refPt << ". Skipping data point.\n";
+                    continue;
+                }
+
+                // Apply a slight offset to the ptCenter to distinguish from user's data
+                double offset = -0.1; // Adjust as needed (to the left)
+                ptCenter += offset; // Move slightly to the left
+
+                refTwoPtCenters.push_back(ptCenter);
+                refTwoRatios.push_back(ratio);
+                refTwoErrors.push_back(error);
+            }
+
+            // Create a TGraphErrors
+            refGraphTwo = new TGraphErrors(refTwoPtCenters.size(),
+                                           refTwoPtCenters.data(),
+                                           refTwoRatios.data(),
+                                           nullptr,
+                                           refTwoErrors.data());
+
+            refGraphTwo->SetMarkerStyle(25); // Open triangle
+            refGraphTwo->SetMarkerColor(kOrange + 2);
+            refGraphTwo->SetLineColor(kOrange + 2);
+            refGraphTwo->SetLineWidth(2);
+
+            // Draw the reference graph
             refGraphTwo->Draw("P SAME");
+
+            // Add entry to legend
+            legend.AddEntry(refGraphTwo, "#font[62]{PHENIX 2003 pp:} Isolated #pi^{0} Decay / All #pi^{0} Decay", "p");
         }
 
         // Draw legend
         legend.Draw();
-        
+
+        // Draw custom x-axis ticks and labels
+        double xMin = binEdges.front();
+        double xMax = binEdges.back();
+        double yAxisMin = hFrame->GetMinimum();
+        double yAxisMax = hFrame->GetMaximum();
+
+        double tickSize = (yAxisMax - yAxisMin) * 0.02;
+        double labelOffset = (yAxisMax - yAxisMin) * 0.05;
+        TLatex latex;
+        latex.SetTextSize(0.035);
+        latex.SetTextAlign(22); // Center alignment
+
+        // Draw x-axis line
+        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+        xAxisLine.Draw("SAME");
+
+        // Draw ticks and labels at bin edges
+        for (size_t i = 0; i < binEdges.size(); ++i) {
+            double xPos = binEdges[i];
+            double yPos = yAxisMin;
+
+            // Draw tick
+            TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+            tick->Draw("SAME");
+
+            // Get pT value for label
+            double pTValue = binEdges[i];
+
+            // Format label to show one decimal place
+            std::ostringstream labelStream;
+            labelStream << std::fixed << std::setprecision(1) << pTValue;
+            std::string label = labelStream.str();
+
+            // Draw label
+            latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
+        }
+
+        // Redraw the axes to ensure labels are on top
+        canvas.RedrawAxis();
+
         // Add labels using TLatex in the top-left corner
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.0215);       // Adjusted text size
-        labelText.SetTextColor(kBlack);    // Ensured text color is black
-        double xStart = 0.18; // Starting x-coordinate (left side)
+        labelText.SetTextSize(0.025);
+        labelText.SetTextColor(kBlack);
+
+        double xStart = 0.195; // Starting x-coordinate (left side)
         double yStartLabel = 0.9; // Starting y-coordinate
-        double yStepLabel = 0.035;  // Vertical spacing between lines
+        double yStepLabel = 0.045;  // Vertical spacing between lines
 
         // Prepare label strings
-        std::string triggerGroupLabel = "#bf{Trigger Group:} " + readableTriggerGroupName;
-        std::string triggerNameLabel = "bf{Trigger:} " + readableTriggerName;
-        std::string eCoreLabel = "bf{ECore >} " + Utils::formatToThreeSigFigs(eCore) + " GeV";
-        std::string chiLabel = "bf{Chi2} < " + Utils::formatToThreeSigFigs(chi);
-        std::string asymLabel = "bf{Asymmetry} < " + Utils::formatToThreeSigFigs(asym);
-        std::string massWindowLabelStr = "bf{Mass Window:} " + massWindowLabel;
-        std::string coneRadiusLabel = "bf{#Delta R_{cone}} < 0.3";
+        std::ostringstream oss;
+        oss << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
+        labelText.DrawLatex(xStart, yStartLabel, oss.str().c_str());
 
-        // Draw labels
-        labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, triggerNameLabel.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, eCoreLabel.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, chiLabel.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, asymLabel.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, massWindowLabelStr.c_str());
-        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, coneRadiusLabel.c_str());
+        oss.str("");
+        oss << "#font[62]{Trigger:} " << readableTriggerName;
+        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{ECore #geq} " << eCore << " GeV";
+        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{#chi^{2} <} " << chi;
+        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{Asymmetry <} " << asym;
+        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{Mass Window:} " << massWindowLabel;
+        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{#Delta R_{cone} <} 0.3";
+        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, oss.str().c_str());
 
         // Force canvas update before saving
         canvas.Modified();
@@ -4206,14 +4580,20 @@ void GeneratePerTriggerIsoPlots(
         outputFilePathStream << massWindowDir << "/IsolationRatio_vs_pT_" << triggerName << ".png";
         std::string outputFilePath = outputFilePathStream.str();
         canvas.SaveAs(outputFilePath.c_str());
-        std::cout << "\033[33m[INFO]\033[0m Saved plot to " << outputFilePath << std::endl;
+        std::cout << "[INFO] Saved plot to " << outputFilePath << std::endl;
 
         // Clean up
-        delete multiGraph;
+        delete hFrame;
         delete line;
-        if (refGraphOne) delete refGraphOne;
-        if (refGraphTwo) delete refGraphTwo;
-        // Note: graphs added to multiGraph are owned by it and will be deleted automatically
+        if (drawRefA && refGraphOne) {
+            delete refGraphOne;
+            refGraphOne = nullptr;
+        }
+        if (drawRefB && refGraphTwo) {
+            delete refGraphTwo;
+            refGraphTwo = nullptr;
+        }
+        // The tick lines are managed by ROOT and don't need explicit deletion
     }
 }
 
@@ -4680,15 +5060,15 @@ void GenerateCombinedRatioPlot(
             // Add labels using TLatex in the top-left corner
             TLatex labelText;
             labelText.SetNDC();
-            labelText.SetTextSize(0.032);       // Adjust text size as needed
+            labelText.SetTextSize(0.024);       // Adjust text size as needed
 
             TLatex valueText;
             valueText.SetNDC();
-            valueText.SetTextSize(0.028);
+            valueText.SetTextSize(0.024);
 
             double xStart = 0.2; // Starting x-coordinate (left side)
             double yStartLabel = 0.9; // Starting y-coordinate
-            double yStepLabel = 0.07;  // Vertical spacing between lines
+            double yStepLabel = 0.05;  // Vertical spacing between lines
 
             // Prepare label strings
             labelText.DrawLatex(xStart, yStartLabel, "#font[62]{Active Trigger Group:}");
@@ -4739,6 +5119,365 @@ void GenerateCombinedRatioPlot(
     std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
 }
 
+
+void PrepareDataForIsolationPurity(
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap,
+    std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel (not used here)
+    >, std::vector<DataStructures::IsolationDataWithPt>>& groupedData
+) {
+    for (const auto& [key, isoData] : dataMap) {
+        // Extract relevant keys
+        std::string triggerGroupName = std::get<0>(key);
+        std::string triggerName = std::get<1>(key);
+        float eCore = std::get<2>(key);
+        float chi = std::get<3>(key);
+        float asym = std::get<4>(key);
+        float ptMin = std::get<5>(key);
+        float ptMax = std::get<6>(key);
+        float isoMin = std::get<7>(key);
+        float isoMax = std::get<8>(key);
+        std::string massWindowLabel = std::get<9>(key);
+
+        // Create a new key without pT bins to group over pT
+        auto groupKey = std::make_tuple(
+            triggerGroupName,
+            triggerName,
+            eCore,
+            chi,
+            asym,
+            isoMin,
+            isoMax,
+            "" // MassWindowLabel is not needed here
+        );
+
+        // Prepare IsolationDataWithPt
+        DataStructures::IsolationDataWithPt isoDataWithPt;
+        isoDataWithPt.ptMin = ptMin;
+        isoDataWithPt.ptMax = ptMax;
+        isoDataWithPt.isoData = isoData;
+
+        // Add to groupedData
+        groupedData[groupKey].push_back(isoDataWithPt);
+    }
+}
+
+
+void GenerateIsolationPurityPlots(
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, std::vector<DataStructures::IsolationDataWithPt>>& groupedData,
+    const std::string& basePlotDirectory,
+    const std::map<std::string, std::string>& triggerCombinationNameMap,
+    const std::map<std::string, std::string>& triggerNameMap,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax) {
+    std::cout << BOLD << YELLOW << "[INFO] Generating Isolation Purity Plots..." << RESET << std::endl;
+    
+    int plotCounter = 0;
+    // Iterate over each group (trigger combination and isoEt range)
+    for (const auto& groupEntry : groupedData) {
+        plotCounter++;
+        const auto& groupKey = groupEntry.first;
+        const auto& isoDataList = groupEntry.second;
+
+        // Unpack the group key
+        std::string triggerGroupName = std::get<0>(groupKey);
+        std::string triggerName = std::get<1>(groupKey);
+        float eCore = std::get<2>(groupKey);
+        float chi = std::get<3>(groupKey);
+        float asym = std::get<4>(groupKey);
+        float isoMin = std::get<5>(groupKey);
+        float isoMax = std::get<6>(groupKey);
+        // massWindowLabel is not used here since we are combining both mass windows
+
+        // Map to human-readable names
+        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
+            triggerGroupName, triggerCombinationNameMap);
+
+        std::string readableTriggerName = triggerName;
+        auto triggerNameIt = triggerNameMap.find(triggerName);
+        if (triggerNameIt != triggerNameMap.end()) {
+            readableTriggerName = triggerNameIt->second;
+        }
+
+        // Define output directory (one level up from the mass window directories)
+        std::ostringstream dirStream;
+        dirStream << basePlotDirectory << "/" << triggerGroupName
+                  << "/E" << Utils::formatToThreeSigFigs(eCore)
+                  << "_Chi" << Utils::formatToThreeSigFigs(chi)
+                  << "_Asym" << Utils::formatToThreeSigFigs(asym)
+                  << "/isolationEnergies";
+        std::string dirPath = dirStream.str();
+        gSystem->mkdir(dirPath.c_str(), true);
+        
+        std::cout << BOLD << MAGENTA << "[PROCESSING PLOT " << plotCounter << "]" << RESET
+                  << " TriggerGroup: " << readableTriggerGroupName
+                  << ", Trigger: " << readableTriggerName
+                  << ", ECore: " << eCore
+                  << ", Chi: " << chi
+                  << ", Asymmetry: " << asym
+                  << std::endl;
+
+
+        // Create a TCanvas
+        TCanvas canvas("canvas", "Isolation Purity", 800, 600);
+
+        // Prepare bin edges for variable bin widths
+        std::vector<double> binEdges;
+        for (const auto& bin : pT_bins) {
+            if (bin.first >= pTExclusionMax) {
+                break;
+            }
+            binEdges.push_back(bin.first);
+        }
+        // Add the upper edge of the last included bin
+        if (!binEdges.empty()) {
+            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
+                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            } else {
+                binEdges.push_back(pTExclusionMax);
+            }
+        } else {
+            // No bins to plot
+            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
+            continue;
+        }
+
+        int nBins = binEdges.size() - 1;
+        double* binEdgesArray = binEdges.data();
+
+        // Create a dummy histogram to set up the axes
+        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+        hFrame->SetStats(0);
+        hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+        hFrame->GetYaxis()->SetTitle("Isolation Purity");
+        hFrame->GetYaxis()->SetRangeUser(0, 1.2);
+
+        // Remove x-axis labels and ticks
+        hFrame->GetXaxis()->SetLabelOffset(999);
+        hFrame->GetXaxis()->SetTickLength(0);
+
+        // Draw the frame
+        hFrame->Draw("AXIS");
+
+        // Create a legend
+        TLegend legend(0.5, 0.75, 0.85, 0.85);
+        legend.SetBorderSize(0);
+        legend.SetTextSize(0.026);
+
+        // Access triggerColorMap from TriggerConfig namespace
+        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
+
+        // Determine marker color based on triggerName
+        int markerColor = kBlack; // Default color
+        auto it_color = triggerColorMap.find(triggerName);
+        if (it_color != triggerColorMap.end()) {
+            markerColor = it_color->second;
+        }
+
+        // Prepare vectors to collect data
+        std::vector<double> ptCenters;
+        std::vector<double> purities;
+        std::vector<double> errors;
+
+        // Map to hold counts per pT bin
+        std::map<double, std::pair<int, int>> ptBinCounts; // Key: bin center, Value: <outsideMassWindow counts, total isolated counts>
+
+        // Collect data from isoDataList
+        for (const auto& isoDataWithPt : isoDataList) {
+            double ptMin = isoDataWithPt.ptMin;
+            double ptMax = isoDataWithPt.ptMax;
+            double ptCenter = (ptMin + ptMax) / 2.0;
+
+            if (ptCenter >= pTExclusionMax) {
+                std::cout << YELLOW << "[INFO] pT center (" << ptCenter << " GeV) >= pTExclusionMax (" << pTExclusionMax << " GeV). Skipping." << RESET << std::endl;
+                continue;
+            }
+
+            const DataStructures::IsolationData& isoData = isoDataWithPt.isoData;
+
+            // Accumulate counts
+            auto& counts = ptBinCounts[ptCenter];
+
+            if (isoData.massWindowLabel == "outsideMassWindow") {
+                counts.first += isoData.isolatedCounts; // outsideMassWindow counts
+                std::cout << GREEN << "[DEBUG] Accumulated outsideMassWindow counts: " << isolatedCounts << " for pT center: " << ptCenter << " GeV" << RESET << std::endl;
+            }
+
+            counts.second += isoData.isolatedCounts; // total isolated counts (both mass windows)
+            std::cout << GREEN << "[DEBUG] Accumulated total isolated counts: " << isolatedCounts << " for pT center: " << ptCenter << " GeV" << RESET << std::endl;
+        }
+
+        // Calculate purity and errors
+        for (const auto& [ptCenter, counts] : ptBinCounts) {
+            int outsideCounts = counts.first;
+            int totalIsolatedCounts = counts.second;
+
+            if (totalIsolatedCounts == 0) {
+                std::cout << YELLOW << "[WARNING] Total isolated counts is zero for pT center: " << ptCenter << " GeV. Skipping purity calculation." << RESET << std::endl;
+                continue;
+            }
+
+            double purity = static_cast<double>(outsideCounts) / totalIsolatedCounts;
+            double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts); // Binomial error
+
+            ptCenters.push_back(ptCenter);
+            purities.push_back(purity);
+            errors.push_back(error);
+            
+            std::cout << CYAN << "[CALCULATION] pT center: " << ptCenter << " GeV, Purity: " << purity
+                      << ", Error: " << error << RESET << std::endl;
+        }
+
+        if (ptCenters.empty()) {
+            std::cerr << "[WARNING] No valid data points for trigger '" << readableTriggerName << "'. Skipping.\n";
+            delete hFrame;
+            continue;
+        }
+
+        // Create a TGraphErrors
+        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                               ptCenters.data(),
+                                               purities.data(),
+                                               nullptr,
+                                               errors.data());
+
+        graph->SetMarkerStyle(20);
+        graph->SetMarkerColor(markerColor);
+        graph->SetLineColor(markerColor);
+        graph->SetLineWidth(2);
+
+        // Draw the graph
+        graph->Draw("P SAME");
+        std::cout << GREEN << "[INFO] Plotted Isolation Purity graph for Trigger: " << readableTriggerName << RESET << std::endl;
+        // Add entry to legend
+        legend.AddEntry(graph, readableTriggerName.c_str(), "p");
+
+        // Draw legend
+        legend.Draw();
+        std::cout << GREEN << "[INFO] Legend drawn." << RESET << std::endl;
+
+        // Draw custom x-axis ticks and labels
+        double xMin = binEdges.front();
+        double xMax = binEdges.back();
+        double yAxisMin = hFrame->GetMinimum();
+        double yAxisMax = hFrame->GetMaximum();
+
+        double tickSize = (yAxisMax - yAxisMin) * 0.02;
+        double labelOffset = (yAxisMax - yAxisMin) * 0.05;
+        TLatex latex;
+        latex.SetTextSize(0.035);
+        latex.SetTextAlign(22); // Center alignment
+
+        // Draw x-axis line
+        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+        xAxisLine.Draw("SAME");
+        std::cout << GREEN << "[DEBUG] X-axis line drawn." << RESET << std::endl;
+
+        // Draw ticks and labels at bin edges
+        for (size_t i = 0; i < binEdges.size(); ++i) {
+            double xPos = binEdges[i];
+            double yPos = yAxisMin;
+
+            // Draw tick
+            TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+            tick->Draw("SAME");
+
+            // Get pT value for label
+            double pTValue = binEdges[i];
+
+            // Format label to show one decimal place
+            std::ostringstream labelStream;
+            labelStream << std::fixed << std::setprecision(1) << pTValue;
+            std::string label = labelStream.str();
+
+            // Draw label
+            latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
+            std::cout << GREEN << "[DEBUG] Tick and label drawn for pT: " << pTValue << " GeV." << RESET << std::endl;
+        }
+
+        // Redraw the axes to ensure labels are on top
+        canvas.RedrawAxis();
+
+        // Add labels using TLatex in the top-left corner
+        TLatex labelText;
+        labelText.SetNDC();
+        labelText.SetTextSize(0.025);
+        labelText.SetTextColor(kBlack);
+
+        double xStart = 0.18; // Starting x-coordinate (left side)
+        double yStartLabel = 0.9; // Starting y-coordinate
+        double yStepLabel = 0.045;  // Vertical spacing between lines
+
+        // Prepare label strings
+        std::ostringstream oss;
+        oss << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
+        labelText.DrawLatex(xStart, yStartLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{Trigger:} " << readableTriggerName;
+        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{ECore #geq} " << eCore << " GeV";
+        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{#chi^{2} <} " << chi;
+        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{Asymmetry <} " << asym;
+        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, oss.str().c_str());
+
+        oss.str("");
+        oss << "#font[62]{#Delta R_{cone} <} 0.3";
+        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, oss.str().c_str());
+
+        // Force canvas update before saving
+        canvas.Modified();
+        canvas.Update();
+        std::cout << GREEN << "[INFO] Canvas updated." << RESET << std::endl;
+
+
+        // Save the canvas
+        std::ostringstream outputFilePathStream;
+        outputFilePathStream << dirPath << "/IsolationPurity_vs_pT_" << triggerName << ".png";
+        std::string outputFilePath = outputFilePathStream.str();
+        canvas.SaveAs(outputFilePath.c_str());
+        std::cout << BOLD << BLUE << "[SAVED] Isolation Purity plot saved to: " << outputFilePath << RESET << std::endl;
+
+        // Clean up
+        delete hFrame;
+        // Note: The tick lines are managed by ROOT and don't need explicit deletion
+    }
+}
 
 void ProcessIsolationData(
     const std::map<std::tuple<
@@ -4867,30 +5606,35 @@ void ProcessIsolationData(
     const std::map<std::string, std::string>& triggerCombinationNameMap = TriggerCombinationNames::triggerCombinationNameMap;
     const std::map<std::string, std::string>& triggerNameMap = TriggerConfig::triggerNameMap;
     GeneratePerTriggerIsoPlots(
-        groupedData,
-        basePlotDirectory,
-        isoEtRanges,
-        isoEtColors,
-        ReferenceData::referencePTGamma,
-        ReferenceData::referenceRatio,
-        ReferenceData::referenceStatError,
-        ReferenceData::referenceTwoPTGamma,
-        ReferenceData::referenceTwoRatio,
-        ReferenceData::referenceTwoStatError,
-        triggerCombinationNameMap,
-        triggerNameMap,
-        drawRefA,
-        drawRefB,
-        exclusionRanges
-    );
+         groupedData,
+         basePlotDirectory,
+         isoEtRanges,
+         isoEtColors,
+         ReferenceData::referencePTGamma,
+         ReferenceData::referenceRatio,
+         ReferenceData::referenceStatError,
+         ReferenceData::referenceTwoPTGamma,
+         ReferenceData::referenceTwoRatio,
+         ReferenceData::referenceTwoStatError,
+         triggerCombinationNameMap,
+         triggerNameMap,
+         drawRefA,
+         drawRefB,
+         exclusionRanges,
+         DataStructures::pT_bins,    // Added pT_bins
+         20.0                        // Added pTExclusionMax
+     );
     GeneratePerTriggerSpectraPlots(
         dataMap_inMassWindow,
         dataMap_outsideMassWindow,
         basePlotDirectory,
         triggerCombinationNameMap,
         triggerNameMap,
-        exclusionRanges
+        exclusionRanges,
+        DataStructures::pT_bins, // Ensure this is defined and accessible
+        20.0                     // Adjust pTExclusionMax as needed
     );
+
 
     std::map<SpectraGroupKey, std::map<float, CombinedSpectraData>> combinedSpectraDataMap;
     SortAndCombineSpectraData(
@@ -4908,6 +5652,32 @@ void ProcessIsolationData(
         TriggerCombinationNames::triggerCombinationNameMap,
         DataStructures::pT_bins,    // Pass pT_bins
         20.0                        // Pass pTExclusionMax
+    );
+    
+    // Prepare data for isolation purity plots
+    std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel (not used)
+    >, std::vector<DataStructures::IsolationDataWithPt>> groupedDataForPurity;
+
+    // Combine data from both mass windows
+    PrepareDataForIsolationPurity(dataMap_inMassWindow, groupedDataForPurity);
+    PrepareDataForIsolationPurity(dataMap_outsideMassWindow, groupedDataForPurity);
+
+    // Generate isolation purity plots
+    GenerateIsolationPurityPlots(
+        groupedDataForPurity,
+        basePlotDirectory,
+        triggerCombinationNameMap,
+        triggerNameMap,
+        DataStructures::pT_bins,
+        20.0
     );
 
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
