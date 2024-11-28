@@ -3358,7 +3358,7 @@ void GeneratePerTriggerSpectraPlots(
         // Draw the frame
         hFrame->Draw("AXIS");
 
-        TLegend* legend = new TLegend(0.38, 0.55, 0.7, 0.7); // Adjust positions as needed
+        TLegend* legend = new TLegend(0.45, 0.55, 0.8, 0.7);
         legend->SetBorderSize(0);
         legend->SetFillStyle(0);
         legend->SetTextSize(0.024);
@@ -4425,8 +4425,8 @@ void GeneratePerTriggerIsoPlots(
                                            refErrors.data());
 
             refGraphOne->SetMarkerStyle(24); // Open circle
-            refGraphOne->SetMarkerColor(kOrange + 2);
-            refGraphOne->SetLineColor(kOrange + 2);
+            refGraphOne->SetMarkerColor(kRed);
+            refGraphOne->SetLineColor(kRed);
             refGraphOne->SetLineWidth(2);
 
             // Draw the reference graph
@@ -4484,9 +4484,9 @@ void GeneratePerTriggerIsoPlots(
                                            nullptr,
                                            refTwoErrors.data());
 
-            refGraphTwo->SetMarkerStyle(25); // Open triangle
-            refGraphTwo->SetMarkerColor(kOrange + 2);
-            refGraphTwo->SetLineColor(kOrange + 2);
+            refGraphTwo->SetMarkerStyle(24);
+            refGraphTwo->SetMarkerColor(kRed);
+            refGraphTwo->SetLineColor(kRed);
             refGraphTwo->SetLineWidth(2);
 
             // Draw the reference graph
@@ -5706,7 +5706,6 @@ void SortAndCombinePurityData(
     }
 }
 
-// Function to generate combined purity plots
 void GenerateCombinedPurityPlots(
     const std::map<SpectraGroupKey, std::map<float, CombinedPurityData>>& combinedPurityDataMap,
     const std::string& basePlotDirectory,
@@ -5727,7 +5726,7 @@ void GenerateCombinedPurityPlots(
             triggerGroupName, triggerCombinationNameMap);
 
         std::cout << "[INFO] Processing plot for Trigger Group: " << readableTriggerGroupName
-                  << ", ECore > " << eCore << " GeV, Chi2 < " << chi << ", Asymmetry < " << asym << ".\n";
+                  << ", ECore ≥ " << eCore << " GeV, Chi² < " << chi << ", Asymmetry < " << asym << ".\n";
 
         // Define output directory
         std::ostringstream dirStream;
@@ -5752,11 +5751,7 @@ void GenerateCombinedPurityPlots(
         }
         // Add the upper edge of the last included bin
         if (!binEdges.empty()) {
-            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
-                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
-            } else {
-                binEdges.push_back(pTExclusionMax);
-            }
+            binEdges.push_back(std::min(pT_bins[binEdges.size() - 1].second, pTExclusionMax));
         } else {
             // No bins to plot
             std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
@@ -5780,38 +5775,78 @@ void GenerateCombinedPurityPlots(
         // Draw the frame
         hFrame->Draw("AXIS");
 
-        // Prepare vectors to collect data
-        std::vector<double> ptCenters;
-        std::vector<double> purities;
-        std::vector<double> errors;
+        // Create a legend
+        TLegend* legend = new TLegend(0.6, 0.2, 0.85, 0.4);
+        legend->SetBorderSize(0);
+        legend->SetTextSize(0.025);
 
-        // Collect data
+        // Access triggerColorMap from TriggerConfig namespace
+        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
+
+        // Map to organize data per trigger
+        std::map<std::string, std::vector<CombinedPurityData>> dataPerTrigger;
+
+        // Collect data per trigger
         for (const auto& [pTCenter, data] : ptDataMap) {
-            ptCenters.push_back(pTCenter);
-            purities.push_back(data.purity);
-            errors.push_back(data.purityError);
+            dataPerTrigger[data.triggerUsed].push_back(data);
         }
 
-        if (ptCenters.empty()) {
-            std::cerr << "[WARNING] No valid data points for combined purity plot. Skipping.\n";
-            delete hFrame;
-            continue;
+        // Keep track of graphs for cleanup
+        std::vector<TGraphErrors*> graphs;
+
+        // For each trigger
+        for (const auto& [triggerName, dataList] : dataPerTrigger) {
+            std::vector<double> ptCenters;
+            std::vector<double> purities;
+            std::vector<double> errors;
+
+            for (const auto& data : dataList) {
+                // Exclude data points with pT ≥ pTExclusionMax
+                if (data.pTCenter >= pTExclusionMax) {
+                    continue;
+                }
+
+                ptCenters.push_back(data.pTCenter);
+                purities.push_back(data.purity);
+                errors.push_back(data.purityError);
+            }
+
+            if (ptCenters.empty()) {
+                continue;
+            }
+
+            // Determine marker color based on triggerName
+            int markerColor = kBlack; // Default color
+            auto it_color = triggerColorMap.find(triggerName);
+            if (it_color != triggerColorMap.end()) {
+                markerColor = it_color->second;
+            }
+
+            // Create a TGraphErrors
+            TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                                   ptCenters.data(),
+                                                   purities.data(),
+                                                   nullptr,
+                                                   errors.data());
+
+            graph->SetMarkerStyle(20);
+            graph->SetMarkerColor(markerColor);
+            graph->SetLineColor(markerColor);
+            graph->SetLineWidth(2);
+
+            // Draw the graph
+            graph->Draw("P SAME");
+
+            // Add entry to legend
+            std::string readableTriggerName = Utils::getTriggerCombinationName(triggerName, TriggerConfig::triggerNameMap);
+            legend->AddEntry(graph, readableTriggerName.c_str(), "p");
+
+            // Store graph for cleanup
+            graphs.push_back(graph);
         }
 
-        // Create a TGraphErrors
-        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
-                                               ptCenters.data(),
-                                               purities.data(),
-                                               nullptr,
-                                               errors.data());
-
-        graph->SetMarkerStyle(20);
-        graph->SetMarkerColor(kBlack);
-        graph->SetLineColor(kBlack);
-        graph->SetLineWidth(2);
-
-        // Draw the graph
-        graph->Draw("P SAME");
+        // Draw legend
+        legend->Draw();
 
         // Draw custom x-axis ticks and labels
         double xMin = binEdges.front();
@@ -5865,9 +5900,9 @@ void GenerateCombinedPurityPlots(
         labelText.SetTextSize(0.023);
         labelText.SetTextColor(kBlack);
 
-        double xStart = 0.4;
-        double yStartLabel = 0.905;
-        double yStepLabel = 0.05;
+        double xStart = 0.2;
+        double yStartLabel = 0.5;
+        double yStepLabel = 0.025;
 
         // Prepare label strings
         std::ostringstream oss;
@@ -5897,12 +5932,16 @@ void GenerateCombinedPurityPlots(
 
         // Clean up
         delete hFrame;
-        delete graph;
+        delete legend;
         delete canvas;
+        for (auto graph : graphs) {
+            delete graph;
+        }
     }
 
     std::cout << "[INFO] Finished GenerateCombinedPurityPlots function.\n";
 }
+
 
 
 
