@@ -4074,6 +4074,13 @@ void GenerateCombinedSpectraPlots(
         double yAxisMin = hFrame->GetMinimum();
         double yAxisMax = hFrame->GetMaximum();
 
+        TLine* yLine = new TLine(xMin, 1.0, xMax, 1.0);
+        yLine->SetLineColor(kBlack);
+        yLine->SetLineStyle(2); // Dashed
+        yLine->SetLineWidth(2); // Optional: set line width for better visibility
+        yLine->Draw("SAME");
+        std::cout << GREEN << "[INFO] Drawn black dashed line at y = 1.0." << RESET << std::endl;
+
         double tickSize = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.02;
         double labelOffset = (std::log10(yAxisMax) - std::log10(yAxisMin)) * 0.05;
         TLatex latex;
@@ -4156,8 +4163,8 @@ void GeneratePerTriggerIsoPlots(
     bool drawRefA,
     bool drawRefB,
     const std::vector<std::pair<float, float>>& exclusionRanges,
-    const std::vector<std::pair<double, double>>& pT_bins,
-    double pTExclusionMax
+    const std::vector<std::pair<double, double>>& pT_bins, // Added pT_bins
+    double pTExclusionMax                                  // Added pTExclusionMax
 ) {
     int groupCounter = 0;  // Initialize groupCounter
 
@@ -4265,9 +4272,9 @@ void GeneratePerTriggerIsoPlots(
         hFrame->Draw("AXIS");
 
         // Create a legend
-        TLegend legend(0.38, 0.77, 0.85, 0.87);
+        TLegend legend(0.4, 0.72, 0.85, 0.87);
         legend.SetBorderSize(0);
-        legend.SetTextSize(0.0225);
+        legend.SetTextSize(0.024);
 
         const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
 
@@ -4593,6 +4600,7 @@ void GeneratePerTriggerIsoPlots(
             delete refGraphTwo;
             refGraphTwo = nullptr;
         }
+        // The tick lines are managed by ROOT and don't need explicit deletion
     }
 }
 
@@ -5059,15 +5067,15 @@ void GenerateCombinedRatioPlot(
             // Add labels using TLatex in the top-left corner
             TLatex labelText;
             labelText.SetNDC();
-            labelText.SetTextSize(0.022);       // Adjust text size as needed
+            labelText.SetTextSize(0.024);       // Adjust text size as needed
 
             TLatex valueText;
             valueText.SetNDC();
-            valueText.SetTextSize(0.022);
+            valueText.SetTextSize(0.024);
 
             double xStart = 0.2; // Starting x-coordinate (left side)
             double yStartLabel = 0.9; // Starting y-coordinate
-            double yStepLabel = 0.01;  // Vertical spacing between lines
+            double yStepLabel = 0.05;  // Vertical spacing between lines
 
             // Prepare label strings
             labelText.DrawLatex(xStart, yStartLabel, "#font[62]{Active Trigger Group:}");
@@ -5118,6 +5126,7 @@ void GenerateCombinedRatioPlot(
     std::cout << "\033[34m[INFO]\033[0m Trigger sorting and combining completed.\n";
 }
 
+
 void PrepareDataForIsolationPurity(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -5139,7 +5148,7 @@ void PrepareDataForIsolationPurity(
         float,       // Asymmetry
         float,       // isoMin
         float,       // isoMax
-        std::string  // MassWindowLabel
+        std::string  // MassWindowLabel (not used here)
     >, std::vector<DataStructures::IsolationDataWithPt>>& groupedData
 ) {
     for (const auto& [key, isoData] : dataMap) {
@@ -5154,8 +5163,8 @@ void PrepareDataForIsolationPurity(
         float isoMin = std::get<7>(key);
         float isoMax = std::get<8>(key);
         std::string massWindowLabel = std::get<9>(key);
-    
-        // Create a group key including massWindowLabel
+
+        // Create a new key without pT bins to group over pT
         auto groupKey = std::make_tuple(
             triggerGroupName,
             triggerName,
@@ -5164,19 +5173,20 @@ void PrepareDataForIsolationPurity(
             asym,
             isoMin,
             isoMax,
-            massWindowLabel  // Include massWindowLabel here
+            "" // MassWindowLabel is not needed here
         );
-    
+
         // Prepare IsolationDataWithPt
         DataStructures::IsolationDataWithPt isoDataWithPt;
         isoDataWithPt.ptMin = ptMin;
         isoDataWithPt.ptMax = ptMax;
         isoDataWithPt.isoData = isoData;
-    
+
         // Add to groupedData
         groupedData[groupKey].push_back(isoDataWithPt);
     }
 }
+
 
 void GenerateIsolationPurityPlots(
     const std::map<std::tuple<
@@ -5195,7 +5205,7 @@ void GenerateIsolationPurityPlots(
     const std::vector<std::pair<double, double>>& pT_bins,
     double pTExclusionMax) {
     std::cout << BOLD << YELLOW << "[INFO] Generating Isolation Purity Plots..." << RESET << std::endl;
-
+    
     int plotCounter = 0;
     // Iterate over each group (trigger combination and isoEt range)
     for (const auto& groupEntry : groupedData) {
@@ -5232,7 +5242,7 @@ void GenerateIsolationPurityPlots(
                   << "/isolationEnergies";
         std::string dirPath = dirStream.str();
         gSystem->mkdir(dirPath.c_str(), true);
-
+        
         std::cout << BOLD << MAGENTA << "[PROCESSING PLOT " << plotCounter << "]" << RESET
                   << " TriggerGroup: " << readableTriggerGroupName
                   << ", Trigger: " << readableTriggerName
@@ -5240,6 +5250,7 @@ void GenerateIsolationPurityPlots(
                   << ", Chi: " << chi
                   << ", Asymmetry: " << asym
                   << std::endl;
+
 
         // Create a TCanvas
         TCanvas canvas("canvas", "Isolation Purity", 800, 600);
@@ -5272,7 +5283,7 @@ void GenerateIsolationPurityPlots(
         TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
         hFrame->SetStats(0);
         hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-        hFrame->GetYaxis()->SetTitle("Purity = #frac{Isolated Prompt Photons}{Total Isolated Photons}");
+        hFrame->GetYaxis()->SetTitle("Isolation Purity");
         hFrame->GetYaxis()->SetRangeUser(0, 1.2);
 
         // Remove x-axis labels and ticks
@@ -5283,7 +5294,7 @@ void GenerateIsolationPurityPlots(
         hFrame->Draw("AXIS");
 
         // Create a legend
-        TLegend legend(0.7, 0.2, 0.85, 0.4);
+        TLegend legend(0.2, 0.75, 0.4, 0.85);
         legend.SetBorderSize(0);
         legend.SetTextSize(0.026);
 
@@ -5346,7 +5357,7 @@ void GenerateIsolationPurityPlots(
             ptCenters.push_back(ptCenter);
             purities.push_back(purity);
             errors.push_back(error);
-
+            
             std::cout << CYAN << "[CALCULATION] pT center: " << ptCenter << " GeV, Purity: " << purity
                       << ", Error: " << error << RESET << std::endl;
         }
@@ -5392,6 +5403,7 @@ void GenerateIsolationPurityPlots(
         yLine->Draw("SAME");
         std::cout << GREEN << "[INFO] Drawn black dashed line at y = 1.0." << RESET << std::endl;
 
+        
         double tickSize = (yAxisMax - yAxisMin) * 0.02;
         double labelOffset = (yAxisMax - yAxisMin) * 0.05;
         TLatex latex;
@@ -5468,6 +5480,7 @@ void GenerateIsolationPurityPlots(
         canvas.Update();
         std::cout << GREEN << "[INFO] Canvas updated." << RESET << std::endl;
 
+
         // Save the canvas
         std::ostringstream outputFilePathStream;
         outputFilePathStream << dirPath << "/IsolationPurity_vs_pT_" << triggerName << ".png";
@@ -5481,26 +5494,15 @@ void GenerateIsolationPurityPlots(
     }
 }
 
-
-// Define PurityGroupKey structure
-struct PurityGroupKey {
-    std::string triggerGroupName;
-    float eCore;
-    float chi;
-    float asymmetry;
-
-    bool operator<(const PurityGroupKey& other) const {
-        return std::tie(triggerGroupName, eCore, chi, asymmetry) <
-               std::tie(other.triggerGroupName, other.eCore, other.chi, other.asymmetry);
-    }
-};
+// Define CombinedPurityData structure
 struct CombinedPurityData {
-    double pTCenter;
-    int totalIsolatedCounts;
-    int outsideMassWindowCounts;
+    float pTCenter;
+    std::string triggerUsed;
+    double purity;
+    double purityError;
 };
 
-
+// Function to sort and combine purity data
 void SortAndCombinePurityData(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -5508,16 +5510,30 @@ void SortAndCombinePurityData(
         float,       // ECore
         float,       // Chi
         float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
         float,       // isoMin
         float,       // isoMax
         std::string  // MassWindowLabel
-    >, std::vector<DataStructures::IsolationDataWithPt>>& groupedDataForPurity,
+    >, DataStructures::IsolationData>& dataMap_inMassWindow,
+    const std::map<std::tuple<
+        std::string, // TriggerGroupName
+        std::string, // TriggerName
+        float,       // ECore
+        float,       // Chi
+        float,       // Asymmetry
+        float,       // pT Min
+        float,       // pT Max
+        float,       // isoMin
+        float,       // isoMax
+        std::string  // MassWindowLabel
+    >, DataStructures::IsolationData>& dataMap_outsideMassWindow,
     const std::map<std::string, std::map<std::string, double>>& combinationToTriggerEfficiencyPoints,
-    std::map<PurityGroupKey, std::map<double, CombinedPurityData>>& combinedPurityDataMap
+    const std::vector<std::pair<float, float>>& exclusionRanges,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax,
+    std::map<SpectraGroupKey, std::map<float, CombinedPurityData>>& combinedPurityDataMap
 ) {
-    // **Declare sortedTriggersByGroupName locally**
-    std::map<std::string, std::vector<std::string>> sortedTriggersByGroupName;
-
     // Function to extract photon threshold from trigger name
     auto extractPhotonThreshold = [](const std::string& triggerName) -> double {
         std::regex re("Photon_(\\d+)_GeV");
@@ -5542,40 +5558,79 @@ void SortAndCombinePurityData(
         return std::numeric_limits<double>::max(); // Assign max value if not found
     };
 
-    // **Step 1: Populate sortedTriggersByGroupName from groupedDataForPurity**
-    for (const auto& groupEntry : groupedDataForPurity) {
-        const std::string& triggerGroupName = std::get<0>(groupEntry.first);
-        const std::string& triggerName = std::get<1>(groupEntry.first);
+    // Map to store data per group and pT bin
+    std::map<SpectraGroupKey, std::map<std::pair<float, float>, std::map<std::string, std::pair<int, int>>>>
+        dataPerGroup; // Stores <outsideCounts, totalIsolatedCounts>
 
-        // Initialize the group if it doesn't exist
-        if (sortedTriggersByGroupName.find(triggerGroupName) == sortedTriggersByGroupName.end()) {
-            sortedTriggersByGroupName[triggerGroupName] = {};
+    // Helper function to process data maps
+    auto processDataMap = [&](const auto& dataMap, bool isOutsideMassWindow) {
+        for (const auto& entry : dataMap) {
+            const auto& key = entry.first;
+            const auto& isoData = entry.second;
+
+            std::string triggerGroupName = std::get<0>(key);
+            std::string triggerName = std::get<1>(key);
+            float eCore = std::get<2>(key);
+            float chi = std::get<3>(key);
+            float asymmetry = std::get<4>(key);
+            float pTMin = std::get<5>(key);
+            float pTMax = std::get<6>(key);
+            float isoMin = std::get<7>(key);
+            float isoMax = std::get<8>(key);
+            // MassWindowLabel is not used here
+
+            // Exclude isoEtRanges if necessary
+            std::pair<float, float> isoEtRange = {isoMin, isoMax};
+            if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtRange) != exclusionRanges.end()) {
+                continue; // Exclude this isoEtRange
+            }
+
+            SpectraGroupKey groupKey{triggerGroupName, eCore, chi, asymmetry};
+            std::pair<float, float> pTBin{pTMin, pTMax};
+
+            // Initialize counts if not already present
+            auto& triggerCounts = dataPerGroup[groupKey][pTBin][triggerName];
+            if (isOutsideMassWindow) {
+                triggerCounts.first += isoData.isolatedCounts; // outsideCounts
+            }
+            triggerCounts.second += isoData.isolatedCounts;    // totalIsolatedCounts
+        }
+    };
+
+    // Process both inMassWindow and outsideMassWindow data
+    processDataMap(dataMap_inMassWindow, false);
+    processDataMap(dataMap_outsideMassWindow, true);
+
+    // Now, for each group and pT bin, apply trigger selection logic
+    for (const auto& groupEntry : dataPerGroup) {
+        const SpectraGroupKey& groupKey = groupEntry.first;
+        const auto& pTBinMap = groupEntry.second;
+
+        std::string triggerGroupName = groupKey.triggerGroupName;
+
+        // Collect triggers in this group
+        std::set<std::string> triggersInGroup;
+        for (const auto& pTBinEntry : pTBinMap) {
+            const auto& triggerMap = pTBinEntry.second;
+            for (const auto& triggerEntry : triggerMap) {
+                triggersInGroup.insert(triggerEntry.first);
+            }
         }
 
-        // Add the trigger to the group if it's not already present
-        if (std::find(sortedTriggersByGroupName[triggerGroupName].begin(),
-                      sortedTriggersByGroupName[triggerGroupName].end(),
-                      triggerName) == sortedTriggersByGroupName[triggerGroupName].end()) {
-            sortedTriggersByGroupName[triggerGroupName].push_back(triggerName);
-        }
-    }
+        // Convert to vector and sort triggers
+        std::vector<std::string> sortedTriggerList(triggersInGroup.begin(), triggersInGroup.end());
 
-    // **Step 2: Sort triggers within each group**
-    for (auto& groupEntry : sortedTriggersByGroupName) {
-        const std::string& triggerGroupName = groupEntry.first;
-        auto& triggerList = groupEntry.second;
-
-        // Build a map of trigger to photon threshold and x99
-        std::map<std::string, std::pair<double, double>> triggerInfoMap; // triggerName -> (photonThreshold, x99)
-        for (const std::string& triggerName : triggerList) {
+        // Build triggerInfoMap: triggerName -> (photonThreshold, x99)
+        std::map<std::string, std::pair<double, double>> triggerInfoMap;
+        for (const auto& triggerName : sortedTriggerList) {
             double photonThreshold = extractPhotonThreshold(triggerName);
             double x99 = getX99(triggerGroupName, triggerName);
             triggerInfoMap[triggerName] = std::make_pair(photonThreshold, x99);
         }
 
-        // Now sort the triggers
-        std::sort(triggerList.begin(), triggerList.end(),
-            [&](const std::string& a, const std::string& b) -> bool {
+        // Sort triggers according to the logic in processCutCombination
+        std::sort(sortedTriggerList.begin(), sortedTriggerList.end(),
+            [&](const std::string& a, const std::string& b) {
                 double photonThresholdA = triggerInfoMap[a].first;
                 double photonThresholdB = triggerInfoMap[b].first;
 
@@ -5589,158 +5644,90 @@ void SortAndCombinePurityData(
             }
         );
 
-        // Debugging output
-        std::cout << "Trigger Group Name: " << triggerGroupName << "\n";
-        std::cout << "Sorted Trigger List: ";
-        for (const auto& trigger : triggerList) {
-            double photonThreshold = triggerInfoMap[trigger].first;
-            double x99 = triggerInfoMap[trigger].second;
-            std::cout << trigger << " (Photon Threshold: " << photonThreshold << ", x99: " << x99 << "), ";
-        }
-        std::cout << "\n";
-    }
+        // Now, for each pT bin, select trigger and collect data
+        for (const auto& pTBinEntry : pTBinMap) {
+            const std::pair<float, float>& pTBin = pTBinEntry.first;
+            float ptMin = pTBin.first;
+            float ptMax = pTBin.second;
+            float pTCenter = (ptMin + ptMax) / 2.0;
 
-
-    // Now process each group to combine data
-    for (const auto& [triggerGroupName, sortedTriggerList] : sortedTriggersByGroupName) {
-        std::cout << "[PROCESSING] Combining purity data for group: " << triggerGroupName << "\n";
-
-        // Collect all pT bins
-        std::set<std::pair<float, float>> allPtBins;
-        for (const auto& [groupKey, isoDataList] : groupedDataForPurity) {
-            if (std::get<0>(groupKey) == triggerGroupName) {
-                for (const auto& isoData : isoDataList) {
-                    allPtBins.emplace(std::make_pair(isoData.ptMin, isoData.ptMax));
-                }
+            // Apply pTExclusionMax
+            if (pTCenter >= pTExclusionMax) {
+                continue; // Exclude this pT bin
             }
-        }
 
-        if (allPtBins.empty()) {
-            std::cerr << "[ERROR] No pT bins found for group '" << triggerGroupName << "'\n";
-            continue;
-        }
+            const auto& triggerMap = pTBinEntry.second;
 
-        // Iterate over each pT bin
-        for (const auto& ptBin : allPtBins) {
-            double pTMin = ptBin.first;
-            double pTMax = ptBin.second;
-            double pTCenter = (pTMin + pTMax) / 2.0;
-
-            // Identify efficient triggers for this pT bin
+            // Identify efficient triggers
             std::vector<std::string> efficientTriggers;
             for (const auto& triggerName : sortedTriggerList) {
-                double x99 = getX99(triggerGroupName, triggerName);
-                if (x99 <= pTMax) {
+                double x99 = triggerInfoMap[triggerName].second;
+                if (x99 <= ptMax) {
                     efficientTriggers.push_back(triggerName);
                 }
             }
 
-            // Select the trigger to use
+            // Select trigger to use
             std::string triggerToUse = "MBD_NandS_geq_1";
             if (!efficientTriggers.empty()) {
-                triggerToUse = efficientTriggers.front(); // First efficient trigger from sorted list
+                triggerToUse = efficientTriggers.front();
             }
 
-            // Now get data for triggerToUse
-            // Find the groupKeys for triggerToUse and both mass windows
-            bool foundGroupKey_in = false;
-            bool foundGroupKey_out = false;
-            std::tuple<
-                std::string, // TriggerGroupName
-                std::string, // TriggerName
-                float,       // ECore
-                float,       // Chi
-                float,       // Asymmetry
-                float,       // isoMin
-                float,       // isoMax
-                std::string  // MassWindowLabel
-            > groupKey_in, groupKey_out;
+            // Check if data is available for triggerToUse
+            auto triggerDataIt = triggerMap.find(triggerToUse);
+            if (triggerDataIt != triggerMap.end()) {
+                const auto& counts = triggerDataIt->second;
 
-            for (const auto& [gk, isoDataList] : groupedDataForPurity) {
-                if (std::get<0>(gk) == triggerGroupName &&
-                    std::get<1>(gk) == triggerToUse &&
-                    std::get<7>(gk) == "inMassWindow") {
-                    groupKey_in = gk;
-                    foundGroupKey_in = true;
+                int outsideCounts = counts.first;
+                int totalIsolatedCounts = counts.second;
+
+                if (totalIsolatedCounts == 0) {
+                    std::cerr << "[WARNING] Total isolated counts is zero for pT center: " << pTCenter << " GeV. Skipping purity calculation.\n";
+                    continue;
                 }
-                if (std::get<0>(gk) == triggerGroupName &&
-                    std::get<1>(gk) == triggerToUse &&
-                    std::get<7>(gk) == "outsideMassWindow") {
-                    groupKey_out = gk;
-                    foundGroupKey_out = true;
-                }
-            }
 
-            if (!foundGroupKey_in || !foundGroupKey_out) {
-                std::cerr << "[ERROR] Group key not found for trigger '" << triggerToUse << "' for both mass windows\n";
-                continue;
-            }
+                double purity = static_cast<double>(outsideCounts) / totalIsolatedCounts;
+                double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts); // Binomial error
 
-            // Find the isoData that matches this pT bin for both mass windows
-            int totalIsolatedCounts = 0;
-            int outsideMassWindowCounts = 0;
-
-            const auto& isoDataList_in = groupedDataForPurity.at(groupKey_in);
-            const auto& isoDataList_out = groupedDataForPurity.at(groupKey_out);
-
-            // For inMassWindow
-            for (const auto& isoData : isoDataList_in) {
-                if (std::abs(isoData.ptMin - pTMin) < 1e-6 && std::abs(isoData.ptMax - pTMax) < 1e-6) {
-                    totalIsolatedCounts += isoData.isoData.isolatedCounts;
-                    break;
-                }
-            }
-
-            // For outsideMassWindow
-            for (const auto& isoData : isoDataList_out) {
-                if (std::abs(isoData.ptMin - pTMin) < 1e-6 && std::abs(isoData.ptMax - pTMax) < 1e-6) {
-                    totalIsolatedCounts += isoData.isoData.isolatedCounts;
-                    outsideMassWindowCounts += isoData.isoData.isolatedCounts;
-                    break;
-                }
-            }
-
-            if (totalIsolatedCounts > 0) {
-                // Create the PurityGroupKey
-                PurityGroupKey purityGroupKey{triggerGroupName, std::get<2>(groupKey_in), std::get<3>(groupKey_in), std::get<4>(groupKey_in)};
+                // Prepare CombinedPurityData
                 CombinedPurityData combinedData;
                 combinedData.pTCenter = pTCenter;
-                combinedData.totalIsolatedCounts = totalIsolatedCounts;
-                combinedData.outsideMassWindowCounts = outsideMassWindowCounts;
-                combinedPurityDataMap[purityGroupKey][pTCenter] = combinedData;
+                combinedData.triggerUsed = triggerToUse;
+                combinedData.purity = purity;
+                combinedData.purityError = error;
+
+                // Add to combinedPurityDataMap
+                combinedPurityDataMap[groupKey][pTCenter] = combinedData;
             } else {
-                std::cout << "[WARNING] No data found for pT bin [" << pTMin << ", " << pTMax << "]\n";
+                // No data for selected trigger
+                std::cerr << "[WARNING] No data for trigger '" << triggerToUse << "' at pT bin [" << ptMin << ", " << ptMax << "]. Skipping this pT bin.\n";
             }
         }
     }
-
-    std::cout << "[INFO] Purity data sorting and combining completed.\n";
 }
+
+// Function to generate combined purity plots
 void GenerateCombinedPurityPlots(
-    const std::map<PurityGroupKey, std::map<double, CombinedPurityData>>& combinedPurityDataMap,
+    const std::map<SpectraGroupKey, std::map<float, CombinedPurityData>>& combinedPurityDataMap,
     const std::string& basePlotDirectory,
     const std::map<std::string, std::string>& triggerCombinationNameMap,
-    const std::map<std::string, std::string>& triggerNameMap, // Add this parameter
     const std::vector<std::pair<double, double>>& pT_bins,
     double pTExclusionMax
 ) {
     std::cout << "[INFO] Starting GenerateCombinedPurityPlots function.\n";
 
-    int plotCounter = 0;
-
-    for (const auto& [purityGroupKey, ptDataMap] : combinedPurityDataMap) {
-        plotCounter++;
-        const std::string& triggerGroupName = purityGroupKey.triggerGroupName;
-        float eCore = purityGroupKey.eCore;
-        float chi = purityGroupKey.chi;
-        float asym = purityGroupKey.asymmetry;
+    for (const auto& [spectraGroupKey, ptDataMap] : combinedPurityDataMap) {
+        const std::string& triggerGroupName = spectraGroupKey.triggerGroupName;
+        float eCore = spectraGroupKey.eCore;
+        float chi = spectraGroupKey.chi;
+        float asym = spectraGroupKey.asymmetry;
 
         // Map to human-readable names
         std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
             triggerGroupName, triggerCombinationNameMap);
 
-        std::cout << "[PROCESSING PLOT " << plotCounter << "] TriggerGroup: " << readableTriggerGroupName
-                  << ", ECore: " << eCore << ", Chi: " << chi << ", Asymmetry: " << asym << ".\n";
+        std::cout << "[INFO] Processing plot for Trigger Group: " << readableTriggerGroupName
+                  << ", ECore > " << eCore << " GeV, Chi2 < " << chi << ", Asymmetry < " << asym << ".\n";
 
         // Define output directory
         std::ostringstream dirStream;
@@ -5752,8 +5739,8 @@ void GenerateCombinedPurityPlots(
         std::string dirPath = dirStream.str();
         gSystem->mkdir(dirPath.c_str(), true);
 
-        // Create a TCanvas
-        TCanvas canvas("canvas", "Combined Isolation Purity", 800, 600);
+        // Create canvas
+        TCanvas* canvas = new TCanvas("canvas", "Combined Isolation Purity", 800, 600);
 
         // Prepare bin edges for variable bin widths
         std::vector<double> binEdges;
@@ -5783,7 +5770,7 @@ void GenerateCombinedPurityPlots(
         TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
         hFrame->SetStats(0);
         hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-        hFrame->GetYaxis()->SetTitle("Purity = #frac{Isolated Prompt Photons}{Total Isolated Photons}");
+        hFrame->GetYaxis()->SetTitle("Isolation Purity");
         hFrame->GetYaxis()->SetRangeUser(0, 1.2);
 
         // Remove x-axis labels and ticks
@@ -5793,33 +5780,20 @@ void GenerateCombinedPurityPlots(
         // Draw the frame
         hFrame->Draw("AXIS");
 
-        // Prepare vectors for plotting
+        // Prepare vectors to collect data
         std::vector<double> ptCenters;
         std::vector<double> purities;
         std::vector<double> errors;
 
-        for (const auto& [pTCenter, combinedData] : ptDataMap) {
-            if (pTCenter >= pTExclusionMax) {
-                continue;
-            }
-
-            int totalIsolatedCounts = combinedData.totalIsolatedCounts;
-            int outsideMassWindowCounts = combinedData.outsideMassWindowCounts;
-
-            if (totalIsolatedCounts == 0) {
-                continue;
-            }
-
-            double purity = static_cast<double>(outsideMassWindowCounts) / totalIsolatedCounts;
-            double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts);
-
+        // Collect data
+        for (const auto& [pTCenter, data] : ptDataMap) {
             ptCenters.push_back(pTCenter);
-            purities.push_back(purity);
-            errors.push_back(error);
+            purities.push_back(data.purity);
+            errors.push_back(data.purityError);
         }
 
         if (ptCenters.empty()) {
-            std::cerr << "[WARNING] No valid data points for trigger group '" << readableTriggerGroupName << "'. Skipping.\n";
+            std::cerr << "[WARNING] No valid data points for combined purity plot. Skipping.\n";
             delete hFrame;
             continue;
         }
@@ -5838,29 +5812,18 @@ void GenerateCombinedPurityPlots(
 
         // Draw the graph
         graph->Draw("P SAME");
-        std::cout << GREEN << "[INFO] Plotted Combined Isolation Purity graph for Trigger Group: " << readableTriggerGroupName << RESET << std::endl;
-
-        // Create and draw legend
-        TLegend legend(0.7, 0.2, 0.85, 0.4);
-        legend.SetBorderSize(0);
-        legend.SetTextSize(0.026);
-        legend.AddEntry(graph, readableTriggerGroupName.c_str(), "p");
-        legend.Draw();
-
-        std::cout << GREEN << "[INFO] Legend drawn." << RESET << std::endl;
-
-        // Draw a dashed line at y = 1
-        TLine* yLine = new TLine(binEdges.front(), 1, binEdges.back(), 1);
-        yLine->SetLineStyle(2); // Dashed line
-        yLine->SetLineWidth(2);
-        yLine->Draw("SAME");
-        std::cout << GREEN << "[INFO] Drawn dashed line at y = 1.0." << RESET << std::endl;
 
         // Draw custom x-axis ticks and labels
         double xMin = binEdges.front();
         double xMax = binEdges.back();
         double yAxisMin = hFrame->GetMinimum();
         double yAxisMax = hFrame->GetMaximum();
+
+        TLine* yLine = new TLine(xMin, 1.0, xMax, 1.0);
+        yLine->SetLineColor(kBlack);
+        yLine->SetLineStyle(2); // Dashed
+        yLine->SetLineWidth(2); // Optional: set line width for better visibility
+        yLine->Draw("SAME");
 
         double tickSize = (yAxisMax - yAxisMin) * 0.02;
         double labelOffset = (yAxisMax - yAxisMin) * 0.05;
@@ -5894,17 +5857,17 @@ void GenerateCombinedPurityPlots(
         }
 
         // Redraw the axes to ensure labels are on top
-        canvas.RedrawAxis();
+        canvas->RedrawAxis();
 
-        // Add labels using TLatex in the top-left corner
+        // Add labels using TLatex
         TLatex labelText;
         labelText.SetNDC();
-        labelText.SetTextSize(0.024);
+        labelText.SetTextSize(0.023);
         labelText.SetTextColor(kBlack);
 
-        double xStart = 0.18; // Starting x-coordinate (left side)
-        double yStartLabel = 0.45; // Starting y-coordinate
-        double yStepLabel = 0.045;  // Vertical spacing between lines
+        double xStart = 0.4;
+        double yStartLabel = 0.905;
+        double yStepLabel = 0.05;
 
         // Prepare label strings
         std::ostringstream oss;
@@ -5923,30 +5886,25 @@ void GenerateCombinedPurityPlots(
         oss << "#font[62]{Asymmetry <} " << asym;
         labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
 
-        oss.str("");
-        oss << "#font[62]{#Delta R_{cone} <} 0.3";
-        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, oss.str().c_str());
-
-        // Force canvas update before saving
-        canvas.Modified();
-        canvas.Update();
-        std::cout << GREEN << "[INFO] Canvas updated." << RESET << std::endl;
+        // Update canvas and save
+        canvas->Modified();
+        canvas->Update();
 
         // Save the canvas
-        std::ostringstream outputFilePathStream;
-        outputFilePathStream << dirPath << "/CombinedIsolationPurity_vs_pT.png";
-        std::string outputFilePath = outputFilePathStream.str();
-        canvas.SaveAs(outputFilePath.c_str());
-        std::cout << BOLD << BLUE << "[SAVED] Combined Isolation Purity plot saved to: " << outputFilePath << RESET << std::endl;
+        std::string outputFilePath = dirPath + "/CombinedIsolationPurity.png";
+        canvas->SaveAs(outputFilePath.c_str());
+        std::cout << "[INFO] Saved combined isolation purity plot to " << outputFilePath << std::endl;
 
         // Clean up
         delete hFrame;
-        delete yLine;
-        // The tick lines are managed by ROOT and don't need explicit deletion
+        delete graph;
+        delete canvas;
     }
 
     std::cout << "[INFO] Finished GenerateCombinedPurityPlots function.\n";
 }
+
+
 
 
 void ProcessIsolationData(
@@ -5967,6 +5925,7 @@ void ProcessIsolationData(
       const std::map<std::string, std::map<std::string, double>>& combinationToTriggerEfficiencyPoints,
       bool drawRefA = false,
       bool drawRefB = false) {
+
     // -----------------------------
     // ** isoEtRange Setup **
     // -----------------------------
@@ -6132,7 +6091,7 @@ void ProcessIsolationData(
         float,       // Asymmetry
         float,       // isoMin
         float,       // isoMax
-        std::string  // MassWindowLabel
+        std::string  // MassWindowLabel (not used)
     >, std::vector<DataStructures::IsolationDataWithPt>> groupedDataForPurity;
 
     // Combine data from both mass windows
@@ -6150,10 +6109,14 @@ void ProcessIsolationData(
     );
 
     // Sort and combine purity data
-    std::map<PurityGroupKey, std::map<double, CombinedPurityData>> combinedPurityDataMap;
+    std::map<SpectraGroupKey, std::map<float, CombinedPurityData>> combinedPurityDataMap;
     SortAndCombinePurityData(
-        groupedDataForPurity,
+        dataMap_inMassWindow,
+        dataMap_outsideMassWindow,
         combinationToTriggerEfficiencyPoints,
+        exclusionRanges,
+        DataStructures::pT_bins,    // Pass pT_bins
+        20.0,                        // Pass pTExclusionMax
         combinedPurityDataMap
     );
 
@@ -6161,10 +6124,9 @@ void ProcessIsolationData(
     GenerateCombinedPurityPlots(
         combinedPurityDataMap,
         basePlotDirectory,
-        triggerCombinationNameMap,
-        triggerNameMap,
-        DataStructures::pT_bins,
-        20.0
+        TriggerCombinationNames::triggerCombinationNameMap,
+        DataStructures::pT_bins,    // Pass pT_bins
+        20.0                        // Pass pTExclusionMax
     );
 
     std::cout << "\033[33m[INFO]\033[0m Finished processing isolation data." << std::endl;
