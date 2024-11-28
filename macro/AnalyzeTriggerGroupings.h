@@ -158,7 +158,6 @@ namespace DataStructures {
         std::string massWindowLabel;
     };
 
-
     struct IsolationDataWithPt {
         float ptMin;
         float ptMax;
