@@ -1245,14 +1245,14 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     labelText.SetTextFont(62);          // Bold font for labels
 
     valueText.SetNDC();
-    valueText.SetTextSize(0.025);
-    valueText.SetTextColor(kBlack);     // Default color for values
-    valueText.SetTextFont(42);          // Normal font for values
+    valueText.SetTextSize(0.024);
+    valueText.SetTextColor(kBlack);
+    valueText.SetTextFont(42);
 
     
     // Add the 'Active Trigger Group' label above the current trigger label
-    labelText.DrawLatex(0.45, 0.9, "Active Trigger Group:");
-    valueText.DrawLatex(0.57, 0.9, triggerGroupName.c_str());
+    labelText.DrawLatex(0.34, 0.9, "Active Trigger Group:");
+    valueText.DrawLatex(0.51, 0.9, triggerGroupName.c_str());
 
     std::string readableTriggerName = data.cuts.triggerName;
     auto triggerNameIt = TriggerConfig::triggerNameMap.find(data.cuts.triggerName);
@@ -1264,10 +1264,10 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
     labelText.DrawLatex(0.5, 0.85, "Trigger:");
     valueText.DrawLatex(0.62, 0.85, readableTriggerName.c_str());
 
-    labelText.DrawLatex(0.5, 0.8, "clusECore:");
+    labelText.DrawLatex(0.5, 0.8, "Ecore:");
     valueText.DrawLatex(0.62, 0.8, Utils::formatToThreeSigFigs(data.cuts.clusECore).c_str());
 
-    labelText.DrawLatex(0.5, 0.75, "Chi2:");
+    labelText.DrawLatex(0.5, 0.75, "#chi^{2}:");
     valueText.DrawLatex(0.62, 0.75, Utils::formatToThreeSigFigs(data.cuts.chi).c_str());
 
     labelText.DrawLatex(0.5, 0.7, "Asymmetry:");
@@ -1275,7 +1275,7 @@ void DrawInvMassCanvasText(const DataStructures::HistogramData& data, const std:
 
     // If pT range is available, add it to the legend
     if (!ptRangeLabel.str().empty()) {
-        labelText.DrawLatex(0.45, 0.65, "pT Range:");
+        labelText.DrawLatex(0.5, 0.65, "pT Range:");
         valueText.DrawLatex(0.62, 0.65, ptRangeLabel.str().c_str());
     }
 
@@ -2508,7 +2508,7 @@ void ProcessMesonMassVsPt(
                 TriggerConfig::triggerNameMap,
                 pT_bins,
                 8.0,  // pTExclusionMax for π⁰ plots
-                0.13, 0.35 // yMin and yMax
+                0.13, 0.22 // yMin and yMax
             );
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
@@ -3358,7 +3358,7 @@ void GeneratePerTriggerSpectraPlots(
         // Draw the frame
         hFrame->Draw("AXIS");
 
-        TLegend* legend = new TLegend(0.45, 0.55, 0.8, 0.7);
+        TLegend* legend = new TLegend(0.52, 0.55, 0.85, 0.7);
         legend->SetBorderSize(0);
         legend->SetFillStyle(0);
         legend->SetTextSize(0.024);
@@ -3571,14 +3571,14 @@ void GeneratePerTriggerSpectraPlots(
 
         double xStart = 0.4; // Starting x-coordinate (left side)
         double yStartLabel = 0.905; // Starting y-coordinate
-        double yStepLabel = 0.05;  // Vertical spacing between lines
+        double yStepLabel = 0.04;  // Vertical spacing between lines
 
         // Prepare label strings
-        std::string triggerGroupLabel = "Trigger Group: " + readableTriggerGroupName;
-        std::string triggerNameLabel = "Trigger: " + readableTriggerName;
-        std::string eCoreLabel = "ECore #geq " + Utils::formatToThreeSigFigs(eCore) + " GeV";
-        std::string chiLabel = "#chi^{2} < " + Utils::formatToThreeSigFigs(chi);
-        std::string asymLabel = "Asymmetry < " + Utils::formatToThreeSigFigs(asym);
+        std::string triggerGroupLabel = "#bf{Trigger Group:} " + readableTriggerGroupName;
+        std::string triggerNameLabel = "#bf{Trigger:} " + readableTriggerName;
+        std::string eCoreLabel = "#bf{ECore #geq} " + Utils::formatToThreeSigFigs(eCore) + " GeV";
+        std::string chiLabel = "#bf{#chi^{2} <} " + Utils::formatToThreeSigFigs(chi);
+        std::string asymLabel = "#bf{Asymmetry <} " + Utils::formatToThreeSigFigs(asym);
 
         // Draw labels
         labelText.DrawLatex(xStart, yStartLabel, triggerGroupLabel.c_str());
@@ -4272,9 +4272,9 @@ void GeneratePerTriggerIsoPlots(
         hFrame->Draw("AXIS");
 
         // Create a legend
-        TLegend legend(0.4, 0.72, 0.85, 0.87);
+        TLegend legend(0.38, 0.68, 0.85, 0.83);
         legend.SetBorderSize(0);
-        legend.SetTextSize(0.024);
+        legend.SetTextSize(0.023);
 
         const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
 
@@ -4367,7 +4367,7 @@ void GeneratePerTriggerIsoPlots(
 
         // **Add entry to legend with the trigger information**
         std::ostringstream legendEntry;
-        legendEntry << "Run 24 sPHENIX pp: " << readableTriggerName;
+        legendEntry << "#bf{Run 24 sPHENIX pp:} " << readableTriggerName;
         legend.AddEntry(graph, legendEntry.str().c_str(), "p");
 
         // Draw a dashed line at y = 1
@@ -4577,6 +4577,12 @@ void GeneratePerTriggerIsoPlots(
         oss.str("");
         oss << "#font[62]{#Delta R_{cone} <} 0.3";
         labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, oss.str().c_str());
+        
+        oss.str("");
+        oss << "#font[62]{E_{T, iso} <} 6 GeV";
+        labelText.DrawLatex(xStart, yStartLabel - 7 * yStepLabel, oss.str().c_str());
+        
+        
 
         // Force canvas update before saving
         canvas.Modified();
@@ -5075,32 +5081,35 @@ void GenerateCombinedRatioPlot(
 
             double xStart = 0.2; // Starting x-coordinate (left side)
             double yStartLabel = 0.9; // Starting y-coordinate
-            double yStepLabel = 0.05;  // Vertical spacing between lines
+            double yStepLabel = 0.04;  // Vertical spacing between lines
 
             // Prepare label strings
             labelText.DrawLatex(xStart, yStartLabel, "#font[62]{Active Trigger Group:}");
-            valueText.DrawLatex(xStart + 0.22, yStartLabel, readableTriggerGroupName.c_str());
+            valueText.DrawLatex(xStart + 0.2, yStartLabel, readableTriggerGroupName.c_str());
 
             labelText.DrawLatex(xStart, yStartLabel - yStepLabel, "#font[62]{ECore #geq}");
             std::ostringstream eCoreWithUnit;
             eCoreWithUnit << eCore << "   GeV";
-            valueText.DrawLatex(xStart + 0.22, yStartLabel - yStepLabel, eCoreWithUnit.str().c_str());
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - yStepLabel, eCoreWithUnit.str().c_str());
 
             labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, "#font[62]{#chi^{2} <}");
             std::ostringstream chiStr;
             chiStr << chi;
-            valueText.DrawLatex(xStart + 0.22, yStartLabel - 2 * yStepLabel, chiStr.str().c_str());
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - 2 * yStepLabel, chiStr.str().c_str());
 
             labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, "#font[62]{Asymmetry <}");
             std::ostringstream asymmetryStr;
             asymmetryStr << asym;
-            valueText.DrawLatex(xStart + 0.22, yStartLabel - 3 * yStepLabel, asymmetryStr.str().c_str());
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - 3 * yStepLabel, asymmetryStr.str().c_str());
 
             labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, "#font[62]{Mass Window:}");
-            valueText.DrawLatex(xStart + 0.22, yStartLabel - 4 * yStepLabel, massWindowLabel.c_str());
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - 4 * yStepLabel, massWindowLabel.c_str());
 
             labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, "#font[62]{#Delta R_{cone} <}");
-            valueText.DrawLatex(xStart + 0.22, yStartLabel - 5 * yStepLabel, "0.3");
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - 5 * yStepLabel, "0.3");
+            
+            labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, "#font[62]{E_{T, iso} <}");
+            valueText.DrawLatex(xStart + 0.15, yStartLabel - 6 * yStepLabel, "6 GeV");
 
             // Force canvas update before saving
             combinedCanvas.Modified();
@@ -5283,7 +5292,7 @@ void GenerateIsolationPurityPlots(
         TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
         hFrame->SetStats(0);
         hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-        hFrame->GetYaxis()->SetTitle("Isolation Purity");
+        hFrame->GetYaxis()->SetTitle("#frac{N_{isolated prompt photons}}{N_{all isolated photons}}");
         hFrame->GetYaxis()->SetRangeUser(0, 1.2);
 
         // Remove x-axis labels and ticks
@@ -5474,6 +5483,10 @@ void GenerateIsolationPurityPlots(
         oss.str("");
         oss << "#font[62]{#Delta R_{cone} <} 0.3";
         labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, oss.str().c_str());
+        
+        oss.str("");
+        oss << "#font[62]{E_{T, iso} <} 6 GeV";
+        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, oss.str().c_str());
 
         // Force canvas update before saving
         canvas.Modified();
@@ -5497,7 +5510,6 @@ void GenerateIsolationPurityPlots(
 // Define CombinedPurityData structure
 struct CombinedPurityData {
     float pTCenter;
-    std::string triggerUsed;
     double purity;
     double purityError;
 };
@@ -5534,33 +5546,8 @@ void SortAndCombinePurityData(
     double pTExclusionMax,
     std::map<SpectraGroupKey, std::map<float, CombinedPurityData>>& combinedPurityDataMap
 ) {
-    // Function to extract photon threshold from trigger name
-    auto extractPhotonThreshold = [](const std::string& triggerName) -> double {
-        std::regex re("Photon_(\\d+)_GeV");
-        std::smatch match;
-        if (std::regex_search(triggerName, match, re)) {
-            if (match.size() >= 2) {
-                return std::stod(match[1]);
-            }
-        }
-        return 0.0; // Default to 0 for MinBias or parsing failure
-    };
-
-    // Function to get x99 (efficiency threshold) for a trigger
-    auto getX99 = [&](const std::string& triggerGroupName, const std::string& triggerName) -> double {
-        auto groupEffIt = combinationToTriggerEfficiencyPoints.find(triggerGroupName);
-        if (groupEffIt != combinationToTriggerEfficiencyPoints.end()) {
-            auto effIt = groupEffIt->second.find(triggerName);
-            if (effIt != groupEffIt->second.end()) {
-                return effIt->second;
-            }
-        }
-        return std::numeric_limits<double>::max(); // Assign max value if not found
-    };
-
-    // Map to store data per group and pT bin
-    std::map<SpectraGroupKey, std::map<std::pair<float, float>, std::map<std::string, std::pair<int, int>>>>
-        dataPerGroup; // Stores <outsideCounts, totalIsolatedCounts>
+    // Map to store counts per groupKey and pT bin
+    std::map<SpectraGroupKey, std::map<std::pair<float, float>, std::pair<int, int>>> dataPerGroup;
 
     // Helper function to process data maps
     auto processDataMap = [&](const auto& dataMap, bool isOutsideMassWindow) {
@@ -5589,11 +5576,11 @@ void SortAndCombinePurityData(
             std::pair<float, float> pTBin{pTMin, pTMax};
 
             // Initialize counts if not already present
-            auto& triggerCounts = dataPerGroup[groupKey][pTBin][triggerName];
+            auto& counts = dataPerGroup[groupKey][pTBin];
             if (isOutsideMassWindow) {
-                triggerCounts.first += isoData.isolatedCounts; // outsideCounts
+                counts.first += isoData.isolatedCounts; // outsideCounts
             }
-            triggerCounts.second += isoData.isolatedCounts;    // totalIsolatedCounts
+            counts.second += isoData.isolatedCounts;    // totalIsolatedCounts
         }
     };
 
@@ -5601,50 +5588,11 @@ void SortAndCombinePurityData(
     processDataMap(dataMap_inMassWindow, false);
     processDataMap(dataMap_outsideMassWindow, true);
 
-    // Now, for each group and pT bin, apply trigger selection logic
+    // Now, for each group and pT bin, calculate purity
     for (const auto& groupEntry : dataPerGroup) {
         const SpectraGroupKey& groupKey = groupEntry.first;
         const auto& pTBinMap = groupEntry.second;
 
-        std::string triggerGroupName = groupKey.triggerGroupName;
-
-        // Collect triggers in this group
-        std::set<std::string> triggersInGroup;
-        for (const auto& pTBinEntry : pTBinMap) {
-            const auto& triggerMap = pTBinEntry.second;
-            for (const auto& triggerEntry : triggerMap) {
-                triggersInGroup.insert(triggerEntry.first);
-            }
-        }
-
-        // Convert to vector and sort triggers
-        std::vector<std::string> sortedTriggerList(triggersInGroup.begin(), triggersInGroup.end());
-
-        // Build triggerInfoMap: triggerName -> (photonThreshold, x99)
-        std::map<std::string, std::pair<double, double>> triggerInfoMap;
-        for (const auto& triggerName : sortedTriggerList) {
-            double photonThreshold = extractPhotonThreshold(triggerName);
-            double x99 = getX99(triggerGroupName, triggerName);
-            triggerInfoMap[triggerName] = std::make_pair(photonThreshold, x99);
-        }
-
-        // Sort triggers according to the logic in processCutCombination
-        std::sort(sortedTriggerList.begin(), sortedTriggerList.end(),
-            [&](const std::string& a, const std::string& b) {
-                double photonThresholdA = triggerInfoMap[a].first;
-                double photonThresholdB = triggerInfoMap[b].first;
-
-                if (photonThresholdA != photonThresholdB) {
-                    return photonThresholdA > photonThresholdB; // Descending photon threshold
-                } else {
-                    double x99A = triggerInfoMap[a].second;
-                    double x99B = triggerInfoMap[b].second;
-                    return x99A < x99B; // Ascending x99
-                }
-            }
-        );
-
-        // Now, for each pT bin, select trigger and collect data
         for (const auto& pTBinEntry : pTBinMap) {
             const std::pair<float, float>& pTBin = pTBinEntry.first;
             float ptMin = pTBin.first;
@@ -5656,52 +5604,27 @@ void SortAndCombinePurityData(
                 continue; // Exclude this pT bin
             }
 
-            const auto& triggerMap = pTBinEntry.second;
+            const auto& counts = pTBinEntry.second;
 
-            // Identify efficient triggers
-            std::vector<std::string> efficientTriggers;
-            for (const auto& triggerName : sortedTriggerList) {
-                double x99 = triggerInfoMap[triggerName].second;
-                if (x99 <= ptMax) {
-                    efficientTriggers.push_back(triggerName);
-                }
+            int outsideCounts = counts.first;
+            int totalIsolatedCounts = counts.second;
+
+            if (totalIsolatedCounts == 0) {
+                std::cerr << "[WARNING] Total isolated counts is zero for pT center: " << pTCenter << " GeV. Skipping purity calculation.\n";
+                continue;
             }
 
-            // Select trigger to use
-            std::string triggerToUse = "MBD_NandS_geq_1";
-            if (!efficientTriggers.empty()) {
-                triggerToUse = efficientTriggers.front();
-            }
+            double purity = static_cast<double>(outsideCounts) / totalIsolatedCounts;
+            double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts); // Binomial error
 
-            // Check if data is available for triggerToUse
-            auto triggerDataIt = triggerMap.find(triggerToUse);
-            if (triggerDataIt != triggerMap.end()) {
-                const auto& counts = triggerDataIt->second;
+            // Prepare CombinedPurityData
+            CombinedPurityData combinedData;
+            combinedData.pTCenter = pTCenter;
+            combinedData.purity = purity;
+            combinedData.purityError = error;
 
-                int outsideCounts = counts.first;
-                int totalIsolatedCounts = counts.second;
-
-                if (totalIsolatedCounts == 0) {
-                    std::cerr << "[WARNING] Total isolated counts is zero for pT center: " << pTCenter << " GeV. Skipping purity calculation.\n";
-                    continue;
-                }
-
-                double purity = static_cast<double>(outsideCounts) / totalIsolatedCounts;
-                double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts); // Binomial error
-
-                // Prepare CombinedPurityData
-                CombinedPurityData combinedData;
-                combinedData.pTCenter = pTCenter;
-                combinedData.triggerUsed = triggerToUse;
-                combinedData.purity = purity;
-                combinedData.purityError = error;
-
-                // Add to combinedPurityDataMap
-                combinedPurityDataMap[groupKey][pTCenter] = combinedData;
-            } else {
-                // No data for selected trigger
-                std::cerr << "[WARNING] No data for trigger '" << triggerToUse << "' at pT bin [" << ptMin << ", " << ptMax << "]. Skipping this pT bin.\n";
-            }
+            // Add to combinedPurityDataMap
+            combinedPurityDataMap[groupKey][pTCenter] = combinedData;
         }
     }
 }
@@ -5765,7 +5688,7 @@ void GenerateCombinedPurityPlots(
         TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
         hFrame->SetStats(0);
         hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-        hFrame->GetYaxis()->SetTitle("Isolation Purity");
+        hFrame->GetYaxis()->SetTitle("#frac{N_{isolated prompt photons}}{N_{all isolated photons}}");
         hFrame->GetYaxis()->SetRangeUser(0, 1.2);
 
         // Remove x-axis labels and ticks
@@ -5775,78 +5698,43 @@ void GenerateCombinedPurityPlots(
         // Draw the frame
         hFrame->Draw("AXIS");
 
-        // Create a legend
-        TLegend* legend = new TLegend(0.6, 0.2, 0.85, 0.4);
-        legend->SetBorderSize(0);
-        legend->SetTextSize(0.025);
+        // Prepare vectors to collect data
+        std::vector<double> ptCenters;
+        std::vector<double> purities;
+        std::vector<double> errors;
 
-        // Access triggerColorMap from TriggerConfig namespace
-        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
-
-        // Map to organize data per trigger
-        std::map<std::string, std::vector<CombinedPurityData>> dataPerTrigger;
-
-        // Collect data per trigger
         for (const auto& [pTCenter, data] : ptDataMap) {
-            dataPerTrigger[data.triggerUsed].push_back(data);
-        }
-
-        // Keep track of graphs for cleanup
-        std::vector<TGraphErrors*> graphs;
-
-        // For each trigger
-        for (const auto& [triggerName, dataList] : dataPerTrigger) {
-            std::vector<double> ptCenters;
-            std::vector<double> purities;
-            std::vector<double> errors;
-
-            for (const auto& data : dataList) {
-                // Exclude data points with pT ≥ pTExclusionMax
-                if (data.pTCenter >= pTExclusionMax) {
-                    continue;
-                }
-
-                ptCenters.push_back(data.pTCenter);
-                purities.push_back(data.purity);
-                errors.push_back(data.purityError);
-            }
-
-            if (ptCenters.empty()) {
+            // Exclude data points with pT ≥ pTExclusionMax
+            if (pTCenter >= pTExclusionMax) {
                 continue;
             }
 
-            // Determine marker color based on triggerName
-            int markerColor = kBlack; // Default color
-            auto it_color = triggerColorMap.find(triggerName);
-            if (it_color != triggerColorMap.end()) {
-                markerColor = it_color->second;
-            }
-
-            // Create a TGraphErrors
-            TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
-                                                   ptCenters.data(),
-                                                   purities.data(),
-                                                   nullptr,
-                                                   errors.data());
-
-            graph->SetMarkerStyle(20);
-            graph->SetMarkerColor(markerColor);
-            graph->SetLineColor(markerColor);
-            graph->SetLineWidth(2);
-
-            // Draw the graph
-            graph->Draw("P SAME");
-
-            // Add entry to legend
-            std::string readableTriggerName = Utils::getTriggerCombinationName(triggerName, TriggerConfig::triggerNameMap);
-            legend->AddEntry(graph, readableTriggerName.c_str(), "p");
-
-            // Store graph for cleanup
-            graphs.push_back(graph);
+            ptCenters.push_back(data.pTCenter);
+            purities.push_back(data.purity);
+            errors.push_back(data.purityError);
         }
 
-        // Draw legend
-        legend->Draw();
+        if (ptCenters.empty()) {
+            std::cerr << "[WARNING] No valid data points for Trigger Group: " << readableTriggerGroupName << ". Skipping.\n";
+            delete hFrame;
+            delete canvas;
+            continue;
+        }
+
+        // Create a TGraphErrors
+        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                               ptCenters.data(),
+                                               purities.data(),
+                                               nullptr,
+                                               errors.data());
+
+        graph->SetMarkerStyle(20);
+        graph->SetMarkerColor(kBlack);
+        graph->SetLineColor(kBlack);
+        graph->SetLineWidth(2);
+
+        // Draw the graph
+        graph->Draw("P SAME");
 
         // Draw custom x-axis ticks and labels
         double xMin = binEdges.front();
@@ -5932,18 +5820,13 @@ void GenerateCombinedPurityPlots(
 
         // Clean up
         delete hFrame;
-        delete legend;
         delete canvas;
-        for (auto graph : graphs) {
-            delete graph;
-        }
+        delete graph; // Don't forget to delete the graph
+        delete yLine;
     }
 
     std::cout << "[INFO] Finished GenerateCombinedPurityPlots function.\n";
 }
-
-
-
 
 
 void ProcessIsolationData(
@@ -7449,6 +7332,7 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     
     bool debugMode = false;
     std::map<int, std::map<std::string, std::string>> overrideTriggerStatus; // Empty map
+    
     overrideTriggerStatus[46697]["Photon_3_GeV_plus_MBD_NS_geq_1"] = "OFF";
 
     // Get the map of trigger combinations to run numbers
