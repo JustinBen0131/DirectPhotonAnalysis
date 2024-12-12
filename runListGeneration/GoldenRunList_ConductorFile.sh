@@ -219,7 +219,6 @@ while IFS= read -r runnumber; do
 
     # Query to get raw and live counts for the specified trigger index
     query="SELECT index, raw, live FROM gl1_scalers WHERE runnumber = ${runnumber} AND index = ${index_to_check};"
-
     result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query")
 
     index_pass=false
@@ -381,6 +380,9 @@ cp "$bad_tower_runs_file" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataA
 # Copy the runs that fail livetime cut to the requested path
 cp "$bad_file_livetime_v1" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/list_runnumber_bad_livetime_v1.txt
 
-echo "Files for missing bad tower maps and livetime failures have been copied to:"
+
+cp dst_list/Final_RunNumbers_After_All_Cuts.txt /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/FinalGoldenRunList_ana446_2024p007.txt
+
+echo "Files for missing bad tower maps, livetime failures, and the final run list have been copied to:"
 echo "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/"
 echo "Done."
