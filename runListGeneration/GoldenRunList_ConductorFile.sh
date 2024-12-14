@@ -435,21 +435,4 @@ printf "%-50s | %-35s | %-35s | %-25s\n" \
 "${total_events_after_all_cuts} (${percent_events_after_all_cuts}%)" \
 "${actual_events_after_all_cuts} (${percent_actual_events_after_all_cuts}%)" \
 "${total_runs_after_all_cuts_v1} (${percent_runs_after_badtower}%)"
-
-echo "================================================="
-echo ""
-echo "Previous Approach: Aggregates event counts by summing the 'raw' column from the gl1_scalers table"
-echo "New Approach: Uses (lastevent - firstevent + 1) from the raw GL1 .evt files to get the actual recorded event count"
-echo "========================================"
-
-# Copy the missing bad tower maps file to the requested path
-cp "$bad_tower_runs_file" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/list_runs_missing_bad_tower_maps.txt
-
-# Copy the runs that fail livetime cut to the requested path
-cp "$bad_file_livetime_v1" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/list_runnumber_bad_livetime_v1.txt
-
-cp dst_list/Final_RunNumbers_After_All_Cuts.txt /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/FinalGoldenRunList_ana446_2024p007.txt
-
-echo "Files for missing bad tower maps, livetime failures, and the final run list have been copied to:"
-echo "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/"
 echo "Done."
