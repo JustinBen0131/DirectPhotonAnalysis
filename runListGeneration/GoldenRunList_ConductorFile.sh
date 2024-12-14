@@ -397,15 +397,6 @@ percent_actual_events_after_all_cuts=$(echo "scale=2; $actual_events_after_all_c
 echo "========================================"
 echo "Final Summary: Version 1 (Calo QA → Runtime → Livetime)"
 
-# Print the table exactly as shown in the provided image:
-# Columns:
-# 1) Step
-# 2) % of Initial Events (old method)
-# 3) GL1 Raw Events (Previous approach)
-# 4) Event Counts (Using raw GL1 '.evt' files)
-# 5) Runs
-# 6) % of Initial Runs
-
 printf "%-50s | %-35s | %-35s | %-25s\n" \
 "Stage" "GL1 Raw Events (Wrong Approach)" ".evt File Events (New Approach)" "Runs"
 echo "--------------------------------------------------|-------------------------------------|-------------------------------------|-------------------------"
