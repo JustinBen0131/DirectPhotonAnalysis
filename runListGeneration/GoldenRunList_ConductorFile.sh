@@ -123,7 +123,7 @@ echo "----------------------------------------"
 # --------------------------------------------------
 # This function aggregates event counts by summing the 'raw' column from the gl1_scalers table.
 # We now know that this is not the correct measure of fully recorded events—it's just trigger-level counts.
-# However, we keep this function to compare the old approach to the new correct one.
+# However, I keep this function to compare the old approach to the new correct one.
 #
 # Procedure:
 # 1. Reads a list of runnumbers from a file.
