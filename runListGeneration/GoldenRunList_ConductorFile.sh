@@ -119,29 +119,46 @@ fi
 echo "Initial golden run list found: $golden_run_list"
 echo "----------------------------------------"
 
-# Function to get total GL1 raw events for a list of runs
+# Old method function (incorrect) using SUM(raw)
+# --------------------------------------------------
+# This function aggregates event counts by summing the 'raw' column from the gl1_scalers table.
+# We now know that this is not the correct measure of fully recorded events—it's just trigger-level counts.
+# However, we keep this function to compare the old approach to the new correct one.
+#
+# Procedure:
+# 1. Reads a list of runnumbers from a file.
+# 2. Processes them in batches of 100 for efficiency.
+# 3. For each batch, runs a query to sum up raw trigger counts (gl1_scalers).
+# 4. Accumulates these into 'total_events'.
+# 5. Outputs 'total_events' at the end (old, incorrect count).
 get_total_events() {
     input_file=$1
     total_events=0
     batch_size=100
     run_numbers=()
+
     while IFS= read -r runnumber; do
         if [[ -n "$runnumber" ]]; then
             run_numbers+=("$runnumber")
+
             if [[ ${#run_numbers[@]} -ge $batch_size ]]; then
                 run_list=$(printf ",%s" "${run_numbers[@]}")
                 run_list=${run_list:1}
+
                 query="SELECT SUM(raw) FROM gl1_scalers WHERE runnumber IN (${run_list});"
                 result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query")
                 events=$(echo "$result" | xargs)
+
                 if [[ "$events" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                     total_events=$(echo "$total_events + $events" | bc)
                 fi
+
                 run_numbers=()
             fi
         fi
     done < "$input_file"
-    # Process remaining runs
+
+    # Process leftover runs if less than batch_size
     if [[ ${#run_numbers[@]} -gt 0 ]]; then
         run_list=$(printf ",%s" "${run_numbers[@]}")
         run_list=${run_list:1}
@@ -152,6 +169,55 @@ get_total_events() {
             total_events=$(echo "$total_events + $events" | bc)
         fi
     fi
+
+    echo "$total_events"
+}
+
+# New method function (correct) using filelist evt files: (lastevent - firstevent + 1)
+# ------------------------------------------------------------------------------------
+# This function calculates the actual number of fully recorded events by examining the raw GL1 .evt files.
+# Instead of trigger-level counts, it uses 'filelist' (lastevent and firstevent) for each .evt segment.
+#
+# Summation of (lastevent - firstevent + 1) over all .evt segments for a run gives the true event count.
+# It handles multiple segments automatically because we sum over all .evt files that match the pattern.
+get_actual_events_from_evt() {
+    input_file=$1
+    total_events=0
+    batch_size=100
+    run_numbers=()
+
+    while IFS= read -r runnumber; do
+        if [[ -n "$runnumber" ]]; then
+            run_numbers+=("$runnumber")
+            if [[ ${#run_numbers[@]} -ge $batch_size ]]; then
+                run_list=$(printf ",%s" "${run_numbers[@]}")
+                run_list=${run_list:1}
+
+                # Query to sum up actual recorded events from .evt files
+                query="SELECT SUM(lastevent - firstevent + 1) FROM filelist WHERE runnumber IN (${run_list}) AND filename LIKE '%GL1_physics_gl1daq%.evt';"
+                result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query")
+                events=$(echo "$result" | xargs)
+
+                if [[ "$events" =~ ^[0-9]+$ ]]; then
+                    total_events=$(echo "$total_events + $events" | bc)
+                fi
+                run_numbers=()
+            fi
+        fi
+    done < "$input_file"
+
+    # Process leftover runs if less than batch_size
+    if [[ ${#run_numbers[@]} -gt 0 ]]; then
+        run_list=$(printf ",%s" "${run_numbers[@]}")
+        run_list=${run_list:1}
+        query="SELECT SUM(lastevent - firstevent + 1) FROM filelist WHERE runnumber IN (${run_list}) AND filename LIKE '%GL1_physics_gl1daq%.evt';"
+        result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query")
+        events=$(echo "$result" | xargs)
+        if [[ "$events" =~ ^[0-9]+$ ]]; then
+            total_events=$(echo "$total_events + $events" | bc)
+        fi
+    fi
+
     echo "$total_events"
 }
 
@@ -175,12 +241,8 @@ while IFS= read -r runnumber; do
     if [[ -z "$runnumber" ]]; then
         continue
     fi
-
-    # Query to get the run duration in seconds
     query="SELECT runnumber, EXTRACT(EPOCH FROM (ertimestamp - brtimestamp)) AS duration FROM run WHERE runnumber = ${runnumber};"
-
     result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query" | tr -d '[:space:]')
-
     duration=$(echo "$result" | awk -F '|' '{print $2}')
 
     if [[ $duration =~ ^[0-9]+([.][0-9]+)?$ ]]; then
@@ -193,7 +255,6 @@ while IFS= read -r runnumber; do
     else
         runs_dropped_runtime_v1=$((runs_dropped_runtime_v1+1))
     fi
-
 done < "$input_file"
 
 echo "Total runs after run duration cut (>5 mins): $total_runs_duration_v1"
@@ -214,15 +275,11 @@ while IFS= read -r runnumber; do
     if [[ -z "$runnumber" ]]; then
         continue
     fi
-
-    index_to_check=10  # Trigger index to check for livetime
-
-    # Query to get raw and live counts for the specified trigger index
+    index_to_check=10
     query="SELECT index, raw, live FROM gl1_scalers WHERE runnumber = ${runnumber} AND index = ${index_to_check};"
     result=$(psql -h sphnxdaqdbreplica -d daq -t -c "$query")
 
     index_pass=false
-
     while IFS='|' read -r index raw live; do
         index=$(echo "$index" | xargs)
         raw=$(echo "$raw" | xargs)
@@ -245,7 +302,6 @@ while IFS= read -r runnumber; do
         echo "$runnumber" >> "$bad_file_livetime_v1"
         runs_dropped_livetime_v1=$((runs_dropped_livetime_v1+1))
     fi
-
 done < "$input_file"
 
 echo "Total runs after livetime cut (>80% for trigger index 10): $total_runs_livetime_v1"
@@ -259,17 +315,14 @@ input_file="$output_file_livetime_v1"
 output_file_final_v1="FileLists/Full_ppGoldenRunList_Version1.txt"
 bad_tower_runs_file="list/list_runs_missing_bad_tower_maps.txt"
 
-# Copy the input file to the final output file (we are not removing runs)
+# Copy the input file to the final output file
 cp "$input_file" "$output_file_final_v1"
 
-# Find runs with available bad tower maps
 available_bad_tower_runs=$(find /cvmfs/sphenix.sdcc.bnl.gov/calibrations/sphnxpro/cdb/CEMC_BadTowerMap -name "*p0*" | cut -d '-' -f2 | cut -d c -f1 | sort | uniq)
 echo "$available_bad_tower_runs" > list/available_bad_tower_runs.txt
 
-# Identify runs missing bad tower maps
 grep -Fxvf list/available_bad_tower_runs.txt "$input_file" > "$bad_tower_runs_file"
 
-# Count the number of runs with and without bad tower maps
 total_runs_with_bad_tower=$(grep -Fxf list/available_bad_tower_runs.txt "$input_file" | wc -l)
 total_runs_missing_bad_tower=$(wc -l < "$bad_tower_runs_file")
 
@@ -278,10 +331,8 @@ echo "Total runs missing bad tower maps: $total_runs_missing_bad_tower"
 echo "List of runs missing bad tower maps saved to $bad_tower_runs_file"
 echo "----------------------------------------"
 
-# Clean up temporary file
 rm list/available_bad_tower_runs.txt
 
-# Copy the final run numbers to dst_list folder
 cp "$output_file_final_v1" dst_list/Final_RunNumbers_After_All_Cuts.txt
 echo "Final run numbers after all cuts have been copied to dst_list/Final_RunNumbers_After_All_Cuts.txt"
 echo "----------------------------------------"
@@ -309,17 +360,24 @@ echo "----------------------------------------"
 
 cd ..
 
-# Calculate total events at each stage
+# Calculate total events (old method)
 total_events_initial=$(get_total_events 'list/list_runnumber_all.txt')
 total_events_calo_qa=$(get_total_events 'list/Full_ppGoldenRunList.txt')
 total_events_after_runtime=$(get_total_events 'list/list_runnumber_runtime_v1.txt')
 total_events_after_livetime=$(get_total_events 'list/list_runnumber_livetime_v1.txt')
 total_events_after_all_cuts=$(get_total_events "$output_file_final_v1")
 
-# Adjust the counts for runs with and without bad tower maps
+# Calculate total events (new method)
+actual_events_initial=$(get_actual_events_from_evt 'list/list_runnumber_all.txt')
+actual_events_calo_qa=$(get_actual_events_from_evt 'list/Full_ppGoldenRunList.txt')
+actual_events_after_runtime=$(get_actual_events_from_evt 'list/list_runnumber_runtime_v1.txt')
+actual_events_after_livetime=$(get_actual_events_from_evt 'list/list_runnumber_livetime_v1.txt')
+actual_events_after_all_cuts=$(get_actual_events_from_evt "$output_file_final_v1")
+
+# Adjust the counts for runs
 total_runs_after_all_cuts_v1=$(wc -l < "$output_file_final_v1")
 
-# Compute percentages relative to initial totals
+# Compute percentages (old method)
 percent_runs_calo_qa=$(echo "scale=2; $combined_golden_runs / $total_runs * 100" | bc)
 percent_runs_after_runtime=$(echo "scale=2; $total_runs_duration_v1 / $total_runs * 100" | bc)
 percent_runs_after_livetime=$(echo "scale=2; $total_runs_livetime_v1 / $total_runs * 100" | bc)
@@ -330,48 +388,67 @@ percent_events_after_runtime=$(echo "scale=2; $total_events_after_runtime / $tot
 percent_events_after_livetime=$(echo "scale=2; $total_events_after_livetime / $total_events_initial * 100" | bc)
 percent_events_after_all_cuts=$(echo "scale=2; $total_events_after_all_cuts / $total_events_initial * 100" | bc)
 
-# Calculate percentages lost at each step
-percent_runs_lost_calo_qa=$(echo "scale=2; 100 - $percent_runs_calo_qa" | bc)
-percent_runs_lost_after_runtime=$(echo "scale=2; $percent_runs_calo_qa - $percent_runs_after_runtime" | bc)
-percent_runs_lost_after_livetime=$(echo "scale=2; $percent_runs_after_runtime - $percent_runs_after_livetime" | bc)
-percent_runs_lost_after_badtower=0
+# Compute percentages (new method)
+percent_actual_events_calo_qa=$(echo "scale=2; $actual_events_calo_qa / $actual_events_initial * 100" | bc)
+percent_actual_events_after_runtime=$(echo "scale=2; $actual_events_after_runtime / $actual_events_initial * 100" | bc)
+percent_actual_events_after_livetime=$(echo "scale=2; $actual_events_after_livetime / $actual_events_initial * 100" | bc)
+percent_actual_events_after_all_cuts=$(echo "scale=2; $actual_events_after_all_cuts / $actual_events_initial * 100" | bc)
 
-percent_events_lost_calo_qa=$(echo "scale=2; 100 - $percent_events_calo_qa" | bc)
-percent_events_lost_after_runtime=$(echo "scale=2; $percent_events_calo_qa - $percent_events_after_runtime" | bc)
-percent_events_lost_after_livetime=$(echo "scale=2; $percent_events_after_runtime - $percent_events_after_livetime" | bc)
-percent_events_lost_after_badtower=0
-
-# Final Summary
 echo "========================================"
 echo "Final Summary: Version 1 (Calo QA → Runtime → Livetime)"
 
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" "Stage" "% Initial Events" "Total Events" "Runs" "% Initial Runs"
-echo "--------------------------------------------------|-----------------|-----------------|-----------|-----------------"
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" \
-"1) After firmware fix and >1M events" "100%" "$total_events_initial" "$total_runs" "100%"
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" \
-"2) & pass Calo QA" "${percent_events_calo_qa}%" "$total_events_calo_qa" "$combined_golden_runs" "${percent_runs_calo_qa}%"
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" \
-"3) & > 5 mins" "${percent_events_after_runtime}%" "$total_events_after_runtime" "$total_runs_duration_v1" "${percent_runs_after_runtime}%"
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" \
-"4) & livetime > 80% of MB trigger" "${percent_events_after_livetime}%" "$total_events_after_livetime" "$total_runs_livetime_v1" "${percent_runs_after_livetime}%"
-printf "%-50s | %-15s | %-15s | %-9s | %-15s\n" \
-"5) Final run list (no runs removed for bad tower maps)" "${percent_events_after_all_cuts}%" "$total_events_after_all_cuts" "$total_runs_after_all_cuts_v1" "${percent_runs_after_badtower}%"
+# Print the table exactly as shown in the provided image:
+# Columns:
+# 1) Step
+# 2) % of Initial Events (old method)
+# 3) GL1 Raw Events (Previous approach)
+# 4) Event Counts (Using raw GL1 '.evt' files)
+# 5) Runs
+# 6) % of Initial Runs
+
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"Stage" "GL1 Raw Events (Wrong Approach)" ".evt File Events (New Approach)" "Runs"
+echo "--------------------------------------------------|-------------------------------------|-------------------------------------|-------------------------"
+
+# 1) After firmware fix and >1M events
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"1) After firmware fix (47289) and >1M events" \
+"${total_events_initial} (100%)" \
+"${actual_events_initial} (100%)" \
+"${total_runs} (100%)"
+
+# 2) && Golden EMCal/HCal
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"2) && Golden EMCal/HCal" \
+"${total_events_calo_qa} (${percent_events_calo_qa}%)" \
+"${actual_events_calo_qa} (${percent_actual_events_calo_qa}%)" \
+"${combined_golden_runs} (${percent_runs_calo_qa}%)"
+
+# 3) && > 5 minutes
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"3) && > 5 minutes" \
+"${total_events_after_runtime} (${percent_events_after_runtime}%)" \
+"${actual_events_after_runtime} (${percent_actual_events_after_runtime}%)" \
+"${total_runs_duration_v1} (${percent_runs_after_runtime}%)"
+
+# 4) && MB livetime > 80%
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"4) && MB livetime > 80%" \
+"${total_events_after_livetime} (${percent_events_after_livetime}%)" \
+"${actual_events_after_livetime} (${percent_actual_events_after_livetime}%)" \
+"${total_runs_livetime_v1} (${percent_runs_after_livetime}%)"
+
+# 5) Final run list
+printf "%-50s | %-35s | %-35s | %-25s\n" \
+"5) Final run list" \
+"${total_events_after_all_cuts} (${percent_events_after_all_cuts}%)" \
+"${actual_events_after_all_cuts} (${percent_actual_events_after_all_cuts}%)" \
+"${total_runs_after_all_cuts_v1} (${percent_runs_after_badtower}%)"
 
 echo "================================================="
-
 echo ""
-echo "Percentage of runs lost at each step:"
-echo "After Calo QA: ${percent_runs_lost_calo_qa}% of runs lost"
-echo "After run time > 5 mins: ${percent_runs_lost_after_runtime}% of runs lost"
-echo "After livetime >80%: ${percent_runs_lost_after_livetime}% of runs lost"
-echo "After identifying runs missing bad tower maps: 0% of runs lost (runs are retained)"
-echo ""
-echo "Percentage of events lost at each step:"
-echo "After Calo QA: ${percent_events_lost_calo_qa}% of events lost"
-echo "After run time > 5 mins: ${percent_events_lost_after_runtime}% of events lost"
-echo "After livetime >80%: ${percent_events_lost_after_livetime}% of events lost"
-echo "After identifying runs missing bad tower maps: 0% of events lost (events are retained)"
+echo "Previous Approach: Aggregates event counts by summing the 'raw' column from the gl1_scalers table"
+echo "New Approach: Uses (lastevent - firstevent + 1) from the raw GL1 .evt files to get the actual recorded event count"
 echo "========================================"
 
 # Copy the missing bad tower maps file to the requested path
@@ -379,7 +456,6 @@ cp "$bad_tower_runs_file" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataA
 
 # Copy the runs that fail livetime cut to the requested path
 cp "$bad_file_livetime_v1" /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/list_runnumber_bad_livetime_v1.txt
-
 
 cp dst_list/Final_RunNumbers_After_All_Cuts.txt /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/FinalGoldenRunList_ana446_2024p007.txt
 
