@@ -178,7 +178,7 @@ get_total_events() {
 # This function calculates the actual number of fully recorded events by examining the raw GL1 .evt files.
 # Instead of trigger-level counts, it uses 'filelist' (lastevent and firstevent) for each .evt segment.
 #
-# Summation of (lastevent - firstevent + 1) over all .evt segments for a run gives the true event count.
+# Summation of (lastevent - firstevent + 1) over all .evt segments for a run gives the event count.
 # It handles multiple segments automatically because we sum over all .evt files that match the pattern.
 get_actual_events_from_evt() {
     input_file=$1
