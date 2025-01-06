@@ -28,6 +28,7 @@
 #include <jetbackground/SubtractTowers.h>
 #include <jetbackground/SubtractTowersCS.h>
 #include <jetbackground/TowerRho.h>
+#include <calotrigger/TriggerRunInfoReco.h>
 #include "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/clusterIsoCopy_src/ClusterIso.h"
 
 #include <calotreegen/caloTreeGen.h>
@@ -42,6 +43,7 @@ R__LOAD_LIBRARY(libjetbackground.so)
 R__LOAD_LIBRARY(libg4jets.so)
 R__LOAD_LIBRARY(libJetValidation.so)
 R__LOAD_LIBRARY(libjetbase.so)
+R__LOAD_LIBRARY(libcalotrigger.so)
 R__LOAD_LIBRARY(/sphenix/user/patsfan753/install/lib/libclusteriso.so)
 
 
@@ -206,6 +208,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0, const char *listFile = "input_fi
     caloTreeGen *eval = new caloTreeGen(inName);
     eval->setTriggerNameMapForRun(runnumber);
     se -> registerSubsystem(eval);
+    
+    TriggerRunInfoReco *triggerruninforeco = new TriggerRunInfoReco();
+    se->registerSubsystem(triggerruninforeco);
     
     Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTcalo");
      
