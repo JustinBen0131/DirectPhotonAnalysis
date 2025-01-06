@@ -1,45 +1,53 @@
 #!/bin/bash
 
-################################################################################
+##############################################################################################################################################################################
 # Golden Run List Generation Script
 #
-# This script performs the following major steps:
+# Purpose:
+#   This script produces a final list of "Golden Runs" for further analysis within sPHENIX data-taking. It ensures that each run passes a series of checks:
+#   • Has ≥1M events (and if "noRunNumberLimit" is not specified, also runnumber ≥47289).
+#   • Meets "Golden" Calorimeter QA criteria for EMCal, IHCal, and OHCal.
+#   • Exceeds a minimum runtime of 5 minutes.
+#   • Has an MBD (minimum bias) livetime above 80%.
+#   • (Optionally) Is not missing any bad tower maps, if "removeRunsWithMissingMaps" is supplied.
 #
-#   1) Extracts run numbers from a FileCatalog database, subject to:
-#      - ≥1M events (unconditional),
-#      - and if "noRunNumberLimit" is not used, only runs with runnumber ≥47289.
+# Main Steps:
+#   1) Initial run extraction:
+#      - Pull all runs from FileCatalog with ≥1M events.
+#      - If "noRunNumberLimit" isn't provided, further require runnumber ≥47289.
+#   2) Calo QA filtering:
+#      - Cross-check these runs against the Production_write database to keep only those marked as "Golden" for EMCal, IHCal, and OHCal.
+#   3) Additional cuts:
+#      a) Runtime: Only keep runs with more than 5 minutes of data.
+#      b) Livetime: Only keep runs where MBD livetime >80%.
+#   4) Optional bad tower maps check:
+#      - If "removeRunsWithMissingMaps" is given, discard runs that do not have a valid bad tower map available.
+#   5) Final run list generation:
+#      - Output "Final_RunNumbers_After_All_Cuts.txt" to the "../dst_list/" directory.
+#      - Also produce "Full_ppGoldenRunList_Version1.list" for use with CreateDstList.pl (unless "dontGenerateFileLists" is specified).
+#   6) DST creation verification:
+#      - Compare the final run list to the .list files that were successfully created, to determine how many runs succeeded or failed in generating DST lists.
+#   7) No-run-limit comparison:
+#      - If "noRunNumberLimit" is provided, the script also reports how many runs/events are included when ignoring the runnumber ≥47289 criterion, versus strictly requiring runnumber ≥47289.
 #
-#   2) Filters these runs by "Golden" Calo QA (for EMCal, IHCal, OHcal) from
-#      a "Production_write" database table.
+# Usage:
+#   ./GoldenRunList_ConductorFile.sh [removeRunsWithMissingMaps] [dontGenerateFileLists] [noRunNumberLimit]
+#     - removeRunsWithMissingMaps: Exclude runs lacking bad tower maps.
+#     - dontGenerateFileLists: Skip creating DST .list files (for use with CreateDstList.pl).
+#     - noRunNumberLimit: Do not enforce runnumber ≥47289.
 #
-#   3) Applies runtime (>5 minutes) and MB livetime (>80%) cuts by querying
-#      relevant tables, discarding runs that do not meet these criteria.
+# Output:
+#   - Final text file: ../dst_list/Final_RunNumbers_After_All_Cuts.txt (and optionally ../dst_list/Final_RunNumbers_After_All_Cuts_ge47289.txt).
+#   - Internal .list files for DST creation in the current directory and ../dst_list, unless 'dontGenerateFileLists' was set.
 #
-#   4) Optionally removes runs missing bad tower maps if 'removeRunsWithMissingMaps'
-#      is specified.
-#
-#   5) Places the final run list in "dst_list/Final_RunNumbers_After_All_Cuts.txt"
-#      and also generates an internal "Full_ppGoldenRunList_Version1.list" that
-#      can be used to create DST lists with CreateDstList.pl.
-#
-#   6) Adds a "CreateDST File List Successes" check by comparing the final
-#      run list with the actual .list files created in "dst_list/". Runs that do
-#      not produce a corresponding .list file are counted as failures.
-#
-#   7) (Optional) If "noRunNumberLimit" is specified, it also compares the final
-#      results for "All runs" vs. the subset "≥47289 runs" by simply filtering
-#      the final run list. The script then checks how many runs and events are
-#      lost if we had restricted to ≥47289 from the start. This comparison
-#      includes "Before All Cuts" and a newly corrected "After All Cuts" row,
-#      which now reflects only DST-success runs.
-#
-# Behavior notes:
-#   - If noRunNumberLimit is used, Stage 1 is labeled "≥1M events" (100%).
-#     If noRunNumberLimit is not used, Stage 1 is labeled "≥47289 & ≥1M events" (100%).
-#   - Subsequent cuts (Stage 2, Stage 3, etc.) compute run-based percentages
-#     using the Stage 1 run count as the denominator.
-#   - Event-based percentages always use "Events Before All Cuts" as denominator.
-################################################################################
+# Notes:
+#   - Percentages in the summary table are computed two ways:
+#       1) Run-based percentages use the "Stage 1" runs as the 100% reference.
+#       2) Event-based percentages use the total events from "Stage 1."
+#   - The script can also print a comparison for run≥47289 versus no lower limit (if "noRunNumberLimit" is passed).
+##############################################################################################################################################################################
+
+
 
 ########################################
 # GLOBAL STYLES FOR OUTPUT
@@ -423,7 +431,7 @@ generate_dst_lists() {
         echo "[WARNING] Could not find final .list file at: $list_path"
         echo "No DST lists will be created."
     else
-        CreateDstList.pl --build ana437 --cdb 2024p007 DST_CALO_run2pp --list "$list_path"
+        CreateDstList.pl --build ana450 --cdb 2024p009 DST_CALO_run2pp --list "$list_path"
         echo "DST lists generated under ${workplace}/../dst_list"
     fi
 
