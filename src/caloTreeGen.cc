@@ -73,12 +73,15 @@ const std::string caloTreeGen::OUTSIDE_MASS_WINDOW_LABEL = "_outsideMassWindow";
 
 
 //____________________________________________________________________________..
-caloTreeGen::caloTreeGen(const std::string &name):
-SubsysReco("CaloTreeGen")
-  ,Outfile(name)
+caloTreeGen::caloTreeGen(const std::string &dataOutFile,
+                         const std::string &simOutFile)
+  : SubsysReco("CaloTreeGen")
+  , Outfile(dataOutFile)
+  , SimOutfile(simOutFile)
 {
-    std::cout << "[DEBUG] caloTreeGen::caloTreeGen() constructor called with name: "
-              << name << std::endl;
+  std::cout << "[DEBUG] caloTreeGen::caloTreeGen() constructor called." << std::endl;
+  std::cout << "    Data output will go to: " << Outfile << std::endl;
+  std::cout << "    Sim  output will go to: " << SimOutfile << std::endl;
 }
 
 //____________________________________________________________________________..
@@ -117,7 +120,7 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
         try {
             // Read and parse each field from the CSV line
             std::string triggerName;
-            float Ecore, Chi2, Asym, pTMin, pTMax;
+            float Energy, Chi2, Asym, pTMin, pTMax;
             float meanPi0, sigmaPi0, meanEta, sigmaEta;
 
             // Trim function to remove whitespace
@@ -132,7 +135,7 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
 
             // Read the columns using ',' as delimiter
             std::getline(lineStream, cell, ','); triggerName = cell;
-            std::getline(lineStream, cell, ','); trim(cell); Ecore = std::stof(cell);
+            std::getline(lineStream, cell, ','); trim(cell); Energy = std::stof(cell);
             std::getline(lineStream, cell, ','); trim(cell); Chi2 = std::stof(cell);
             std::getline(lineStream, cell, ','); trim(cell); Asym = std::stof(cell);
             std::getline(lineStream, cell, ','); trim(cell); pTMin = std::stof(cell);
@@ -147,8 +150,8 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
             std::getline(lineStream, cell, ','); /* Skip sigmaEtaError */
 
             // Create the MesonMassWindow struct and tuple key
-            MesonMassWindow massWindow = {triggerName, Ecore, Chi2, Asym, pTMin, pTMax, meanPi0, sigmaPi0, meanEta, sigmaEta};
-            auto key = std::make_tuple(triggerName, Ecore, Chi2, Asym, pTMin, pTMax);
+            MesonMassWindow massWindow = {triggerName, Energy, Chi2, Asym, pTMin, pTMax, meanPi0, sigmaPi0, meanEta, sigmaEta};
+            auto key = std::make_tuple(triggerName, Energy, Chi2, Asym, pTMin, pTMax);
 
             // Insert into the map
             mesonMassWindowsMap[key] = massWindow;
@@ -157,7 +160,7 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
             if (verbose) {
                 std::cout << "Loaded entry " << entriesLoaded << " (Line " << lineNumber << "):" << std::endl;
                 std::cout << " - Trigger Name: " << triggerName << std::endl;
-                std::cout << " - Ecore: " << Ecore << ", Chi2: " << Chi2 << ", Asym: " << Asym << std::endl;
+                std::cout << " - Energy: " << Energy << ", Chi2: " << Chi2 << ", Asym: " << Asym << std::endl;
                 std::cout << " - pT Range: [" << pTMin << ", " << pTMax << "]" << std::endl;
                 std::cout << " - Mean Pi0: " << meanPi0 << " ± " << sigmaPi0 << std::endl;
                 std::cout << " - Mean Eta: " << meanEta << " ± " << sigmaEta << std::endl;
@@ -185,43 +188,103 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
 
 //____________________________________________________________________________..
 int caloTreeGen::Init(PHCompositeNode *topNode) {
-    std::cout << ANSI_COLOR_BLUE_BOLD << "Initializing caloTreeGen..." << ANSI_COLOR_RESET << std::endl;
-    out = new TFile(Outfile.c_str(),"RECREATE");
-    
     if (verbose) {
-        std::cout << ANSI_COLOR_BLUE_BOLD << "Output file created: " << Outfile << ANSI_COLOR_RESET << std::endl;
+        std::cout << ANSI_COLOR_BLUE_BOLD << "Initializing caloTreeGen -- RUNNING Init" << ANSI_COLOR_RESET << std::endl;
     }
     
-    // Load meson mass windows from the CSV file if it exists
-    
-    /*
-     NEED TO UPDATE to ana540_p009 Data still
-     */
-    const std::string csvFilePath = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/InvMassCsvFiles/InvariantMassInformation_MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate.csv";
-
-    if (std::filesystem::exists(csvFilePath)) {
-        if (!loadMesonMassWindows(csvFilePath)) {
-            std::cerr << "Warning: Failed to load meson mass windows from CSV. Continuing without it." << std::endl;
+    //====================================//
+    //          DATA MODE
+    //====================================//
+    if (wantData) {
+        if (verbose) {
+            std::cout << "[INFO] Running in DATA mode." << std::endl;
         }
-    } else {
-        std::cout << "No CSV file found at " << csvFilePath << ". Skipping meson mass windows loading." << std::endl;
+        out = new TFile(Outfile.c_str(),"RECREATE");
+        
+        if (verbose) {
+            std::cout << ANSI_COLOR_BLUE_BOLD << "Output file created: " << Outfile << ANSI_COLOR_RESET << std::endl;
+        }
+        
+        // Load meson mass windows from the CSV file if it exists
+        
+        /*
+         NEED TO UPDATE to ana540_p009 Data still
+         */
+        const std::string csvFilePath = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/InvMassCsvFiles/InvariantMassInformation_MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate.csv";
+
+        if (std::filesystem::exists(csvFilePath)) {
+            if (!loadMesonMassWindows(csvFilePath)) {
+                std::cerr << "Warning: Failed to load meson mass windows from CSV. Continuing without it." << std::endl;
+            }
+        } else {
+            std::cout << "No CSV file found at " << csvFilePath << ". Skipping meson mass windows loading." << std::endl;
+        }
+        trigAna = new TriggerAnalyzer();
+        
+        createHistos_Data();
+        
+        //so that the histos actually get written out
+        Fun4AllServer *se = Fun4AllServer::instance();
+        if (verbose) {
+            se -> Print("NODETREE");
+        }
+        std::cout << "caloTreeGen::Init(PHCompositeNode *topNode) Initializing" << std::endl;
+        
+        // Notice we do NOT 'return' here if wantSim is also true;
+        // instead, we keep going so we can also do the sim part below.
     }
-    trigAna = new TriggerAnalyzer();
     
-    createHistos();
-    
-    //so that the histos actually get written out
-    Fun4AllServer *se = Fun4AllServer::instance();
-    if (verbose) {
-        se -> Print("NODETREE");
+    // -----------------------------------------------------
+    // 2) SIMULATION MODE
+    // -----------------------------------------------------
+    if (wantSim)
+    {
+        if (verbose)
+        {
+            std::cout << "[INFO] Running in SIMULATION mode." << std::endl;
+        }
+
+        // Create a separate output file for simulation histograms
+        outSim = new TFile(SimOutfile.c_str(), "RECREATE");
+        if (!outSim || outSim->IsZombie())
+        {
+            std::cerr << "[ERROR] Could not open simulation output file: "
+                      << SimOutfile << std::endl;
+            return Fun4AllReturnCodes::ABORTEVENT;
+        }
+        if (verbose)
+        {
+            std::cout << ANSI_COLOR_BLUE_BOLD
+                      << "Simulation output file created: " << SimOutfile
+                      << ANSI_COLOR_RESET << std::endl;
+        }
+
+        // Build simulation-specific histograms
+        createHistos_ForSimulation();
+
+        std::cout << "[SIM] Done with simulation initialization. "
+                     "Ready to process sim events."
+                  << std::endl;
     }
-    std::cout << "caloTreeGen::Init(PHCompositeNode *topNode) Initializing" << std::endl;
-    
+    // --------------------------------------------------------------
+    // 3) NEITHER DATA NOR SIM => ABORT
+    // --------------------------------------------------------------
+    if (!wantData && !wantSim)
+    {
+        std::cerr << "[ERROR] Neither wantData nor wantSim is set to true! "
+                  << "Cannot proceed with Init." << std::endl;
+        return Fun4AllReturnCodes::ABORTEVENT;
+    }
+
+    // If we get here, we have at least one of them set to true
     return Fun4AllReturnCodes::EVENT_OK;
 }
 
-//____________________________________________________________________________..
-void caloTreeGen::createHistos() {
+
+
+
+//_______________________________________________S_____________________________..
+void caloTreeGen::createHistos_Data() {
     std::cout << "[DEBUG] Entering caloTreeGen::createHistos()..." << std::endl;
 
     for (const auto& kv : triggerNameMap)
@@ -298,7 +361,7 @@ void caloTreeGen::createHistos() {
          Cluster Distributions EMCal
          */
         qaHistograms["hClusterChi2_" + triggerName] = createHistogram("hClusterChi2_" + triggerName, "Cluster Chi2; Chi2", 100, 0, 100);
-        qaHistograms["hCluster_maxECore_" + triggerName] = createHistogram("hCluster_maxECore_" + triggerName, "Max Cluster ECore; Cluster ECore [GeV]", 40, 0, 20);
+        qaHistograms["h_maxEnergyClus_" + triggerName] = createHistogram("h_maxEnergyClus_" + triggerName, "Max Cluster Energy; Cluster Energy [GeV]", 40, 0, 20);
         qaHistograms["hClusterPt_" + triggerName] = createHistogram("hClusterPt_" + triggerName, "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
         qaHistograms["hVtxZ_" + triggerName] = createHistogram("hVtxZ_" + triggerName, "Z-vertex Distribution; z [cm]", 100, -70, 70);
         qaHistograms["h_ET_" + triggerName] = createHistogram("h_ET_" + triggerName, "Cluster Transverse Energy [GeV]; Energy [GeV]", 100, 0, 100);
@@ -407,7 +470,7 @@ void caloTreeGen::createHistos() {
 
         for (float maxAsym : asymmetry_values) {
             for (float maxChi2 : clus_chi_values) {
-                for (float minClusE : clus_Ecore_values) {
+                for (float minClusE : clus_Energy_values) {
                     
                     std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusE) +
                                                   "_Chi" + formatFloatForFilename(maxChi2) +
@@ -475,7 +538,6 @@ void caloTreeGen::createHistos() {
                                                       "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
                                                       "_" + triggerName;
 
-                            // Create and store the 2D histogram (Isolation energy vs Ecore)
                             TH2F* hist2D = new TH2F(hist2DName.c_str(),
                                                   "Cluster Isolation Energy vs Cluster Et;Cluster Et [GeV];E_{T}^{iso} [GeV]",
                                                   100, 0, 20, 100, -20, 20);
@@ -536,6 +598,73 @@ void caloTreeGen::createHistos() {
         }
     }
 }
+
+
+void caloTreeGen::createHistos_ForSimulation()
+{
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Entering caloTreeGen::createHistos_ForSimulation()..." << std::endl;
+  }
+
+  // Ensure simulation output file is valid
+  if (!outSim)
+  {
+    std::cerr << "[ERROR] outSim is null! Did you forget to set the TFile for SIM?" << std::endl;
+    return;
+  }
+  outSim->cd();
+
+  // Create a subdirectory for simulation QA
+  TDirectory* simDir = outSim->mkdir("SimulationQA");
+  if (!simDir)
+  {
+    std::cerr << "[ERROR] Failed to create SimulationQA directory in outSim." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  simDir->cd();
+
+  // Helper function for 1D hist creation
+  auto createHist1D = [&](const std::string &hname,
+                          const std::string &htitle,
+                          int nbins, double xmin, double xmax) -> TH1F*
+  {
+    if (outSim->Get(hname.c_str()))
+    {
+      std::cerr << "[ERROR] Duplicate hist name in SIM: " << hname << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    TH1F* h = new TH1F(hname.c_str(), htitle.c_str(), nbins, xmin, xmax);
+    h->SetDirectory(simDir);
+    return h;
+  };
+
+  // ----------------------------------------------------------------------
+  // Create only the two histograms we need:
+  // ----------------------------------------------------------------------
+
+  // 1) “IsoFromPi0Eta” => clusters from pid=111 (pi0) or pid=221 (eta) with iso <= 6
+  // We’ll fill the cluster pT (or cluster E_T) for each passing cluster.
+  hIsoFromPi0Eta = createHist1D(
+      "hIsoFromPi0Eta",
+      "Isolated Clusters from #pi^{0}/#eta (#it{iso} #leq 6 GeV);Cluster E_{T} [GeV];Counts",
+      50, 0.0, 50.0
+  );
+
+  // 2) “IsoNotPi0Eta” => clusters not from pi0/eta with iso <= 6
+  hIsoNotPi0Eta = createHist1D(
+      "hIsoNotPi0Eta",
+      "Isolated Clusters not from #pi^{0}/#eta (#it{iso} #leq 6 GeV);Cluster E_{T} [GeV];Counts",
+      50, 0.0, 50.0
+  );
+
+  // Return to top-level directory
+  outSim->cd();
+
+  if (verbose)
+    std::cout << "[INFO] createHistos_ForSimulation: Created the two key histograms.\n";
+}
+
 
 void caloTreeGen::collectTowerData(TowerInfoContainer* towerContainer,
                                    std::vector<TowerData>& towerDataList) {
@@ -777,7 +906,7 @@ caloTreeGen::EnergyMaps caloTreeGen::processEnergyMaps(const std::vector<float>*
 void caloTreeGen::processClusterIsolationHistograms(
     int clusterID,
     float mesonMass,
-    float minClusEcore,
+    float minClusEnergy,
     float maxChi2,
     float maxAsym,
     const std::string& massWindowLabel,
@@ -801,7 +930,7 @@ void caloTreeGen::processClusterIsolationHistograms(
         
         // Check pion mass window
         if (fabs(mesonMass - pionMass) <= pionMassWindow) {
-            std::string pionHistName = "pionMass_vs_isoEt_E" + formatFloatForFilename(minClusEcore) +
+            std::string pionHistName = "pionMass_vs_isoEt_E" + formatFloatForFilename(minClusEnergy) +
             "_Chi" + formatFloatForFilename(maxChi2) +
             "_Asym" + formatFloatForFilename(maxAsym) +
             "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
@@ -816,7 +945,7 @@ void caloTreeGen::processClusterIsolationHistograms(
         }
         
         if (fabs(mesonMass - etaMass) <= etaMassWindow) {
-            std::string etaHistName = "etaMass_vs_isoEt_E" + formatFloatForFilename(minClusEcore) +
+            std::string etaHistName = "etaMass_vs_isoEt_E" + formatFloatForFilename(minClusEnergy) +
             "_Chi" + formatFloatForFilename(maxChi2) +
             "_Asym" + formatFloatForFilename(maxAsym) +
             "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
@@ -834,14 +963,14 @@ void caloTreeGen::processClusterIsolationHistograms(
             std::cout << "Cluster Et: " << cluster_et_fromMap << ", IsoEt: " << isoEt_FromMap << std::endl;
         }
         
-        std::string hist2DName = "h2_cluster_iso_Et_E" + formatFloatForFilename(minClusEcore) +
+        std::string hist2DName = "h2_cluster_iso_Et_E" + formatFloatForFilename(minClusEnergy) +
                                  "_Chi" + formatFloatForFilename(maxChi2) +
                                  "_Asym" + formatFloatForFilename(maxAsym) +
                                  massWindowLabel +
                                  "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
                                  "_" + triggerName;
 
-        std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusEcore) +
+        std::string hist1DName = "h1_isoEt_E" + formatFloatForFilename(minClusEnergy) +
                                  "_Chi" + formatFloatForFilename(maxChi2) +
                                  "_Asym" + formatFloatForFilename(maxAsym) +
                                  massWindowLabel +
@@ -880,7 +1009,7 @@ void caloTreeGen::processIsolationRanges(
     const std::vector<int>& clusterIDs,
     size_t clus1,
     size_t clus2,
-    float minClusEcore,
+    float minClusEnergy,
     float maxChi2,
     float maxAsym,
     const std::string& massWindowLabel,
@@ -916,7 +1045,7 @@ void caloTreeGen::processIsolationRanges(
             if (verbose) {
                 std::cout << "At least one cluster is isolated in this isoEt range." << std::endl;
             }
-            std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusEcore) +
+            std::string isolatedPhotonHistName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
                                                  "_Chi" + formatFloatForFilename(maxChi2) +
                                                  "_Asym" + formatFloatForFilename(maxAsym) +
                                                  massWindowLabel +
@@ -955,7 +1084,7 @@ void caloTreeGen::fillHistogramsForTriggers(
     float pt2,
     float E1,
     float E2,
-    float minClusEcore,
+    float minClusEnergy,
     float maxChi2,
     float maxAsym,
     size_t& filledHistogramCount,
@@ -981,7 +1110,7 @@ void caloTreeGen::fillHistogramsForTriggers(
          */
         auto& noPtBinHistMap = massAndIsolationHistogramsNoPtBins[firedShortName];
         
-        std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusEcore) +
+        std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusEnergy) +
                                "_Chi" + formatFloatForFilename(maxChi2) +
                                "_Asym" + formatFloatForFilename(maxAsym) +
                                "_" + firedShortName;
@@ -1007,7 +1136,7 @@ void caloTreeGen::fillHistogramsForTriggers(
             std::cout << "Filled histogram " << invMassHistName_noBinsOfPt_name << " with meson mass " << mesonMass << std::endl;
         }
         
-        auto& cutHistMap = massAndIsolationHistograms[firedShortName][std::make_tuple(maxAsym, maxChi2, minClusEcore)];
+        auto& cutHistMap = massAndIsolationHistograms[firedShortName][std::make_tuple(maxAsym, maxChi2, minClusEnergy)];
 
         for (const auto& pT_bin : pT_bins) {
             float pT_min = pT_bin.first;
@@ -1023,7 +1152,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     std::cout << "At least one cluster is within the pT bin." << std::endl;
                 }
                 // Fill invariant mass histogram for the current pT bin
-                std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusEcore) +
+                std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusEnergy) +
                                               "_Chi" + formatFloatForFilename(maxChi2) +
                                               "_Asym" + formatFloatForFilename(maxAsym) +
                                               "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
@@ -1049,7 +1178,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
                 }
 
-                auto massWindowKey = std::make_tuple(firedShortName, minClusEcore, maxChi2, maxAsym, pT_min, pT_max);
+                auto massWindowKey = std::make_tuple(firedShortName, minClusEnergy, maxChi2, maxAsym, pT_min, pT_max);
                 if (!mesonMassWindowsMap.empty() && mesonMassWindowsMap.count(massWindowKey)) {
                     const MesonMassWindow& massWindow = mesonMassWindowsMap[massWindowKey];
 
@@ -1105,7 +1234,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     processClusterIsolationHistograms(
                          clusterID,
                          mesonMass,
-                         minClusEcore,
+                         minClusEnergy,
                          maxChi2,
                          maxAsym,
                          massWindowLabel,
@@ -1129,7 +1258,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     clusterIDs,
                     clus1,
                     clus2,
-                    minClusEcore,
+                    minClusEnergy,
                     maxChi2,
                     maxAsym,
                     massWindowLabel,
@@ -1143,7 +1272,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                     pT_bin
                 );
                 // Fill all photons histogram
-                std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEcore) +
+                std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
                                                 "_Chi" + formatFloatForFilename(maxChi2) +
                                                 "_Asym" + formatFloatForFilename(maxAsym) +
                                                 massWindowLabel +
@@ -1166,7 +1295,7 @@ void caloTreeGen::fillHistogramsForTriggers(
                 }
                 
                 // Fill pT distribution histograms
-                std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusEcore) +
+                std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
                                                "_Chi" + formatFloatForFilename(maxChi2) +
                                                "_Asym" + formatFloatForFilename(maxAsym) +
                                                massWindowLabel +
@@ -1231,7 +1360,7 @@ void caloTreeGen::processClusterInvariantMass(
     size_t totalPairs = 0;
     size_t skippedPairsDueToAsymmetry = 0;
     size_t skippedPairsDueToChi2 = 0;
-    size_t skippedPairsDueToEcore = 0;
+    size_t skippedPairsDueToEnergy = 0;
     size_t filledHistogramCount = 0;
     size_t noHistogramsFilledCount = 0;
 
@@ -1261,7 +1390,7 @@ void caloTreeGen::processClusterInvariantMass(
 
             for (float maxAsym : asymmetry_values) {
                 for (float maxChi2 : clus_chi_values) {
-                    for (float minClusEcore : clus_Ecore_values) {
+                    for (float minClusEnergy : clus_Energy_values) {
                         // Apply selection criteria and count specific cut skips, ensuring each pair is counted once
                         if (!pairSkipped && asym >= maxAsym) {
                             skippedPairsDueToAsymmetry++;
@@ -1269,8 +1398,8 @@ void caloTreeGen::processClusterInvariantMass(
                         } else if (!pairSkipped && (chi1 >= maxChi2 || chi2 >= maxChi2)) {
                             skippedPairsDueToChi2++;
                             pairSkipped = true;
-                        } else if (!pairSkipped && (E1 < minClusEcore || E2 < minClusEcore)) {
-                            skippedPairsDueToEcore++;
+                        } else if (!pairSkipped && (E1 < minClusEnergy || E2 < minClusEnergy)) {
+                            skippedPairsDueToEnergy++;
                             pairSkipped = true;
                         }
 
@@ -1285,7 +1414,7 @@ void caloTreeGen::processClusterInvariantMass(
                             pt2,
                             E1,
                             E2,
-                            minClusEcore,
+                            minClusEnergy,
                             maxChi2,
                             maxAsym,
                             filledHistogramCount,
@@ -1312,8 +1441,8 @@ void caloTreeGen::processClusterInvariantMass(
                   << " (" << (100.0 * skippedPairsDueToAsymmetry / totalPairs) << "%)" << std::endl;
         std::cout << "Pairs skipped due to chi2 cuts: " << skippedPairsDueToChi2
                   << " (" << (100.0 * skippedPairsDueToChi2 / totalPairs) << "%)" << std::endl;
-        std::cout << "Pairs skipped due to Ecore cuts: " << skippedPairsDueToEcore
-                  << " (" << (100.0 * skippedPairsDueToEcore / totalPairs) << "%)" << std::endl;
+        std::cout << "Pairs skipped due to Cluster Energy cuts: " << skippedPairsDueToEnergy
+                  << " (" << (100.0 * skippedPairsDueToEnergy / totalPairs) << "%)" << std::endl;
         std::cout << "Pairs with no histograms filled: " << noHistogramsFilledCount
                   << " (" << (100.0 * noHistogramsFilledCount / totalPairs) << "%)" << std::endl;
         std::cout << "Histograms filled: " << filledHistogramCount << std::endl;
@@ -1323,7 +1452,27 @@ void caloTreeGen::processClusterInvariantMass(
 }
 
 //____________________________________________________________________________..
-int caloTreeGen::process_event(PHCompositeNode *topNode) {
+int caloTreeGen::process_event(PHCompositeNode *topNode)
+{
+    // 1) If user wants to process DATA events:
+    if (wantData)
+    {
+      // Everything you do for data
+      process_event_Data(topNode);
+    }
+    
+    // 2) If user wants to process SIMULATION events:
+    if (wantSim)
+    {
+      // Everything you do for simulation
+      process_event_Sim(topNode);
+    }
+
+  return Fun4AllReturnCodes::EVENT_OK;
+}
+
+
+int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     // Increase verbosity in the event loop
     if (verbose)
     {
@@ -1528,7 +1677,7 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
     }
     
     int nan_count = 0;
-    int skippedEcoreCount = 0; // Counter for clusters skipped due to ECore cut
+    int skippedEnergyCount = 0; // Counter for clusters skipped due to Energy cut
     float max_energy_clus = 0.0;
     float max_isoEt = std::numeric_limits<float>::lowest();
     float min_isoEt = std::numeric_limits<float>::max();
@@ -1547,24 +1696,26 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
          */
         CLHEP::Hep3Vector vertex(m_vx, m_vy, m_vz);
         
-        CLHEP::Hep3Vector Ecore_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);
+        //        CLHEP::Hep3Vector Ecore_vec_cluster = RawClusterUtility::GetECoreVec(*cluster, vertex);  NOT USING ECore in pp
+        CLHEP::Hep3Vector clusterEnergy_Full = RawClusterUtility::GetEVec(*recoCluster, vertex);
         
+        //        float clusEcore = Ecore_vec_cluster.mag(); NOT USING ECore in pp
         
-        float clusEcore = Ecore_vec_cluster.mag();
+        float clusEnergy = clusterEnergy_Full.mag();
         
-        if (clusEcore < 1.0) { // cut on ecore
-            skippedEcoreCount++;
+        if (clusEnergy < 1.0) { // cut on cluster energy
+            skippedEnergyCount++;
             continue;
         }
-        float clus_eta = Ecore_vec_cluster.pseudoRapidity();
-        float clus_phi = Ecore_vec_cluster.phi();
-        float clus_eT = clusEcore / std::cosh(clus_eta);
-        float clus_pt = Ecore_vec_cluster.perp();
+        float clus_eta = clusterEnergy_Full.pseudoRapidity();
+        float clus_phi = clusterEnergy_Full.phi();
+        float clus_eT = clusEnergy / std::cosh(clus_eta);
+        float clus_pt = clusterEnergy_Full.perp();
         float clus_chi = cluster -> get_chi2();
         float maxTowerEnergy = getMaxTowerE(cluster,emcTowerContainer);
         
         m_clusterIds.push_back(cluster->get_id());
-        m_clusterECore.push_back(clusEcore);
+        m_clusterEnergy.push_back(clusEnergy);
         m_clusterEt.push_back(clus_eT);
         m_clusterPt.push_back(clus_pt);
         m_clusterChi.push_back(clus_chi);
@@ -1615,19 +1766,19 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         }
         
         
-        if (clusEcore > max_energy_clus) {
-            max_energy_clus = clusEcore; // Update the maximum cluster energy
+        if (clusEnergy > max_energy_clus) {
+            max_energy_clus = clusEnergy; // Update the maximum cluster energy
         }
     }
     
     if (verbose) {
         std::cout << "\n--- Cluster Processing Summary ---" << std::endl;
         std::cout << "Clusters processed: " << m_clusterIds.size() << std::endl;
-        std::cout << "Clusters skipped due to ECore < 1: " << skippedEcoreCount << std::endl;
+        std::cout << "Clusters skipped due to Cluster Energy < 1: " << skippedEnergyCount << std::endl;
 
         std::cout << "\nVector Sizes:" << std::endl;
         std::cout << "  m_clusterIds size: " << m_clusterIds.size() << std::endl;
-        std::cout << "  m_clusterECore size: " << m_clusterECore.size() << std::endl;
+        std::cout << "  m_clusterEnergy size: " << m_clusterEnergy.size() << std::endl;
         std::cout << "  m_clusterEta size: " << m_clusterEta.size() << std::endl;
         std::cout << "  m_clusterPhi size: " << m_clusterPhi.size() << std::endl;
         std::cout << "  m_clusterPt size: " << m_clusterPt.size() << std::endl;
@@ -1641,14 +1792,14 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
 
         std::cout << "\nCluster Isolation Energy Table:" << std::endl;
         std::cout << "------------------------------------------------" << std::endl;
-        std::cout << std::setw(12) << "Cluster ID" << std::setw(20) << "Ecore" << std::setw(20) << "Isolation Energy (et_iso)" << std::endl;
+        std::cout << std::setw(12) << "Cluster ID" << std::setw(20) << "Cluster Energy" << std::setw(20) << "Isolation Energy (et_iso)" << std::endl;
         std::cout << "------------------------------------------------" << std::endl;
         for (const auto& entry : clusterEtIsoMap_unsubtracted) {
             std::cout << std::setw(12) << entry.first << std::setw(20) << entry.second.first << std::setw(20) << entry.second.second << std::endl;
         }
         std::cout << "------------------------------------------------\n";
     }
-    processClusterInvariantMass(m_clusterECore, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi, m_clusterIds, clusterEtIsoMap_unsubtracted, activeTriggerNames);
+    processClusterInvariantMass(m_clusterEnergy, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi, m_clusterIds, clusterEtIsoMap_unsubtracted, activeTriggerNames);
 
     
     for (const std::string &firedShortName : activeTriggerNames) {
@@ -1927,15 +2078,15 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
         }
         
         // Fill the histogram with the maximum cluster energy core value
-        TH1F* h_maxECore = (TH1F*)qaHistograms["hCluster_maxECore_" + firedShortName];
+        TH1F* h_maxEnergyClus = (TH1F*)qaHistograms["h_maxEnergyClus_" + firedShortName];
 
-        if (!h_maxECore) {
-            std::cerr << "Error: Histogram hCluster_maxECore_" << firedShortName << " is null and cannot be filled." << std::endl;
+        if (!h_maxEnergyClus) {
+            std::cerr << "Error: Histogram h_maxEnergyClus_" << firedShortName << " is null and cannot be filled." << std::endl;
         } else {
-            h_maxECore->Fill(max_energy_clus);
+            h_maxEnergyClus->Fill(max_energy_clus);
             
             if (verbose) {
-                std::cout << "Filled histogram hCluster_maxECore_" << firedShortName
+                std::cout << "Filled histogram h_maxEnergyClus_" << firedShortName
                           << " with value: " << max_energy_clus << std::endl;
             }
         }
@@ -1944,8 +2095,89 @@ int caloTreeGen::process_event(PHCompositeNode *topNode) {
 }
 
 
+int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
+{
+  if (verbose)
+  {
+    std::cout << "\n[DEBUG] caloTreeGen::process_event_Sim() called for event_count="
+              << event_count << " on topNode=" << topNode << std::endl;
+  }
+
+  // Increment event counter, check limits
+  event_count++;
+  if (m_limitEvents && event_count > m_eventLimit)
+  {
+    if (verbose)
+      std::cout << "[SIM] Event limit " << m_eventLimit << " reached, skipping further events." << std::endl;
+    return Fun4AllReturnCodes::ABORTRUN;
+  }
+
+  // We'll do something like:
+  for (int ic = 0; ic < ncluster_CEMC; ic++)
+  {
+    int   pid    = cluster_pid_CEMC[ic];        // mother PID
+    float isoVal = cluster_iso_04_CEMC[ic];     // isolation energy (R=0.4)
+    float cEt    = cluster_Et_CEMC[ic];         // cluster E_T
+
+    // Check the isolation threshold
+    if (isoVal <= 6.0f)
+    {
+      // If it's from pi0(111) or eta(221) => fill hIsoFromPi0Eta
+      if (pid == 111 || pid == 221)
+      {
+        if (hIsoFromPi0Eta)
+          hIsoFromPi0Eta->Fill(cEt);
+      }
+      else
+      {
+        // Otherwise => fill hIsoNotPi0Eta
+        if (hIsoNotPi0Eta)
+          hIsoNotPi0Eta->Fill(cEt);
+      }
+    }
+  }
+
+  if (verbose)
+  {
+    std::cout << "[SIM] Done filling hIsoFromPi0Eta and hIsoNotPi0Eta for event "
+              << event_count << std::endl;
+  }
+
+  return Fun4AllReturnCodes::EVENT_OK;
+}
+
+
+int caloTreeGen::ResetEvent(PHCompositeNode *topNode)
+{
+    if (verbose)
+    {
+        std::cout << ANSI_COLOR_BLUE_BOLD
+                  << "ResetEvent called: wantData=" << wantData
+                  << ", wantSim=" << wantSim << ANSI_COLOR_RESET << std::endl;
+    }
+
+    // If user wants data
+    if (wantData)
+    {
+        resetEvent_Data(topNode);
+    }
+    
+    // If user wants simulation
+    if (wantSim)
+    {
+        resetEvent_Sim(topNode);
+    }
+
+    // If both wantData & wantSim are set true,
+    // we clear both sets of vectors in parallel.
+
+    // Return
+    return Fun4AllReturnCodes::EVENT_OK;
+}
+
+
 //____________________________________________________________________________..
-int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
+int caloTreeGen::resetEvent_Data(PHCompositeNode *topNode) {
     if (verbose) {
         std::cout << ANSI_COLOR_BLUE_BOLD << "Resetting event..." << ANSI_COLOR_RESET << std::endl;
     }
@@ -1956,7 +2188,7 @@ int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
     m_clusterPt.clear();
     m_clusterChi.clear();
     m_clusterTowMaxE.clear();
-    m_clusterECore.clear();
+    m_clusterEnergy.clear();
     m_clusterEtIso.clear();
     clusterEtIsoMap_unsubtracted.clear();
     clusterEtIsoMap_subtracted.clear();
@@ -1998,8 +2230,55 @@ int caloTreeGen::ResetEvent(PHCompositeNode *topNode) {
     }
 }
 
+int caloTreeGen::resetEvent_Sim(PHCompositeNode *topNode)
+{
+    if (verbose)
+    {
+        std::cout << ANSI_COLOR_BLUE_BOLD
+                  << "[ResetEvent-Sim] Clearing simulation-related arrays..."
+                  << ANSI_COLOR_RESET << std::endl;
+    }
 
-int caloTreeGen::End(PHCompositeNode *topNode) {
+
+    if (verbose)
+    {
+        std::cout << ANSI_COLOR_GREEN_BOLD
+                  << "[ResetEvent-Sim] Done clearing sim vectors."
+                  << ANSI_COLOR_RESET << std::endl;
+    }
+    return Fun4AllReturnCodes::EVENT_OK;
+}
+
+
+int caloTreeGen::End(PHCompositeNode *topNode)
+{
+    if (verbose)
+    {
+        std::cout << ANSI_COLOR_BLUE_BOLD
+                  << "caloTreeGen::End() => All events done. Starting final steps..."
+                  << ANSI_COLOR_RESET << std::endl;
+    }
+
+    // 1) If user wants data, do the data end-of-job
+    if (wantData)
+    {
+        endData(topNode);
+    }
+
+    // 2) If user wants sim, do the sim end-of-job
+    if (wantSim)
+    {
+        endSim(topNode);
+    }
+
+    // If both are true, it executes both. If only one is true,
+    // it executes just that one.
+    // Then we can return success code:
+    return Fun4AllReturnCodes::EVENT_OK;
+}
+
+
+int caloTreeGen::endData(PHCompositeNode *topNode) {
     std::cout << ANSI_COLOR_BLUE_BOLD << "caloTreeGen::End(PHCompositeNode *topNode) All events have been processed. Beginning final analysis steps..." << ANSI_COLOR_RESET << std::endl;
     // Ensure the output file is open and set as the current directory
     if (out && out->IsOpen()) {
@@ -2090,6 +2369,68 @@ int caloTreeGen::End(PHCompositeNode *topNode) {
     return Fun4AllReturnCodes::EVENT_OK;
 }
 
+int caloTreeGen::endSim(PHCompositeNode *topNode)
+{
+    std::cout << ANSI_COLOR_BLUE_BOLD
+              << "[SIM End] Writing simulation histograms..."
+              << ANSI_COLOR_RESET << std::endl;
+
+    // 1) Check that outSim file is valid and open
+    if (!outSim || !outSim->IsOpen())
+    {
+      std::cerr << "[ERROR] outSim is null or not open. No SIM histos will be written."
+                << std::endl;
+      return Fun4AllReturnCodes::ABORTEVENT;
+    }
+
+    // 2) Make sure we’re writing into outSim
+    outSim->cd();
+
+    // 3) Write the two histograms if they exist
+    if (hIsoFromPi0Eta)
+    {
+      if (hIsoFromPi0Eta->Write() == 0)
+      {
+        std::cerr << "[ERROR] Failed to write hIsoFromPi0Eta." << std::endl;
+      }
+      else if (verbose)
+      {
+        std::cout << "[INFO] Wrote hIsoFromPi0Eta to outSim." << std::endl;
+      }
+      // Optionally delete or keep hist in memory
+      // delete hIsoFromPi0Eta;
+      // hIsoFromPi0Eta = nullptr;
+    }
+
+    if (hIsoNotPi0Eta)
+    {
+      if (hIsoNotPi0Eta->Write() == 0)
+      {
+        std::cerr << "[ERROR] Failed to write hIsoNotPi0Eta." << std::endl;
+      }
+      else if (verbose)
+      {
+        std::cout << "[INFO] Wrote hIsoNotPi0Eta to outSim." << std::endl;
+      }
+      // Optionally delete or keep hist in memory
+      // delete hIsoNotPi0Eta;
+      // hIsoNotPi0Eta = nullptr;
+    }
+
+    // 4) Close the simulation TFile if you are done with it
+    outSim->Close();
+    delete outSim;
+    outSim = nullptr;
+
+    if (verbose)
+    {
+      std::cout << "[INFO] EndSim: Finished writing SIM histos and closed outSim."
+                << std::endl;
+    }
+
+    return Fun4AllReturnCodes::EVENT_OK;
+}
+
 
 //____________________________________________________________________________..
 int caloTreeGen::Reset(PHCompositeNode *topNode) {
@@ -2162,3 +2503,4 @@ bool caloTreeGen::IsAcceptableTower(TowerInfo *tower) {
   }
   return true;
 }
+
