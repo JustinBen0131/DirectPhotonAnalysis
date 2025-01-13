@@ -40,7 +40,9 @@ class TH2F;
 class caloTreeGen : public SubsysReco{
 public:
     
-    caloTreeGen(const std::string &name = "caloTreeGen");
+    // A constructor that takes two std::string arguments
+    caloTreeGen(const std::string &dataOutFile = "caloTreeData.root",
+                const std::string &simOutFile  = "caloTreeSim.root");
     
     ~caloTreeGen() override;
 
@@ -72,10 +74,27 @@ public:
         float energymap_jet_hcalout[9][32];
     };
     
+    void setWantSim(bool sim) { wantSim = sim; }
+    void setWantData(bool data) { wantData = data; }
+    
+    bool getWantSim()  const    { return wantSim;  }
+    bool getWantData() const    { return wantData; }
+    
 private:
     
-    TFile *out;
-    std::string Outfile = "commissioning.root";
+    bool wantSim = false;   // default false
+    bool wantData = true;   // default true
+    
+    // 2) File pointers
+    //    - one for data output
+    //    - one for simulation output
+    TFile *out     = nullptr;  // data
+    TFile *outSim  = nullptr;  // sim
+
+    // 3) Filenames:
+    std::string Outfile;     // data output file
+    std::string SimOutfile;  // sim output file
+    
     int getEvent;
     TriggerAnalyzer* trigAna{nullptr};
     
@@ -93,7 +112,7 @@ private:
     
     struct MesonMassWindow {
         std::string triggerName;
-        float Ecore;
+        float clusEnergy;
         float Chi2;
         float Asym;
         float pTMin;
@@ -108,11 +127,11 @@ private:
     
     bool verbose = true;
     bool m_limitEvents = true;   // Enable event limiting by default
-    int m_eventLimit = 2000;    // Maximum number of events to process (10,000 by default)
+    int m_eventLimit = 50000;    // Maximum number of events to process (10,000 by default)
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
     std::vector<float> clus_chi_values = {3, 4, 5};
-    std::vector<float> clus_Ecore_values = {1.0, 1.5, 3.0, 5.0, 8.0};
+    std::vector<float> clus_Energy_values = {1.0, 1.5, 3.0, 5.0, 8.0};
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}, {20, 30}
     };
@@ -177,7 +196,7 @@ private:
     std::vector<float> m_clusterPt;
     std::vector<float> m_clusterChi;
     std::vector<float> m_clusterTowMaxE;
-    std::vector<float> m_clusterECore;
+    std::vector<float> m_clusterEnergy;
     std::vector<float> m_clusterEtIso;
     std::vector<int> m_clusterIds;
     
@@ -187,6 +206,10 @@ private:
     
     std::map<int, std::pair<float, float>> clusterEtIsoMap_unsubtracted;
     std::map<int, std::pair<float, float>> clusterEtIsoMap_subtracted;
+    
+    // 4) Photon classification histograms for SIM
+    TH1F* hIsoFromPi0Eta  = nullptr;  // e.g. iso <= 6, from pi0/eta
+    TH1F* hIsoNotPi0Eta   = nullptr;  // e.g. iso <= 6, not from pi0/eta
     
     //GL1 information
     Gl1Packet *_gl1_packet;
@@ -207,7 +230,17 @@ private:
     };
     bool loadMesonMassWindows(const std::string& csvFilePath);
     
-    void createHistos();
+    void createHistos_Data();
+    void createHistos_ForSimulation();
+    
+    int process_event_Sim(PHCompositeNode *topNode);
+    int process_event_Data(PHCompositeNode *topNode);
+    
+    int resetEvent_Data(PHCompositeNode* topNode);
+    int resetEvent_Sim(PHCompositeNode* topNode);
+    
+    int endData(PHCompositeNode *topNode);
+    int endSim(PHCompositeNode *topNode);
     
     void collectTowerData(TowerInfoContainer* towerContainer, std::vector<TowerData>& towerDataList);
 
@@ -222,7 +255,7 @@ private:
     void processClusterIsolationHistograms(
         int clusterID,
         float mesonMass,
-        float minClusEcore,
+        float minClusEnergy,
         float maxChi2,
         float maxAsym,
         const std::string& massWindowLabel,
@@ -246,7 +279,7 @@ private:
         const std::vector<int>& clusterIDs,
         size_t clus1,
         size_t clus2,
-        float minClusEcore,
+        float minClusEnergy,
         float maxChi2,
         float maxAsym,
         const std::string& massWindowLabel,
@@ -268,7 +301,7 @@ private:
         float pt2,
         float E1,
         float E2,
-        float minClusEcore,
+        float minClusEnergy,
         float maxChi2,
         float maxAsym,
         size_t& filledHistogramCount,
