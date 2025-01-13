@@ -7,8 +7,13 @@ setup_directories() {
   mkdir -p /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error
 }
 
-run_local_job() {
+##################################
+# Data: local
+##################################
+run_local_job_data() {
   local runNumber=$1
+  source /opt/sphenix/core/bin/sphenix_setup.sh -n
+  source /opt/sphenix/core/bin/setup_local.sh $MYINSTALL
 
   if [ -z "$runNumber" ]; then
     runNumbers=($(cat RunCondorJobsOnTheseRuns.txt))
@@ -41,7 +46,10 @@ run_local_job() {
 }
 
 
-submit_all_jobs() {
+##################################
+# Data: submit condor
+##################################
+submit_all_jobs_data() {
   echo "Submitting all jobs..."
 
   local runNumbers=($(cat RunCondorJobsOnTheseRuns.txt))
@@ -104,19 +112,111 @@ EOL
   done
 }
 
+##################################
+# SIM: local
+##################################
+run_local_sim() {
+  # We read from 'caloAnaSimListFile.list' and run only the FIRST entry for local mode
+  source /opt/sphenix/core/bin/sphenix_setup.sh -n
+  source /opt/sphenix/core/bin/setup_local.sh $MYINSTALL
 
-# Main entry point for the script
+  local simList="../caloAnaSimListFile.list"
+  mapfile -t simfiles < "$simList"
+
+  if [ ${#simfiles[@]} -eq 0 ]; then
+    echo "[ERROR] No simulation files found in $simList!"
+    exit 1
+  fi
+
+  local firstSimFile="${simfiles[0]}"
+
+  echo "Running locally for simulation on first file: $firstSimFile"
+
+  local outputDirSim="/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/SimOut"
+  mkdir -p ${outputDirSim}
+  fileBaseName=$(basename "${firstSimFile}")
+  local simOutName="${outputDirSim}/CaloTreeGenSim_${fileBaseName%.*}.root"
+
+  # Expect 'Fun4All_CaloTreeGen.C' to have wantSim on
+  root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$simList\", \"$simOutName\")"
+}
+
+
+##################################
+# SIM: submit condor
+##################################
+submit_all_jobs_sim() {
+  echo "Submitting all simulation jobs..."
+
+  local simList="dst_list/caloAnaSimListFile.list"
+  if [ ! -f "$simList" ]; then
+    echo "[ERROR] No sim list file found: $simList"
+    exit 1
+  fi
+
+  # Ensure directories are set up
+  setup_directories
+
+  # We'll queue 1 file per condor job
+  mapfile -t simfiles < "$simList"
+  local total_sfiles=${#simfiles[@]}
+
+  local i=0
+  local simQueuedFileList="sim_segment_files.list"
+  > "$simQueuedFileList"
+
+  while [ $i -lt $total_sfiles ]; do
+    local file="${simfiles[$i]}"
+    i=$((i + 1))
+
+    local simlistfile="sim_input_file_${i}.list"
+    echo "$file" > "$simlistfile"
+    echo "$simlistfile" >> "$simQueuedFileList"
+  done
+
+  # Build the condor submission for each file
+  cat > isoCondorSim.sub <<EOL
+universe                = vanilla
+executable              = CaloTreeGen_Condor.sh
+arguments               = SIMMODE \$(filename) \$(Cluster)
+log                     = /tmp/patsfan753_condor_logs/job.\$(Cluster).\$(Process).log
+output                  = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/stdout/job.\$(Cluster).\$(Process).out
+error                   = /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/error/job.\$(Cluster).\$(Process).err
+request_memory          = 800MB
+PeriodicHold            = (NumJobStarts>=1 && JobStatus == 1)
+concurrency_limits      = CONCURRENCY_LIMIT_DEFAULT:100
+queue filename from $simQueuedFileList
+EOL
+
+  condor_submit isoCondorSim.sub
+}
+
+
+################################################
+# Main entry point
+################################################
 main() {
   case "$1" in
     "local")
+      # This means data local by default
       runNumber=$2
-      run_local_job "$runNumber"
+      run_local_job_data "$runNumber"
+      ;;
+    "simlocal")
+      # This means run local sim
+      run_local_sim
+      ;;
+    "sim")
+      # This means condor for sim
+      submit_all_jobs_sim
       ;;
     *)
-      submit_all_jobs
+      # default is data condor
+      submit_all_jobs_data
       ;;
   esac
 }
 
 # Call the main function with command-line arguments
 main "$@"
+
