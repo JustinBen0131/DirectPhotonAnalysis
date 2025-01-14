@@ -74,8 +74,11 @@ public:
         float energymap_jet_hcalout[9][32];
     };
     
-    void setWantSim(bool sim) { wantSim = sim; }
-    void setWantData(bool data) { wantData = data; }
+    // Set user options
+    void setWantSim(bool s)  { wantSim = s; }
+    void setWantData(bool d) { wantData = d; }
+    void setSimInputFileName(const std::string &fname) { simInputFileName = fname; }
+
     
     bool getWantSim()  const    { return wantSim;  }
     bool getWantData() const    { return wantData; }
@@ -85,15 +88,17 @@ private:
     bool wantSim = false;   // default false
     bool wantData = true;   // default true
     
-    // 2) File pointers
-    //    - one for data output
-    //    - one for simulation output
     TFile *out     = nullptr;  // data
     TFile *outSim  = nullptr;  // sim
 
     // 3) Filenames:
     std::string Outfile;     // data output file
     std::string SimOutfile;  // sim output file
+    
+    TFile *simInFile     = nullptr;  ///< The input simulation file
+    TTree *slimTree      = nullptr;  ///< The "slimtree" TTree
+    std::string simInputFileName;    ///< The name of the sim input file
+
     
     int getEvent;
     TriggerAnalyzer* trigAna{nullptr};
@@ -158,6 +163,31 @@ private:
     // Pointer to the active trigger name map for the current run
     std::map<int, std::string>* activeTriggerNameMap = nullptr;
 
+    // For the SIM arrays, define size constants
+    static const int kMaxClusters = 200000;
+    static const int kMaxParticles = 200000;
+
+    // Cluster-level arrays
+    int   ncluster_CEMC_SIM = 0;
+    int   cluster_pid_CEMC_SIM[kMaxClusters];
+    float cluster_iso_04_CEMC_SIM[kMaxClusters];
+    float cluster_Et_CEMC_SIM[kMaxClusters];
+    float cluster_Eta_CEMC_SIM[kMaxClusters];
+    float cluster_Phi_CEMC_SIM[kMaxClusters];
+
+    // Truth-particle-level arrays
+    int   nparticles_SIM = 0;
+    int   particle_pid_SIM[kMaxParticles];
+    int   particle_photonclass_SIM[kMaxParticles];
+    float particle_Pt_SIM[kMaxParticles];
+    float particle_Eta_SIM[kMaxParticles];
+    float particle_Phi_SIM[kMaxParticles];
+
+    // Histograms
+    TH1F* hIsoFromPi0Eta   = nullptr;
+    TH1F* hIsoNotPi0Eta    = nullptr;
+    TH1F* hPhotonPtPrompt  = nullptr;
+    
     int event_count = 0;
 
     //EMCal
@@ -207,9 +237,11 @@ private:
     std::map<int, std::pair<float, float>> clusterEtIsoMap_unsubtracted;
     std::map<int, std::pair<float, float>> clusterEtIsoMap_subtracted;
     
-    // 4) Photon classification histograms for SIM
-    TH1F* hIsoFromPi0Eta  = nullptr;  // e.g. iso <= 6, from pi0/eta
-    TH1F* hIsoNotPi0Eta   = nullptr;  // e.g. iso <= 6, not from pi0/eta
+    // We want a classification histogram for each pT bin
+    std::map<std::pair<float, float>, TH1F*> hClusterTruthClass_pTbin;
+    // We also want a “prompt purity” histogram for each pT bin
+    std::map<std::pair<float, float>, TH1F*> hPromptPurity_pTbin;
+
     
     //GL1 information
     Gl1Packet *_gl1_packet;
