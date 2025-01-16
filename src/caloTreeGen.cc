@@ -409,6 +409,27 @@ void caloTreeGen::createHistos_Data() {
                             "Isolation Energy Distribution (Subtracted);E_{T}^{iso} [GeV];Counts",
                             100, -20, 20);
 
+        // E3x3 / E_cluster
+        qaHistograms["E3x3_over_ClusterE_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x3_over_ClusterE_NoShowerShapeCuts_" + triggerName,
+                            "E_{3x3}/E_{cluster} (No Cuts);E_{3x3}/E_{cluster};Counts",
+                            100, 0.0, 1.2);
+
+        qaHistograms["E3x3_over_ClusterE_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x3_over_ClusterE_withShowerShapeCuts_" + triggerName,
+                            "E_{3x3}/E_{cluster} (With Cuts);E_{3x3}/E_{cluster};Counts",
+                            100, 0.0, 1.2);
+
+        // E3x3 / E3x7
+        qaHistograms["E3x3_over_E3x7_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x3_over_E3x7_NoShowerShapeCuts_" + triggerName,
+                            "E_{3x3}/E_{3x7} (No Cuts);E_{3x3}/E_{3x7};Counts",
+                            100, 0.0, 1.2);
+
+        qaHistograms["E3x3_over_E3x7_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x3_over_E3x7_withShowerShapeCuts_" + triggerName,
+                            "E_{3x3}/E_{3x7} (With Cuts);E_{3x3}/E_{3x7};Counts",
+                            100, 0.0, 1.2);
         
         /*
          HCal QA
@@ -445,6 +466,8 @@ void caloTreeGen::createHistos_Data() {
         /*
          Shower Shape QA
          */
+        
+        //E3x7/E7x7
         qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName] = createHistogram("E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
                             "E3x7/E7x7 (No Cuts);E_{3x7}/E_{7x7};Counts",
                              100, 0.0, 1.2);
@@ -452,7 +475,62 @@ void caloTreeGen::createHistos_Data() {
         qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + triggerName] = createHistogram("E3by7_over_E7by7_withShowerShapeCuts_" + triggerName,
                             "E3x7/E7x7 (With ShowerShape Cuts);E_{3x7}/E_{7x7};Counts",
                              100, 0.0, 1.2);
+        
+        //w7x2
+        qaHistograms["w72_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("w72_NoShowerShapeCuts_" + triggerName,
+                            "w_{72} (No Cuts);w_{72};Counts",
+                             100, 0.0, 2.0);  // choose x-range as needed
 
+        qaHistograms["w72_withShowerShapeCuts_" + triggerName] =
+            createHistogram("w72_withShowerShapeCuts_" + triggerName,
+                            "w_{72} (With ShowerShape Cuts);w_{72};Counts",
+                             100, 0.0, 2.0);
+        
+        // E1x1 / Ecluster
+        qaHistograms["E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{cluster} (No Cuts);E_{1x1}/E;Counts",
+                             100, 0.0, 1.2);
+
+        qaHistograms["E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{cluster} (With Cuts);E_{1x1}/E;Counts",
+                             100, 0.0, 1.2);
+
+        // E1x1 / E3x3
+        qaHistograms["E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{3x3} (No Cuts);E_{1x1}/E_{3x3};Counts",
+                             100, 0.0, 1.2);
+
+        qaHistograms["E1x1_over_E3x3_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_E3x3_withShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{3x3} (With Cuts);E_{1x1}/E_{3x3};Counts",
+                             100, 0.0, 1.2);
+
+        
+        // E1x7 / E7x7
+        qaHistograms["E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x7}/E_{7x7} (No Cuts);E_{1x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+
+        qaHistograms["E1by7_over_E7by7_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1by7_over_E7by7_withShowerShapeCuts_" + triggerName,
+                            "E_{1x7}/E_{7x7} (With Cuts);E_{1x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+        
+        // E3x2 / E3x5
+        qaHistograms["E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName,
+                            "E_{3x2}/E_{3x5} (No Cuts);E_{3x2}/E_{3x5};Counts",
+                            100, 0.0, 1.2);
+
+        qaHistograms["E3x2_over_E3x5_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x2_over_E3x5_withShowerShapeCuts_" + triggerName,
+                            "E_{3x2}/E_{3x5} (With Cuts);E_{3x2}/E_{3x5};Counts",
+                            100, 0.0, 1.2);
         
         std::map<std::pair<float, float>, std::map<std::string, TObject*>>& qaIsolationHistograms = qaIsolationHistogramsByTriggerAndPt[triggerName];
 
@@ -1837,6 +1915,43 @@ void caloTreeGen::processClusterInvariantMass(
     }
 }
 
+bool caloTreeGen::applyShowerShapeCuts(const ShowerShapeVars& s, float clusterEt)
+{
+    //------------------------------------------------------------------
+    // 1) ratio = E_{3x7}/E_{7x7} < 0.9
+    //------------------------------------------------------------------
+    float ratio_3x7over7x7 = 0.f;
+    if (s.e7x7 > 1e-6f) ratio_3x7over7x7 = s.e3x7 / s.e7x7;
+    if (ratio_3x7over7x7 >= 0.9f) return false;
+
+    //------------------------------------------------------------------
+    // 2) E_T^{HCal, 3x3} / ( E_T^{HCal, 3x3} + E_T^{cluster} ) < 0.1
+    //------------------------------------------------------------------
+    float hcalEt33 = s.ihcal_et33 + s.ohcal_et33;
+    float denom = hcalEt33 + clusterEt;
+    if (denom > 1e-6f)
+    {
+        float frac = hcalEt33 / denom;
+        if (frac >= 0.1f) return false;
+    }
+
+    //------------------------------------------------------------------
+    // 3) E_{1x1}/E_{7x7} < 0.98
+    //------------------------------------------------------------------
+    float ratio_1x1 = 0.f;
+    if (s.e7x7 > 1e-6f) ratio_1x1 = s.e1x1 / s.e7x7;
+    if (ratio_1x1 >= 0.98f) return false;
+
+    //------------------------------------------------------------------
+    // 4) w72 > 0.75
+    //------------------------------------------------------------------
+    if (s.w72 <= 0.75f) return false;
+
+    // If we survive all checks => pass
+    return true;
+}
+
+
 //____________________________________________________________________________..
 int caloTreeGen::process_event(PHCompositeNode *topNode)
 {
@@ -2114,17 +2229,13 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         float maxTowerEnergy = getMaxTowerE(cluster,emcTowerContainer);
         int clusID = cluster->get_id();
 
-        shapeVarsMap[clusID] = ssv;  // store
+        shapeVarsMap[clusID] = ssv;
+        /*
+         Save map of clus ID's that pass shower shape cuts for this event
+         */
+        bool pass = applyShowerShapeCuts(ssv, clus_eT);
+        clusterPassedShowerCuts[clusID] = pass;
         
-        
-        float ratioE3x7OverE7x7 = 0.f;
-        if (ssv.e7x7 > 1e-6f) ratioE3x7OverE7x7 = ssv.e3x7 / ssv.e7x7;
-
-        bool passCuts = applyShowerShapeCuts(ssv, /* eT= */ clus_eT);
-
-        // Store in our map
-        clusterPassedShowerCuts[clusID] = passCuts; // true if passed, else false
-
         
         m_clusterIds.push_back(clusID);
         m_clusterEnergy.push_back(clusEnergy);
@@ -2214,6 +2325,9 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     processClusterInvariantMass(m_clusterEnergy, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi, m_clusterIds, clusterEtIsoMap_unsubtracted, activeTriggerNames);
 
     
+    /*
+     Loop over active trigger names
+     */
     for (const std::string &firedShortName : activeTriggerNames) {
         
         auto& qaHistograms = qaHistogramsByTrigger[firedShortName];
@@ -2241,29 +2355,119 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             std::cout << "Processing Trigger: " << firedShortName << std::endl;
         }
  
-        // For each cluster *again*:
-        for (size_t ic=0; ic<m_clusterIds.size(); ++ic)
-        {
-            int clusID = m_clusterIds[ic];
 
-            // Access ratio again:
-            float ratio = 0.f;
-            const auto &s = shapeVarsMap[clusID];
-            if (s.e7x7>1e-6f) ratio = s.e3x7/s.e7x7;
 
-            TH1F* h_noCut = (TH1F*)qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + firedShortName];
-            TH1F* h_withCut = (TH1F*)qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + firedShortName];
+        //----------------------------------------------------------------------
+        // Define pointers to all relevant histograms for this trigger ONCE for shower shape variable filling QA
+        //----------------------------------------------------------------------
+        TH1F* h_noCut_ratio         = (TH1F*) qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_ratio       = (TH1F*) qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + firedShortName];
 
-            if (h_noCut) h_noCut->Fill(ratio);
+        TH1F* h_noCut_w72           = (TH1F*) qaHistograms["w72_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_w72         = (TH1F*) qaHistograms["w72_withShowerShapeCuts_" + firedShortName];
 
-            // Check pass or fail from our map:
-            bool pass = clusterPassedShowerCuts[clusID];
-            if (pass && h_withCut)
-            {
-                h_withCut->Fill(ratio);
-            }
-        }
+        TH1F* h_noCut_1x1overE      = (TH1F*) qaHistograms["E1x1_over_ClusterE_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_1x1overE    = (TH1F*) qaHistograms["E1x1_over_ClusterE_withShowerShapeCuts_" + firedShortName];
+
+        TH1F* h_noCut_1x1over3x3    = (TH1F*) qaHistograms["E1x1_over_E3x3_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_1x1over3x3  = (TH1F*) qaHistograms["E1x1_over_E3x3_withShowerShapeCuts_" + firedShortName];
+
+        TH1F* h_noCut_3x2over3x5    = (TH1F*) qaHistograms["E3x2_over_E3x5_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_3x2over3x5  = (TH1F*) qaHistograms["E3x2_over_E3x5_withShowerShapeCuts_" + firedShortName];
+
+        TH1F* h_noCut_1by7over7by7  = (TH1F*) qaHistograms["E1by7_over_E7by7_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_1by7over7by7= (TH1F*) qaHistograms["E1by7_over_E7by7_withShowerShapeCuts_" + firedShortName];
         
+        TH1F* h_noCut_3x3overE   = (TH1F*) qaHistograms["E3x3_over_ClusterE_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_3x3overE = (TH1F*) qaHistograms["E3x3_over_ClusterE_withShowerShapeCuts_" + firedShortName];
+
+        TH1F* h_noCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_withShowerShapeCuts_" + firedShortName];
+
+
+        //----------------------------------------------------------------------
+        // Now loop over all clusters and fill SHOWER SHAPE histograms
+        //----------------------------------------------------------------------
+        for (size_t ic = 0; ic < m_clusterIds.size(); ++ic)
+        {
+            int   clusID   = m_clusterIds[ic];
+            float clusE    = m_clusterEnergy[ic];
+
+            // Retrieve the shape variables
+            const auto &ssv   = shapeVarsMap[clusID];
+            bool  passCuts    = clusterPassedShowerCuts[clusID]; // Did it pass your shape cuts?
+
+            
+            //----------------------------
+            // Compute each ratio
+            //----------------------------
+            // E3x3
+            float e3x3 = ssv.e3x3;          // from computeShowerShapesForCluster
+            
+            // (A) E3x7 / E7x7
+            float ratio_3x7_over_7x7 = 0.f;
+            if (ssv.e7x7 > 1e-6f) ratio_3x7_over_7x7 = ssv.e3x7 / ssv.e7x7;
+
+            // (B) w72 => ssv.w72
+
+            // (C) E1x1 / E_cluster
+            float ratio_1x1_over_E = 0.f;
+            if (clusE > 1e-6f) ratio_1x1_over_E = ssv.e1x1 / clusE;
+
+            // (D) E1x1 / E3x3
+            float ratio_1x1_over_3x3 = 0.f;
+            if (ssv.e3x3 > 1e-6f) ratio_1x1_over_3x3 = ssv.e1x1 / ssv.e3x3;
+
+            // (E) E1x7 / E7x7
+            float ratio_1x7_over_7x7 = 0.f;
+            if (ssv.e7x7 > 1e-6f) ratio_1x7_over_7x7 = ssv.e17 / ssv.e7x7;
+
+            // (F) E3x2 / E3x5
+            float ratio_3x2_over_3x5 = 0.f;
+            if (ssv.e35 > 1e-6f) ratio_3x2_over_3x5 = ssv.e3x2 / ssv.e35;
+
+            //(G) E3x3/Ecluster
+            float ratio_3x3_over_E = 0.f;
+            if (clusE > 1e-6f)
+            {
+              ratio_3x3_over_E = e3x3 / clusE;
+            }
+
+            //(H) E3x3/E3x7
+            float ratio_3x3_over_3x7 = 0.f;
+            if (ssv.e3x7 > 1e-6f)
+            {
+              ratio_3x3_over_3x7 = e3x3 / ssv.e3x7;
+            }
+            
+            //---------------------------------------------------
+            // Fill "No Cuts" histograms for every cluster
+            //---------------------------------------------------
+            if (h_noCut_ratio)               h_noCut_ratio->Fill(ratio_3x7_over_7x7);
+            if (h_noCut_w72)                 h_noCut_w72->Fill(ssv.w72);
+            if (h_noCut_1x1overE)            h_noCut_1x1overE->Fill(ratio_1x1_over_E);
+            if (h_noCut_1x1over3x3)          h_noCut_1x1over3x3->Fill(ratio_1x1_over_3x3);
+            if (h_noCut_1by7over7by7)        h_noCut_1by7over7by7->Fill(ratio_1x7_over_7x7);
+            if (h_noCut_3x2over3x5)          h_noCut_3x2over3x5->Fill(ratio_3x2_over_3x5);
+            if (h_noCut_3x3overE)            h_noCut_3x3overE->Fill(ratio_3x3_over_E);
+            if (h_noCut_3x3over3x7)          h_noCut_3x3over3x7->Fill(ratio_3x3_over_3x7);
+
+            //---------------------------------------------------
+            // If cluster passes shape cuts => fill "With Cuts"
+            //---------------------------------------------------
+            if (passCuts)
+            {
+                if (h_withCut_ratio)         h_withCut_ratio->Fill(ratio_3x7_over_7x7);
+                if (h_withCut_w72)           h_withCut_w72->Fill(ssv.w72);
+                if (h_withCut_1x1overE)      h_withCut_1x1overE->Fill(ratio_1x1_over_E);
+                if (h_withCut_1x1over3x3)    h_withCut_1x1over3x3->Fill(ratio_1x1_over_3x3);
+                if (h_withCut_1by7over7by7)  h_withCut_1by7over7by7->Fill(ratio_1x7_over_7x7);
+                if (h_withCut_3x2over3x5)    h_withCut_3x2over3x5->Fill(ratio_3x2_over_3x5);
+                if (h_withCut_3x3overE)      h_withCut_3x3overE->Fill(ratio_3x3_over_E);
+                if (h_withCut_3x3over3x7)    h_withCut_3x3over3x7->Fill(ratio_3x3_over_3x7);
+            }
+        } // end cluster loop
+
         // Process towers and fill histograms
         if (emcTowerContainer) {
             for (size_t i = 0; i < m_emcTowE.size(); ++i) {
