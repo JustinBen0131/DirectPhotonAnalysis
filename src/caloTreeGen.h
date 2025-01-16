@@ -74,6 +74,38 @@ public:
         float energymap_jet_hcalout[9][32];
     };
     
+    struct ShowerShapeVars
+    {
+        // NxN sums in EMCal
+        float e1x1, e3x2, e3x3, e3x5, e3x7, e5x5, e7x7;
+        float e11, e13, e15, e17;
+        float e22, e31, e33, e35, e37, e51, e53, e55, e57, e71, e73, e75, e77;
+
+        // Weighted widths in tower‐index space
+        float w32, e32;
+        float w52, e52;
+        float w72, e72;
+
+        // Weighted widths in actual (eta,phi)
+        float weta, wphi;
+
+        // iHCal/oHCal sums behind cluster
+        float ihcal_et, ohcal_et;
+        float ihcal_et22, ohcal_et22;
+        float ihcal_et33, ohcal_et33;
+        int   ihcal_ieta, ihcal_iphi;
+        int   ohcal_ieta, ohcal_iphi;
+
+        // Additional variables like detamax, dphimax
+        int   detamax, dphimax;
+
+        ShowerShapeVars()
+        {
+          memset(this, 0, sizeof(*this));
+        }
+    };
+
+    
     // Set user options
     void setWantSim(bool s)  { wantSim = s; }
     void setWantData(bool d) { wantData = d; }
@@ -189,6 +221,18 @@ private:
     TH1F* hPhotonPtPrompt  = nullptr;
     
     int event_count = 0;
+    
+    void shift_tower_index(int &ieta, int &iphi, int maxeta, int maxphi)
+    {
+      if (ieta < 0)
+        ieta = -1;
+      if (ieta >= maxeta)
+        ieta = -1;
+      if (iphi < 0)
+        iphi += maxphi;
+      if (iphi >= maxphi)
+        iphi -= maxphi;
+    }
 
     //EMCal
     std::vector<float> m_emcTowE;
@@ -400,6 +444,10 @@ private:
     }
     
     bool IsAcceptableTower(TowerInfo* tower);
+    
+    bool applyShowerShapeCuts(const ShowerShapeVars& s, float clusterEt);
+    
+    std::unordered_map<int, bool> clusterPassedShowerCuts;
 
 };
 
