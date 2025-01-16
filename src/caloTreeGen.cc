@@ -532,6 +532,29 @@ void caloTreeGen::createHistos_Data() {
                             "E_{3x2}/E_{3x5} (With Cuts);E_{3x2}/E_{3x5};Counts",
                             100, 0.0, 1.2);
         
+        // w_eta histograms
+        qaHistograms["weta_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("weta_NoShowerShapeCuts_" + triggerName,
+                            "w_{#eta} (No Cuts);w_{#eta};Counts",
+                            100, 0.0, 0.1);  // Example bin range: 0.0 to 0.1
+
+        qaHistograms["weta_withShowerShapeCuts_" + triggerName] =
+            createHistogram("weta_withShowerShapeCuts_" + triggerName,
+                            "w_{#eta} (With Cuts);w_{#eta};Counts",
+                            100, 0.0, 0.1);
+
+        // w_phi histograms
+        qaHistograms["wphi_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("wphi_NoShowerShapeCuts_" + triggerName,
+                            "w_{#phi} (No Cuts);w_{#phi};Counts",
+                            100, 0.0, 0.1);
+
+        qaHistograms["wphi_withShowerShapeCuts_" + triggerName] =
+            createHistogram("wphi_withShowerShapeCuts_" + triggerName,
+                            "w_{#phi} (With Cuts);w_{#phi};Counts",
+                            100, 0.0, 0.1);
+
+        
         std::map<std::pair<float, float>, std::map<std::string, TObject*>>& qaIsolationHistograms = qaIsolationHistogramsByTriggerAndPt[triggerName];
 
         for (const auto& pT_bin : pT_bins) {
@@ -1105,37 +1128,69 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     float                    vtxz  // z-vertex of the event
 )
 {
-  // 0) Prepare result struct
+  /**
+   * @brief Calculates various energy‐based “shower shape” variables for a given EMCal cluster.
+   *
+   * The goal is to quantify the cluster’s lateral energy distribution in terms of:
+   *   - NxN energy sums (e.g. 3x3, 3x7, 7x7),
+   *   - partial “line” sums (e1x1, e1x7, etc.),
+   *   - energy‐weighted RMS widths (w72, w32, w52),
+   *   - iHCal/oHCal matched tower sums,
+   *   - and additional RMS measures in real (η, φ) space (weta, wphi).
+   *
+   * This method:
+   *   1) Extracts a local 7×7 grid of energies in tower‐index space around the cluster’s “peak tower.”
+   *   2) Computes many partial sums (like e3x3, e3x7, e1x1, …).
+   *   3) Computes weighted second‐moment widths (e.g. w72, w32, w52).
+   *   4) Finds the maximum Δη, Δφ extent among the cluster’s towers.
+   *   5) Optionally sums iHCal/oHCal energies in 1×1, 2×2, or 3×3 blocks behind the cluster.
+   *   6) Computes RMS in actual (η, φ) coordinates (weta, wphi).
+   *
+   * @return A ShowerShapeVars struct containing all computed shower‐shape variables.
+   *         If essential pointers are missing or the cluster is invalid, it returns a default
+   *         (zero‐initialized) struct.
+   */
+
+  // Prepare the result struct with default‐initialized values
   ShowerShapeVars svars;
 
-  // Check essential pointers
+  //-------------------------------------------------------------------------------------------------
+  // 0) Basic checks & cluster “center” extraction
+  //-------------------------------------------------------------------------------------------------
   if (!cluster || !emcTowerContainer || !geomEM)
   {
-    return svars; // Return zeroed if missing
-  }
-
-  // 1) Use the cluster’s built-in get_shower_shapes(...) to find center
-  std::vector<float> showershape = cluster->get_shower_shapes(0.070);
-  if (showershape.size() < 6)
-  {
-    // Not enough info in the vector; return svars as is
+    // If any critical pointer is missing, we return the default svars
     return svars;
   }
 
-  float avg_eta = showershape[4] + 0.5f;
-  float avg_phi = showershape[5] + 0.5f;
+  // Retrieve a vector of “shower shapes” from the cluster, e.g. used to find the cluster’s local center
+  std::vector<float> showershape = cluster->get_shower_shapes(0.070);
+  // Typically, 0.070 might be a threshold in tower energy
+  if (showershape.size() < 6)
+  {
+    // Not enough info returned => we cannot proceed reliably
+    return svars;
+  }
+
+  // The cluster provides a “center” in integer tower indices but with fractional offset
+  float avg_eta = showershape[4] + 0.5f; // Possibly tower i‐index
+  float avg_phi = showershape[5] + 0.5f; // Possibly tower j‐index
 
   int maxieta = static_cast<int>(std::floor(avg_eta));
   int maxiphi = static_cast<int>(std::floor(avg_phi));
 
-  // Must be at least 3 away from boundary
+  // We require the peak tower to be at least 3 towers away from the boundary, so we can build a 7×7
   if (maxieta < 3 || maxieta > 92)
   {
+    // If not, we cannot fill a proper 7×7 around it
     return svars;
   }
 
-  // 2) Build local 7×7 array around (maxieta, maxiphi)
+  //-------------------------------------------------------------------------------------------------
+  // 1) Build a local 7×7 array around (maxieta, maxiphi) => E77
+  //-------------------------------------------------------------------------------------------------
   float E77[7][7];
+  // Initialize everything to zero
   for (int i = 0; i < 7; i++)
   {
     for (int j = 0; j < 7; j++)
@@ -1144,31 +1199,38 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     }
   }
 
+  // Fill E77 by scanning ±3 towers around maxieta, maxiphi
   for (int di = -3; di <= 3; di++)
   {
     for (int dj = -3; dj <= 3; dj++)
     {
       int ieta = maxieta + di;
       int iphi = maxiphi + dj;
-      shift_tower_index(ieta, iphi, 96, 256);
+      shift_tower_index(ieta, iphi, 96, 256); // Wrap ieta/iphi if needed (EMCal dimension)
 
-      // skip out-of-range
+      // Check out‐of‐range ieta
       if (ieta < 0 || ieta > 95) continue;
 
+      // Identify the tower key in TowerInfo space
       unsigned int twKey = TowerInfoDefs::encode_emcal(ieta, iphi);
       TowerInfo* tower   = emcTowerContainer->get_tower_at_key(twKey);
       if (!tower) continue;
+
+      // Grab the tower’s energy, clamp negative to zero
       float tE = tower->get_energy();
       if (tE < 0.f) tE = 0.f;
 
-      int arrI = di + 3;
+      int arrI = di + 3; // convert range [-3,+3] => [0..6]
       int arrJ = dj + 3;
       E77[arrI][arrJ] = tE;
     }
   }
 
-  // define helper lambdas to sum partial blocks
-  auto blockSum = [&](int i1, int i2, int j1, int j2) {
+  //-------------------------------------------------------------------------------------------------
+  // 2) Define helper lambdas to sum partial blocks within the E77 array
+  //-------------------------------------------------------------------------------------------------
+  auto blockSum = [&](int i1, int i2, int j1, int j2)
+  {
     float sum = 0.f;
     for (int ii = i1; ii <= i2; ii++)
     {
@@ -1179,7 +1241,8 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     }
     return sum;
   };
-  auto rowSum = [&](int row, int j1, int j2) {
+  auto rowSum = [&](int row, int j1, int j2)
+  {
     float sum = 0.f;
     for (int jj = j1; jj <= j2; jj++)
     {
@@ -1187,7 +1250,8 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     }
     return sum;
   };
-  auto colSum = [&](int col, int i1, int i2) {
+  auto colSum = [&](int col, int i1, int i2)
+  {
     float sum = 0.f;
     for (int ii = i1; ii <= i2; ii++)
     {
@@ -1196,115 +1260,149 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     return sum;
   };
 
-  // 3) NxN sums
-  float e77 = blockSum(0,6,0,6);
-  svars.e7x7 = e77;
-  svars.e77  = e77;
-  svars.e3x7 = blockSum(0,6,2,4);
-  svars.e3x3 = blockSum(2,4,2,4);
-  svars.e1x1 = E77[3][3];
-  svars.e3x2 = blockSum(2,4,2,3);
-  svars.e5x5 = blockSum(1,5,1,5);
+  //-------------------------------------------------------------------------------------------------
+  // 3) NxN sums for typical patterns
+  //-------------------------------------------------------------------------------------------------
+  float e77      = blockSum(0, 6, 0, 6);
+  svars.e7x7     = e77;
+  svars.e77      = e77; // for legacy naming
+  svars.e3x7     = blockSum(0, 6, 2, 4);
+  svars.e3x3     = blockSum(2, 4, 2, 4);
+  svars.e1x1     = E77[3][3];  // center tower
+  svars.e3x2     = blockSum(2, 4, 2, 3);
+  svars.e5x5     = blockSum(1, 5, 1, 5);
 
-  // 4) partial sums
-  svars.e11 = E77[3][3];
-  svars.e22 = blockSum(2,3,2,3);
-  svars.e13 = rowSum(3,2,4);
-  svars.e15 = rowSum(3,1,5);
-  svars.e17 = rowSum(3,0,6);
-  svars.e31 = colSum(3,2,4);
-  svars.e51 = colSum(3,1,5);
-  svars.e71 = colSum(3,0,6);
+  //-------------------------------------------------------------------------------------------------
+  // 4) Partial sums (like rowSum or colSum around the center)
+  //-------------------------------------------------------------------------------------------------
+  svars.e11 = E77[3][3];            // same as e1x1
+  svars.e22 = blockSum(2,3, 2,3);
+  svars.e13 = rowSum(3, 2, 4);
+  svars.e15 = rowSum(3, 1, 5);
+  svars.e17 = rowSum(3, 0, 6);
 
-  svars.e33 = blockSum(2,4,2,4); // same as e3x3
-  svars.e35 = blockSum(2,4,1,5);
-  svars.e37 = blockSum(2,4,0,6);
-  svars.e53 = blockSum(1,5,2,4);
-  svars.e73 = blockSum(0,6,2,4);
-  svars.e55 = blockSum(1,5,1,5); // same as e5x5
-  svars.e57 = blockSum(1,5,0,6);
-  svars.e75 = blockSum(0,6,1,5);
+  svars.e31 = colSum(3, 2, 4);
+  svars.e51 = colSum(3, 1, 5);
+  svars.e71 = colSum(3, 0, 6);
 
-  // 5) Weighted widths
+  svars.e33 = blockSum(2,4, 2,4);   // same as e3x3
+  svars.e35 = blockSum(2,4, 1,5);
+  svars.e37 = blockSum(2,4, 0,6);
+  svars.e53 = blockSum(1,5, 2,4);
+  svars.e73 = blockSum(0,6, 2,4);
+
+  svars.e55 = blockSum(1,5, 1,5);   // same as e5x5
+  svars.e57 = blockSum(1,5, 0,6);
+  svars.e75 = blockSum(0,6, 1,5);
+
+  //-------------------------------------------------------------------------------------------------
+  // 5) Weighted widths in tower‐index space: w72, w32, w52
+  //    (like RMS in tower i, ignoring tower j dimension or partially ignoring it).
+  //-------------------------------------------------------------------------------------------------
   int signphi = ((avg_phi - std::floor(avg_phi)) > 0.5f) ? 1 : -1;
+  // signphi is used to pick which side in the E77 array we treat as “phi > center”.
 
-  // w72,e72
+  // w72: Use the vertical “strip” of columns [2..4], i.e. 3 in phi dimension, all 7 in i dimension
   {
-    float sumE72=0.f, sumW72=0.f;
-    for (int i=0;i<7;i++){
-      for (int j=2;j<=4;j++){
+    float sumE72 = 0.f;
+    float sumW72 = 0.f;
+    for (int i = 0; i < 7; i++)
+    {
+      for (int j = 2; j <= 4; j++)
+      {
         float cE = E77[i][j];
-        sumE72 += cE;
-        float di = (float)(i-3);
-        sumW72 += cE*(di*di);
+        sumE72   += cE;
+        float di  = static_cast<float>(i - 3); // distance from center row
+        sumW72   += cE * (di * di);
       }
     }
     svars.e72 = sumE72;
-    svars.w72 = (sumE72>1e-6f)? std::sqrt(sumW72/sumE72) : 0.f;
+    svars.w72 = (sumE72 > 1e-6f) ? std::sqrt(sumW72 / sumE72) : 0.f;
   }
 
-  // w32,e32 => di<=1 && (dj==0|| j==(3+signphi))
+  // w32: sum over a narrower band (|di| <=1, plus a particular phi “strip”).
+  // Typically used to define an RMS in i around a narrower cross‐section in j.
   {
-    float sumE32=0.f, sumW32=0.f;
-    for (int i=0;i<7;i++){
-      for (int j=2;j<=4;j++){
-        int di=std::abs(i-3), dj=std::abs(j-3);
-        if (di<=1 && (dj==0 || j==(3+signphi)))
+    float sumE32 = 0.f;
+    float sumW32 = 0.f;
+    for (int i = 0; i < 7; i++)
+    {
+      for (int j = 2; j <= 4; j++)
+      {
+        int di = std::abs(i - 3);
+        int dj = std::abs(j - 3);
+        // The “(dj==0|| j==(3+signphi))” logic picks 2 columns in the E77 cross‐section
+        if (di <= 1 && (dj == 0 || j == (3 + signphi)))
         {
           float cE = E77[i][j];
-          sumE32 += cE;
-          float dI = (float)(i-3);
-          sumW32 += cE*(dI*dI);
+          sumE32   += cE;
+          float dI = static_cast<float>(i - 3);
+          sumW32   += cE * (dI * dI);
         }
       }
     }
     svars.e32 = sumE32;
-    svars.w32 = (sumE32>1e-6f)? std::sqrt(sumW32/sumE32) : 0.f;
+    svars.w32 = (sumE32 > 1e-6f) ? std::sqrt(sumW32 / sumE32) : 0.f;
   }
 
-  // w52,e52 => di<=2 && (dj==0|| j==(3+signphi))
+  // w52: similar idea but extends di <= 2
   {
-    float sumE52=0.f, sumW52=0.f;
-    for (int i=0;i<7;i++){
-      for (int j=2;j<=4;j++){
-        int di=std::abs(i-3), dj=std::abs(j-3);
-        if (di<=2 && (dj==0|| j==(3+signphi)))
+    float sumE52 = 0.f;
+    float sumW52 = 0.f;
+    for (int i = 0; i < 7; i++)
+    {
+      for (int j = 2; j <= 4; j++)
+      {
+        int di = std::abs(i - 3);
+        int dj = std::abs(j - 3);
+        if (di <= 2 && (dj == 0 || j == (3 + signphi)))
         {
           float cE = E77[i][j];
-          sumE52 += cE;
-          float dI = (float)(i-3);
-          sumW52 += cE*(dI*dI);
+          sumE52   += cE;
+          float dI  = static_cast<float>(i - 3);
+          sumW52   += cE * (dI * dI);
         }
       }
     }
     svars.e52 = sumE52;
-    svars.w52 = (sumE52>1e-6f)? std::sqrt(sumW52/sumE52) : 0.f;
+    svars.w52 = (sumE52 > 1e-6f) ? std::sqrt(sumW52 / sumE52) : 0.f;
   }
 
+  //-------------------------------------------------------------------------------------------------
   // 6) detamax, dphimax
+  //    = maximum tower index offset in the cluster from the “peak tower”
+  //-------------------------------------------------------------------------------------------------
   {
-    int dEtaMax=0, dPhiMax=0;
+    int dEtaMax = 0;
+    int dPhiMax = 0;
     const auto &twmap = cluster->get_towermap();
-    for (auto &it : twmap)
+    for (const auto &it : twmap)
     {
       auto rawkey = it.first;
-      int ieta2 = RawTowerDefs::decode_index1(rawkey);
-      int iphi2 = RawTowerDefs::decode_index2(rawkey);
+      int ieta2   = RawTowerDefs::decode_index1(rawkey);
+      int iphi2   = RawTowerDefs::decode_index2(rawkey);
+
       int ddEta = std::abs(ieta2 - maxieta);
+
+      // handle “wrap” in phi dimension
       int raw_dPhi = iphi2 - maxiphi;
-      if (raw_dPhi>128)  raw_dPhi-=256;
-      if (raw_dPhi<-128) raw_dPhi+=256;
-      int ddPhi= std::abs(raw_dPhi);
-      if (ddEta>dEtaMax) dEtaMax=ddEta;
-      if (ddPhi>dPhiMax) dPhiMax=ddPhi;
+      if (raw_dPhi > 128)  raw_dPhi -= 256;
+      if (raw_dPhi < -128) raw_dPhi += 256;
+      int ddPhi = std::abs(raw_dPhi);
+
+      if (ddEta > dEtaMax) dEtaMax = ddEta;
+      if (ddPhi > dPhiMax) dPhiMax = ddPhi;
     }
-    svars.detamax=dEtaMax;
-    svars.dphimax=dPhiMax;
+    svars.detamax = dEtaMax;
+    svars.dphimax = dPhiMax;
   }
 
-  // 7) iHCal / oHCal sums
+  //-------------------------------------------------------------------------------------------------
+  // 7) iHCal / oHCal sums (optional). Summation of matched HCal tower energies behind cluster
+  //-------------------------------------------------------------------------------------------------
   if (ihcalTowerContainer && geomIH && ohcalTowerContainer && geomOH)
   {
+    // find closest iHCal tower
     auto ihcalVec = find_closest_hcal_tower(
         cluster->get_eta(), cluster->get_phi(),
         geomIH, ihcalTowerContainer, vtxz, true
@@ -1312,6 +1410,7 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.ihcal_ieta = ihcalVec[0];
     svars.ihcal_iphi = ihcalVec[1];
 
+    // find closest oHCal tower
     auto ohcalVec = find_closest_hcal_tower(
         cluster->get_eta(), cluster->get_phi(),
         geomOH, ohcalTowerContainer, vtxz, false
@@ -1319,32 +1418,42 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.ohcal_ieta = ohcalVec[0];
     svars.ohcal_iphi = ohcalVec[1];
 
-    auto sumHcalBlock = [&](TowerInfoContainer* cTC, RawTowerGeomContainer* cGeom,
-                            bool inOrOut, int centerEta, int centerPhi,
-                            int dEtaMin, int dEtaMax, int dPhiMin, int dPhiMax){
-      float accum=0.f;
-      for (int di=dEtaMin; di<=dEtaMax; di++){
-        for (int dj=dPhiMin; dj<=dPhiMax; dj++){
-          int ieta_ = centerEta+di;
-          int iphi_ = centerPhi+dj;
-          shift_tower_index(ieta_, iphi_, 24, 64);
+    // Helper lambda for summing an iHCal or oHCal block in tower space.
+    auto sumHcalBlock = [&](TowerInfoContainer* cTC,
+                            RawTowerGeomContainer* cGeom,
+                            bool inOrOut,      // true => iHCal, false => oHCal
+                            int centerEta, int centerPhi,
+                            int dEtaMin, int dEtaMax,
+                            int dPhiMin, int dPhiMax)
+    {
+      float accum = 0.f;
+      for (int di = dEtaMin; di <= dEtaMax; di++)
+      {
+        for (int dj = dPhiMin; dj <= dPhiMax; dj++)
+        {
+          int ieta_ = centerEta + di;
+          int iphi_ = centerPhi + dj;
+
+          shift_tower_index(ieta_, iphi_, 24, 64); // wrap ieta/iphi in HCal dimension
           unsigned int tKey = TowerInfoDefs::encode_hcal(ieta_, iphi_);
-          TowerInfo* tw= cTC->get_tower_at_key(tKey);
-          if (!tw || !tw->get_isGood()) continue;
-          RawTowerDefs::CalorimeterId calID= inOrOut? RawTowerDefs::HCALIN: RawTowerDefs::HCALOUT;
+          TowerInfo* tw = cTC->get_tower_at_key(tKey);
+          if (!tw || !tw->get_isGood()) continue; // skip invalid towers
+
+          RawTowerDefs::CalorimeterId calID = inOrOut ? RawTowerDefs::HCALIN : RawTowerDefs::HCALOUT;
           auto rkey = RawTowerDefs::encode_towerid(calID, ieta_, iphi_);
-          auto tg = cGeom->get_tower_geometry(rkey);
+          auto tg   = cGeom->get_tower_geometry(rkey);
           if (!tg) continue;
-          float e_  = tw->get_energy();
-          float eta_= getTowerEta(tg,0,0,vtxz);
-          float et_ = e_/std::cosh(eta_);
-          accum += et_;
+
+          float e_   = tw->get_energy();
+          float eta_ = getTowerEta(tg, 0, 0, vtxz);
+          float et_  = e_ / std::cosh(eta_);
+          accum     += et_;
         }
       }
       return accum;
     };
 
-    // single tower
+    // single tower sums
     svars.ihcal_et = sumHcalBlock(ihcalTowerContainer, geomIH, true,
                                   svars.ihcal_ieta, svars.ihcal_iphi, 0, 0, 0, 0);
     svars.ohcal_et = sumHcalBlock(ohcalTowerContainer, geomOH, false,
@@ -1352,19 +1461,89 @@ ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
 
     // 2×2
     svars.ihcal_et22 = sumHcalBlock(ihcalTowerContainer, geomIH, true,
-                                    svars.ihcal_ieta, svars.ihcal_iphi, -1,0,-1,0);
+                                    svars.ihcal_ieta, svars.ihcal_iphi, -1, 0, -1, 0);
     svars.ohcal_et22 = sumHcalBlock(ohcalTowerContainer, geomOH, false,
-                                    svars.ohcal_ieta, svars.ohcal_iphi, -1,0,-1,0);
+                                    svars.ohcal_ieta, svars.ohcal_iphi, -1, 0, -1, 0);
 
     // 3×3
     svars.ihcal_et33 = sumHcalBlock(ihcalTowerContainer, geomIH, true,
-                                    svars.ihcal_ieta, svars.ihcal_iphi, -1,1,-1,1);
+                                    svars.ihcal_ieta, svars.ihcal_iphi, -1, 1, -1, 1);
     svars.ohcal_et33 = sumHcalBlock(ohcalTowerContainer, geomOH, false,
-                                    svars.ohcal_ieta, svars.ohcal_iphi, -1,1,-1,1);
+                                    svars.ohcal_ieta, svars.ohcal_iphi, -1, 1, -1, 1);
   }
 
+  //-------------------------------------------------------------------------------------------------
+  // 8) Compute w_eta, w_phi in real coordinates by re‐looping the E77 patch
+  //    => RMS in (eta, phi) around cluster->get_eta(), cluster->get_phi()
+  //-------------------------------------------------------------------------------------------------
+  {
+    float sumEeta      = 0.f;
+    float sumWetaLocal = 0.f;
+    float sumEphi      = 0.f;
+    float sumWphiLocal = 0.f;
+
+    // The cluster’s “global” (η, φ)
+    float clusterEta = cluster->get_eta();
+    float clusterPhi = cluster->get_phi();
+
+    // A small lambda to wrap Δφ into [−π, +π]
+    auto wrapDeltaPhi = [](float dphi)
+    {
+      while (dphi >  M_PI)  dphi -= 2.f * M_PI;
+      while (dphi < -M_PI)  dphi += 2.f * M_PI;
+      return dphi;
+    };
+
+    // Loop again over the same 7×7
+    for (int di = -3; di <= 3; di++)
+    {
+      for (int dj = -3; dj <= 3; dj++)
+      {
+        int ieta = maxieta + di;
+        int iphi = maxiphi + dj;
+        shift_tower_index(ieta, iphi, 96, 256);
+
+        if (ieta < 0 || ieta > 95) continue;
+
+        float tE = E77[di + 3][dj + 3];
+        if (tE < 1e-9f) continue; // skip towers with negligible energy
+
+        // Tower geometry => real (eta, phi)
+        RawTowerDefs::keytype twKey = TowerInfoDefs::encode_emcal(ieta, iphi);
+        RawTowerGeom* towerGeom     = geomEM->get_tower_geometry(twKey);
+        if (!towerGeom) continue;
+
+        float towerEta = getTowerEta(towerGeom, 0, 0, vtxz);
+        float towerPhi = towerGeom->get_phi();
+
+        float dEta = towerEta - clusterEta;
+        float dPhi = wrapDeltaPhi(towerPhi - clusterPhi);
+
+        // accumulate energy‐weighted sum of squared distances
+        sumEeta      += tE;
+        sumWetaLocal += tE * (dEta * dEta);
+
+        sumEphi      += tE;
+        sumWphiLocal += tE * (dPhi * dPhi);
+      }
+    }
+
+    // Finally set weta, wphi
+    if (sumEeta > 1e-9f)
+      svars.weta = std::sqrt(sumWetaLocal / sumEeta);
+    else
+      svars.weta = 0.f;
+
+    if (sumEphi > 1e-9f)
+      svars.wphi = std::sqrt(sumWphiLocal / sumEphi);
+    else
+      svars.wphi = 0.f;
+  }
+
+  // Done! Return the filled struct
   return svars;
 }
+
 
 
 void caloTreeGen::processClusterIsolationHistograms(
@@ -2384,6 +2563,12 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         TH1F* h_noCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_NoShowerShapeCuts_" + firedShortName];
         TH1F* h_withCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_withShowerShapeCuts_" + firedShortName];
 
+        TH1F* h_noCut_weta   = (TH1F*) qaHistograms["weta_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_weta = (TH1F*) qaHistograms["weta_withShowerShapeCuts_" + firedShortName];
+
+        TH1F* h_noCut_wphi   = (TH1F*) qaHistograms["wphi_NoShowerShapeCuts_" + firedShortName];
+        TH1F* h_withCut_wphi = (TH1F*) qaHistograms["wphi_withShowerShapeCuts_" + firedShortName];
+
 
         //----------------------------------------------------------------------
         // Now loop over all clusters and fill SHOWER SHAPE histograms
@@ -2398,6 +2583,8 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             bool  passCuts    = clusterPassedShowerCuts[clusID]; // Did it pass your shape cuts?
 
             
+            float weta_val = ssv.weta;
+            float wphi_val = ssv.wphi;
             //----------------------------
             // Compute each ratio
             //----------------------------
@@ -2451,6 +2638,8 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             if (h_noCut_3x2over3x5)          h_noCut_3x2over3x5->Fill(ratio_3x2_over_3x5);
             if (h_noCut_3x3overE)            h_noCut_3x3overE->Fill(ratio_3x3_over_E);
             if (h_noCut_3x3over3x7)          h_noCut_3x3over3x7->Fill(ratio_3x3_over_3x7);
+            if (h_noCut_weta)                h_noCut_weta->Fill(weta_val);
+            if (h_noCut_wphi)                h_noCut_wphi->Fill(wphi_val);
 
             //---------------------------------------------------
             // If cluster passes shape cuts => fill "With Cuts"
@@ -2465,6 +2654,8 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
                 if (h_withCut_3x2over3x5)    h_withCut_3x2over3x5->Fill(ratio_3x2_over_3x5);
                 if (h_withCut_3x3overE)      h_withCut_3x3overE->Fill(ratio_3x3_over_E);
                 if (h_withCut_3x3over3x7)    h_withCut_3x3over3x7->Fill(ratio_3x3_over_3x7);
+                if (h_withCut_weta)          h_withCut_weta->Fill(weta_val);
+                if (h_withCut_wphi)          h_withCut_wphi->Fill(wphi_val);
             }
         } // end cluster loop
 
