@@ -445,9 +445,9 @@ private:
     
     bool IsAcceptableTower(TowerInfo* tower);
     
-    bool applyShowerShapeCuts(const ShowerShapeVars& s, float clusterEt);
-    
     std::unordered_map<int, bool> clusterPassedShowerCuts;
+    
+    bool applyShowerShapeCuts(const ShowerShapeVars& s, float clusterEt);
 
 };
 
