@@ -40,7 +40,6 @@ R__LOAD_LIBRARY(libffarawobjects.so)
 R__LOAD_LIBRARY(libcaloTreeGen.so)
 R__LOAD_LIBRARY(libcalo_reco.so)
 R__LOAD_LIBRARY(libjetbackground.so)
-R__LOAD_LIBRARY(libJetValidation.so)
 R__LOAD_LIBRARY(libg4jets.so)
 R__LOAD_LIBRARY(libjetbase.so)
 R__LOAD_LIBRARY(libcalotrigger.so)
@@ -64,191 +63,217 @@ namespace HIJETS
 
 #endif
 
+/**
+ * @brief Macro to run either Data pipeline or Simulation pipeline for caloTreeGen
+ *
+ * @param nEvents   # of events to process (0 => process all)
+ * @param listFile  A text file containing your data file list (data) or first line for run extraction
+ * @param inName    Output name for data (if runData) or user-chosen label
+ * @param runSim    If true => runs the SIM pipeline only
+ * @param runData   If true => runs the DATA pipeline
+ */
 void Fun4All_CaloTreeGen(const int nEvents = 0,
                          const char *listFile = "input_files.list",
-                         const char *inName = "commissioning.root")
+                         const char *inName = "commissioning.root",
+                         bool runSim = false,
+                         bool runData = false)
 {
-  std::cout << "\n[DEBUG] Entering Fun4All_CaloTreeGen function..." << std::endl;
+  std::cout << "\n[DEBUG] Entering Fun4All_CaloTreeGen function...\n";
   std::cout << "    nEvents = " << nEvents << std::endl;
   std::cout << "    listFile = " << listFile << std::endl;
   std::cout << "    inName   = " << inName << std::endl;
+  std::cout << "    runSim   = " << (runSim ? "true" : "false") << std::endl;
+  std::cout << "    runData  = " << (runData ? "true" : "false") << std::endl;
 
   std::cout << "[INFO] Starting Fun4All_CaloTreeGen..." << std::endl;
 
   Fun4AllServer *se = Fun4AllServer::instance();
   std::cout << "[DEBUG] Fun4AllServer instance acquired: " << se << std::endl;
 
-  // If user wants MC truth jets
-  if (Enable::HIJETS_MC && Enable::HIJETS_TRUTH)
-  {
-    std::cout << "[DEBUG] HIJETS_MC && HIJETS_TRUTH both true. Creating truthjetreco...\n";
-    JetReco *truthjetreco = new JetReco();
-    TruthJetInput *tji = new TruthJetInput(Jet::PARTICLE);
-    tji->add_embedding_flag(0);  // changes depending on signal vs. embedded
-    truthjetreco->add_input(tji);
-    truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.2), "AntiKt_Truth_r02");
-    truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.3), "AntiKt_Truth_r03");
-    truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.4), "AntiKt_Truth_r04");
-    truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.5), "AntiKt_Truth_r05");
-    truthjetreco->set_algo_node("ANTIKT");
-    truthjetreco->set_input_node("TRUTH");
-    truthjetreco->Verbosity(0);
-    std::cout << "[INFO] Registering truthjetreco subsystem..." << std::endl;
-    se->registerSubsystem(truthjetreco);
-  }
-  gSystem->Load("libg4dst");
+  if (runData)
+    {
+      // If user wants MC truth jets
+      if (Enable::HIJETS_MC && Enable::HIJETS_TRUTH)
+      {
+        std::cout << "[DEBUG] HIJETS_MC && HIJETS_TRUTH both true. Creating truthjetreco...\n";
+        JetReco *truthjetreco = new JetReco();
+        TruthJetInput *tji = new TruthJetInput(Jet::PARTICLE);
+        tji->add_embedding_flag(0);  // changes depending on signal vs. embedded
+        truthjetreco->add_input(tji);
+        truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.2), "AntiKt_Truth_r02");
+        truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.3), "AntiKt_Truth_r03");
+        truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.4), "AntiKt_Truth_r04");
+        truthjetreco->add_algo(new FastJetAlgo(Jet::ANTIKT, 0.5), "AntiKt_Truth_r05");
+        truthjetreco->set_algo_node("ANTIKT");
+        truthjetreco->set_input_node("TRUTH");
+        truthjetreco->Verbosity(0);
+        std::cout << "[INFO] Registering truthjetreco subsystem..." << std::endl;
+        se->registerSubsystem(truthjetreco);
+      }
+      gSystem->Load("libg4dst");
 
-  // Basic run config
-  recoConsts *rc = recoConsts::instance();
-  std::cout << "[DEBUG] Setting CDB_GLOBALTAG to 'ProdA_2024'..." << std::endl;
-  rc->set_StringFlag("CDB_GLOBALTAG", "ProdA_2024");
+      // Basic run config
+      recoConsts *rc = recoConsts::instance();
+      std::cout << "[DEBUG] Setting CDB_GLOBALTAG to 'ProdA_2024'..." << std::endl;
+      rc->set_StringFlag("CDB_GLOBALTAG", "ProdA_2024");
 
-  // Read the first filename to extract the run number
-  std::cout << "[DEBUG] Attempting to open listFile: " << listFile << std::endl;
-  std::ifstream infile(listFile);
-  std::string firstFilename;
-  if (!infile.is_open())
-  {
-    std::cerr << "[ERROR] Could not open input file list: " << listFile << std::endl;
-    return;
-  }
-  if (!std::getline(infile, firstFilename))
-  {
-    std::cerr << "[ERROR] Input file list is empty: " << listFile << std::endl;
-    return;
-  }
-  std::cout << "[DEBUG] First filename read: " << firstFilename << std::endl;
+      // Read the first filename to extract the run number
+      std::cout << "[DEBUG] Attempting to open listFile: " << listFile << std::endl;
+      std::ifstream infile(listFile);
+      std::string firstFilename;
+      if (!infile.is_open())
+      {
+        std::cerr << "[ERROR] Could not open input file list: " << listFile << std::endl;
+        return;
+      }
+      if (!std::getline(infile, firstFilename))
+      {
+        std::cerr << "[ERROR] Input file list is empty: " << listFile << std::endl;
+        return;
+      }
+      std::cout << "[DEBUG] First filename read: " << firstFilename << std::endl;
 
-  // Extract run number from the first filename
-  std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
-  int runnumber = runseg.first;
-  int segnumber = runseg.second;
-  std::cout << "[DEBUG] Extracted run: " << runnumber
-            << " segment: " << segnumber << std::endl;
+      // Extract run number from the first filename
+      std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
+      int runnumber = runseg.first;
+      int segnumber = runseg.second;
+      std::cout << "[DEBUG] Extracted run: " << runnumber
+                << " segment: " << segnumber << std::endl;
 
-  if (runnumber <= 0)
-  {
-    std::cerr << "[ERROR] Invalid run number extracted from first file: "
-              << runnumber << ". Exiting..." << std::endl;
-    return;
-  }
-  rc->set_uint64Flag("TIMESTAMP", runnumber);
+      if (runnumber <= 0)
+      {
+        std::cerr << "[ERROR] Invalid run number extracted from first file: "
+                  << runnumber << ". Exiting..." << std::endl;
+        return;
+      }
+      rc->set_uint64Flag("TIMESTAMP", runnumber);
 
-  std::cout << "[DEBUG] Setting up CaloTowerStatus modules...\n";
-  CaloTowerStatus *statusEMC = new CaloTowerStatus("CEMCSTATUS");
-  statusEMC->set_detector_type(CaloTowerDefs::CEMC);
-  statusEMC->set_time_cut(1);
-  statusEMC->set_inputNodePrefix("TOWERINFO_CALIB_");
-  statusEMC->Verbosity(0);
-  std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
-  se->registerSubsystem(statusEMC);
+      std::cout << "[DEBUG] Setting up CaloTowerStatus modules...\n";
+      CaloTowerStatus *statusEMC = new CaloTowerStatus("CEMCSTATUS");
+      statusEMC->set_detector_type(CaloTowerDefs::CEMC);
+      statusEMC->set_time_cut(1);
+      statusEMC->set_inputNodePrefix("TOWERINFO_CALIB_");
+      statusEMC->Verbosity(0);
+      std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
+      se->registerSubsystem(statusEMC);
 
-  CaloTowerStatus *statusHCalIn = new CaloTowerStatus("HCALINSTATUS");
-  statusHCalIn->set_detector_type(CaloTowerDefs::HCALIN);
-  statusHCalIn->set_time_cut(2);
-  statusHCalIn->set_inputNodePrefix("TOWERINFO_CALIB_");
-  statusHCalIn->Verbosity(0);
-  std::cout << "[INFO] Registering towerjetreco subsystem (statusHCalIn)..." << std::endl;
-  se->registerSubsystem(statusHCalIn);
+      CaloTowerStatus *statusHCalIn = new CaloTowerStatus("HCALINSTATUS");
+      statusHCalIn->set_detector_type(CaloTowerDefs::HCALIN);
+      statusHCalIn->set_time_cut(2);
+      statusHCalIn->set_inputNodePrefix("TOWERINFO_CALIB_");
+      statusHCalIn->Verbosity(0);
+      std::cout << "[INFO] Registering towerjetreco subsystem (statusHCalIn)..." << std::endl;
+      se->registerSubsystem(statusHCalIn);
 
-  CaloTowerStatus *statusHCALOUT = new CaloTowerStatus("HCALOUTSTATUS");
-  statusHCALOUT->set_detector_type(CaloTowerDefs::HCALOUT);
-  statusHCALOUT->set_time_cut(2);
-  statusHCALOUT->set_inputNodePrefix("TOWERINFO_CALIB_");
-  statusHCALOUT->Verbosity(0);
-  std::cout << "[INFO] Registering statusHCALOUT subsystem..." << std::endl;
-  se->registerSubsystem(statusHCALOUT);
+      CaloTowerStatus *statusHCALOUT = new CaloTowerStatus("HCALOUTSTATUS");
+      statusHCALOUT->set_detector_type(CaloTowerDefs::HCALOUT);
+      statusHCALOUT->set_time_cut(2);
+      statusHCALOUT->set_inputNodePrefix("TOWERINFO_CALIB_");
+      statusHCALOUT->Verbosity(0);
+      std::cout << "[INFO] Registering statusHCALOUT subsystem..." << std::endl;
+      se->registerSubsystem(statusHCALOUT);
 
-  RetowerCEMC *rcemc = new RetowerCEMC();
-  rcemc->Verbosity(0);
-  rcemc->set_towerinfo(true);
-  rcemc->set_frac_cut(0.5); // fraction of retower that must be masked
-  rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
-  std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
-  se->registerSubsystem(rcemc);
+      RetowerCEMC *rcemc = new RetowerCEMC();
+      rcemc->Verbosity(0);
+      rcemc->set_towerinfo(true);
+      rcemc->set_frac_cut(0.5); // fraction of retower that must be masked
+      rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
+      std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
+      se->registerSubsystem(rcemc);
 
-  std::cout << "[DEBUG] Creating EmcRawClusterBuilderTemplate (ClusterBuilder)..." << std::endl;
-  RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
-  ClusterBuilder->Detector("CEMC");
-  ClusterBuilder->set_threshold_energy(0.030); // 30 MeV threshold
-  std::string emc_prof = getenv("CALIBRATIONROOT");
-  emc_prof += "/EmcProfile/CEMCprof_Thresh30MeV.root";
-  ClusterBuilder->LoadProfile(emc_prof);
-  ClusterBuilder->set_UseTowerInfo(1);  // using TowerInfo objects
-  std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
-  se->registerSubsystem(ClusterBuilder);
+      std::cout << "[DEBUG] Creating EmcRawClusterBuilderTemplate (ClusterBuilder)..." << std::endl;
+      RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
+      ClusterBuilder->Detector("CEMC");
+      ClusterBuilder->set_threshold_energy(0.030); // 30 MeV threshold
+      std::string emc_prof = getenv("CALIBRATIONROOT");
+      emc_prof += "/EmcProfile/CEMCprof_Thresh30MeV.root";
+      ClusterBuilder->LoadProfile(emc_prof);
+      ClusterBuilder->set_UseTowerInfo(1);  // using TowerInfo objects
+      std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
+      se->registerSubsystem(ClusterBuilder);
 
-  std::cout << "[DEBUG] Creating towerjetreco (JetReco) with Tower inputs...\n";
-  JetReco *towerjetreco = new JetReco();
-  towerjetreco->add_input(new TowerJetInput(Jet::CEMC_TOWERINFO_RETOWER, HIJETS::tower_prefix));
-  towerjetreco->add_input(new TowerJetInput(Jet::HCALIN_TOWERINFO, HIJETS::tower_prefix));
-  towerjetreco->add_input(new TowerJetInput(Jet::HCALOUT_TOWERINFO, HIJETS::tower_prefix));
-  towerjetreco->add_algo(new FastJetAlgoSub(Jet::ANTIKT, 0.2), "AntiKt_TowerInfo_HIRecoSeedsRaw_r02");
-  towerjetreco->set_algo_node("ANTIKT");
-  towerjetreco->set_input_node("TOWER");
-  towerjetreco->Verbosity(0);
-  std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
-  se->registerSubsystem(towerjetreco);
+      std::cout << "[DEBUG] Creating towerjetreco (JetReco) with Tower inputs...\n";
+      JetReco *towerjetreco = new JetReco();
+      towerjetreco->add_input(new TowerJetInput(Jet::CEMC_TOWERINFO_RETOWER, HIJETS::tower_prefix));
+      towerjetreco->add_input(new TowerJetInput(Jet::HCALIN_TOWERINFO, HIJETS::tower_prefix));
+      towerjetreco->add_input(new TowerJetInput(Jet::HCALOUT_TOWERINFO, HIJETS::tower_prefix));
+      towerjetreco->add_algo(new FastJetAlgoSub(Jet::ANTIKT, 0.2), "AntiKt_TowerInfo_HIRecoSeedsRaw_r02");
+      towerjetreco->set_algo_node("ANTIKT");
+      towerjetreco->set_input_node("TOWER");
+      towerjetreco->Verbosity(0);
+      std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
+      se->registerSubsystem(towerjetreco);
 
-  std::cout << "[DEBUG] Creating DetermineTowerBackground (dtb)..." << std::endl;
-  DetermineTowerBackground *dtb = new DetermineTowerBackground();
-  dtb->SetBackgroundOutputName("TowerInfoBackground_Sub1");
-  dtb->SetFlow(HIJETS::do_flow);
-  dtb->SetSeedType(0);
-  dtb->SetSeedJetD(3);
-  dtb->set_towerinfo(true);
-  dtb->Verbosity(0);
-  dtb->set_towerNodePrefix(HIJETS::tower_prefix);
-  std::cout << "[INFO] Registering dtb subsystem..." << std::endl;
-  se->registerSubsystem(dtb);
+      std::cout << "[DEBUG] Creating DetermineTowerBackground (dtb)..." << std::endl;
+      DetermineTowerBackground *dtb = new DetermineTowerBackground();
+      dtb->SetBackgroundOutputName("TowerInfoBackground_Sub1");
+      dtb->SetFlow(HIJETS::do_flow);
+      dtb->SetSeedType(0);
+      dtb->SetSeedJetD(3);
+      dtb->set_towerinfo(true);
+      dtb->Verbosity(0);
+      dtb->set_towerNodePrefix(HIJETS::tower_prefix);
+      std::cout << "[INFO] Registering dtb subsystem..." << std::endl;
+      se->registerSubsystem(dtb);
 
-  CopyAndSubtractJets *casj = new CopyAndSubtractJets();
-  casj->SetFlowModulation(HIJETS::do_flow);
-  casj->Verbosity(0);
-  casj->set_towerinfo(true);
-  casj->set_towerNodePrefix(HIJETS::tower_prefix);
-  std::cout << "[INFO] Registering CopyAndSubtractJets subsystem (casj)..." << std::endl;
-  se->registerSubsystem(casj);
+      CopyAndSubtractJets *casj = new CopyAndSubtractJets();
+      casj->SetFlowModulation(HIJETS::do_flow);
+      casj->Verbosity(0);
+      casj->set_towerinfo(true);
+      casj->set_towerNodePrefix(HIJETS::tower_prefix);
+      std::cout << "[INFO] Registering CopyAndSubtractJets subsystem (casj)..." << std::endl;
+      se->registerSubsystem(casj);
 
-  DetermineTowerBackground *dtb2 = new DetermineTowerBackground();
-  dtb2->SetBackgroundOutputName("TowerInfoBackground_Sub2");
-  dtb2->SetFlow(HIJETS::do_flow);
-  dtb2->SetSeedType(1);
-  dtb2->SetSeedJetPt(7);
-  dtb2->Verbosity(0);
-  dtb2->set_towerinfo(true);
-  dtb2->set_towerNodePrefix(HIJETS::tower_prefix);
-  std::cout << "[INFO] Registering dtb2 subsystem..." << std::endl;
-  se->registerSubsystem(dtb2);
+      DetermineTowerBackground *dtb2 = new DetermineTowerBackground();
+      dtb2->SetBackgroundOutputName("TowerInfoBackground_Sub2");
+      dtb2->SetFlow(HIJETS::do_flow);
+      dtb2->SetSeedType(1);
+      dtb2->SetSeedJetPt(7);
+      dtb2->Verbosity(0);
+      dtb2->set_towerinfo(true);
+      dtb2->set_towerNodePrefix(HIJETS::tower_prefix);
+      std::cout << "[INFO] Registering dtb2 subsystem..." << std::endl;
+      se->registerSubsystem(dtb2);
 
-  SubtractTowers *st = new SubtractTowers();
-  st->SetFlowModulation(HIJETS::do_flow);
-  st->Verbosity(0);
-  st->set_towerinfo(true);
-  st->set_towerNodePrefix(HIJETS::tower_prefix);
-  std::cout << "[INFO] Registering SubtractTowers subsystem (st)..." << std::endl;
-  se->registerSubsystem(st);
+      SubtractTowers *st = new SubtractTowers();
+      st->SetFlowModulation(HIJETS::do_flow);
+      st->Verbosity(0);
+      st->set_towerinfo(true);
+      st->set_towerNodePrefix(HIJETS::tower_prefix);
+      std::cout << "[INFO] Registering SubtractTowers subsystem (st)..." << std::endl;
+      se->registerSubsystem(st);
 
-  //  ClusterIso(const std::string&, float eTCut, int coneSize, bool do_subtracted, bool do_unsubtracted);
-  ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 1);
-  makeClusterEt->Verbosity(0);
-  std::cout << "[INFO] ClusterIso subsystem created with name 'CaloTreeGen'..." << std::endl;
-  se->registerSubsystem(makeClusterEt);
+
+      //  ClusterIso(const std::string&, float eTCut, int coneSize, bool do_subtracted, bool do_unsubtracted);
+      ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 1);
+      makeClusterEt->Verbosity(0);
+
+      std::cout << "[INFO] ClusterIso subsystem created with name 'CaloTreeGen'"
+                << " (only for data mode)..." << std::endl;
+
+      se->registerSubsystem(makeClusterEt);
+  } //END IF RUNDATA
+
 
   // Finally, register caloTreeGen
   std::cout << "[DEBUG] Creating caloTreeGen with Outfile name: " << inName << std::endl;
   caloTreeGen *eval = new caloTreeGen(inName);
   std::cout << "[INFO] Registering caloTreeGen subsystem...\n";
+    
+  eval->setVerbose(true);         // e.g. set false if you don't want the debug printing
+  eval->setLimitEvents(true);      // choose whether to limit or not
+  eval->setEventLimit(50000);     // if limiting events, set the maximum events
+
   /*
-   SET RUNNING OF DATA AND SIM
+   SET RUNNING OF DATA AND SIM from inputted condor submit arguments
    */
-  eval->setWantData(true);  // to run data code
-  eval->setWantSim(true);   // to run sim code
+  eval->setWantSim(runSim);
+  eval->setWantData(runData);
   se->registerSubsystem(eval);
     
     
   // If wantData == true
-  if (eval->getWantData())  // <-- the key guard
+  if (runData)
   {
       std::cout << "[DEBUG] Creating TriggerRunInfoReco subsystem...\n";
       TriggerRunInfoReco *triggerruninforeco = new TriggerRunInfoReco();
@@ -276,7 +301,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     
     
   // 2) Simulation Pipeline (new functionality):
-  if (eval->getWantSim())
+  if (runSim)
   {
     // We'll open "caloAnaSimListFile.list" (in the same directory) for the sim input
     const std::string simListFile = "../caloAnaSimListFile.list";
