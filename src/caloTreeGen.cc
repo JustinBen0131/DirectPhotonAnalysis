@@ -665,8 +665,8 @@ void caloTreeGen::createHistos_Data() {
                         // 2) Build a name for the histogram
                         //    e.g. "nClustersInEvent_pT_2.0to3.0_TriggerName"
                         std::string nClusHistName = "nClustersInEvent_pT_" +
-                            formatFloatForFilename(pT_min) + "to" +
-                            formatFloatForFilename(pT_max) + "_" + triggerName;
+                            formatFloatForFilename(pT_bin.first) + "to" +
+                            formatFloatForFilename(pT_bin.second) + "_" + triggerName;
 
                         // 3) Create a 1D histogram with e.g. 200 bins from 0..200
                         //    (or adjust the range as you like)
@@ -782,93 +782,117 @@ void caloTreeGen::createHistos_Data() {
 
 void caloTreeGen::createHistos_ForSimulation()
 {
+  // [1] If verbose, print a message that we are entering this method
   if (verbose)
     std::cout << "[DEBUG] Entering caloTreeGen::createHistos_ForSimulation()...\n";
 
+  // [2] Basic error check: ensure we have a valid TFile pointer for SIM
   if (!outSim)
   {
-    std::cerr << "[ERROR] outSim is null! Did you forget to set the TFile for SIM?\n";
+    std::cerr << "[ERROR] 'outSim' is null! Did you forget to open the sim output file?\n";
     return;
   }
-  // Create subdirectory (if not already done)
+
+  // [3] Create or retrieve the sub-directory "SimulationQA" in the outSim TFile
+  //     so we can keep simulation histograms separate from data histos
   TDirectory* simDir = outSim->mkdir("SimulationQA");
   if (!simDir)
   {
-    std::cerr << "[ERROR] Failed to create SimulationQA directory.\n";
+    std::cerr << "[ERROR] Failed to create 'SimulationQA' directory in outSim.\n";
     exit(EXIT_FAILURE);
   }
-  simDir->cd();
+  simDir->cd(); // Move into that directory, so new histograms go there
 
-  // Helper for 1D hist creation
+  // [4] Define a small lambda that helps create 1D histograms and checks for duplicates
   auto createHist1D = [&](const std::string &hname,
                           const std::string &htitle,
                           int nbins, double xmin, double xmax)
   {
+    // Check for duplicates
     if (outSim->Get(hname.c_str()))
     {
-      std::cerr << "[ERROR] Duplicate hist name in SIM: " << hname << std::endl;
+      std::cerr << "[ERROR] Duplicate histogram name in SIM: " << hname << std::endl;
       exit(EXIT_FAILURE);
     }
+    // Actually create the histogram
     TH1F* h = new TH1F(hname.c_str(), htitle.c_str(), nbins, xmin, xmax);
+    // Assign it to the simDir so it is owned by the TFile
     h->SetDirectory(simDir);
+
+    // If we want extra debug info
+    if (verbose)
+    {
+      std::cout << "[DEBUG] Creating 1D hist: " << hname
+                << ", title='" << htitle << "', nbins=" << nbins
+                << ", range=[" << xmin << "," << xmax << "]\n";
+    }
+
     return h;
   };
 
-  // A classification histogram for each pT bin
-  // We'll store integer codes for cluster classification:
-  //   1=prompt,2=frag,3=decay,4=other
+  // [5] We build classification & purity histograms for each pT bin
+  //     1) classification: "hClusterTruthClass_pT_<min>to<max>"
+  //     2) purity:         "hPromptPurity_pT_<min>to<max>"
   for (auto& bin : pT_bins)
   {
     float pTmin = bin.first;
     float pTmax = bin.second;
 
-    // e.g. "hClusterTruthClass_pT_2.0to3.0"
+    // Construct a safe name for classification histogram
     std::string hname_class = "hClusterTruthClass_pT_" +
        formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax);
 
-    TH1F* hClass = createHist1D(
-      hname_class,
-      (hname_class + ";truthClass;Counts").c_str(),
-      4, 0.5, 4.5
-    );
+    // Title might mention that we store 1=prompt,2=frag,3=decay,4=other
+    std::string htitle_class = hname_class + ";Truth Class Code;Counts";
+    
+    // Create the classification histogram
+    TH1F* hClass = createHist1D(hname_class, htitle_class, /*nbins=*/4, /*xmin=*/0.5, /*xmax=*/4.5);
+    
+    // Save the pointer in our map so we can fill it later
     hClusterTruthClass_pTbin[bin] = hClass;
 
-    // For purity: store ratio from 0->1
-    // e.g. "hPromptPurity_pT_2.0to3.0"
+    // Now define the purity histogram name
     std::string hname_purity = "hPromptPurity_pT_" +
        formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax);
 
-    TH1F* hPurity = createHist1D(
-      hname_purity,
-      (hname_purity + ";Purity;Counts").c_str(),
-      50, 0., 1.
-    );
+    // Title for that histogram
+    std::string htitle_purity = hname_purity + ";Purity;Counts";
+    // We'll fill it with a ratio from 0..1 => 50 bins from 0..1 is typical
+    TH1F* hPurity = createHist1D(hname_purity, htitle_purity, /*nbins=*/50, /*xmin=*/0., /*xmax=*/1.);
     hPromptPurity_pTbin[bin] = hPurity;
   }
 
-  // Optionally a global histogram for e.g. “Isolated from Pi0/Eta”
+  // [6] Create “global” or “unbinned” histograms for isolation from pi0/eta, etc.
   hIsoFromPi0Eta = createHist1D(
     "hIsoFromPi0Eta",
-    "Isolated Clusters from #pi^{0}/#eta (#it{iso} #leq 6 GeV);Cluster E_{T} [GeV];Counts",
+    "Isolated Clusters from #pi^{0}/#eta (iso <= 6 GeV);Cluster E_{T} [GeV];Counts",
     50, 0.0, 50.0
   );
 
   hIsoNotPi0Eta  = createHist1D(
     "hIsoNotPi0Eta",
-    "Isolated Clusters not from #pi^{0}/#eta (#it{iso} #leq 6 GeV);Cluster E_{T} [GeV];Counts",
+    "Isolated Clusters not from #pi^{0}/#eta (iso <= 6 GeV);Cluster E_{T} [GeV];Counts",
     50, 0.0, 50.0
   );
 
-  // Maybe some truth photon pT histograms
-  hPhotonPtPrompt   = createHist1D("hPhotonPtPrompt",   "Prompt Photon pT; pT [GeV];Counts",    60, 0, 30);
-  // etc. for frag or decay, if you want
+  // Perhaps a global histogram for prompt photon pT
+  hPhotonPtPrompt = createHist1D(
+    "hPhotonPtPrompt",
+    "Prompt Photon pT; pT [GeV];Counts",
+    60, 0, 30
+  );
 
-  // Return to top-level directory
+  // [7] Return to top-level directory so we don’t nest future objects incorrectly
   outSim->cd();
 
+  // [8] If verbose, print a final message that we created the histograms
   if (verbose)
-    std::cout << "[INFO] createHistos_ForSimulation: Created pT-binned histograms.\n";
+  {
+    std::cout << "[INFO] createHistos_ForSimulation: pT-binned and global histograms created.\n"
+              << "       Histograms stored in 'SimulationQA' directory of outSim.\n";
+  }
 }
+
 
 
 void caloTreeGen::collectTowerData(TowerInfoContainer* towerContainer,
@@ -1162,16 +1186,16 @@ std::vector<int> caloTreeGen::find_closest_hcal_tower(float eta, float phi, RawT
 }
 
 caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
-    RawCluster*              cluster,
-    TowerInfoContainer*      emcTowerContainer,
-    RawTowerGeomContainer*   geomEM,
-    TowerInfoContainer*      ihcalTowerContainer,
-    RawTowerGeomContainer*   geomIH,
-    TowerInfoContainer*      ohcalTowerContainer,
-    RawTowerGeomContainer*   geomOH,
-    float                    vtxz  // z-vertex of the event
-    float clusterEta,
-    float clusterPhi
+    RawCluster*            cluster,
+    TowerInfoContainer*    emcTowerContainer,
+    RawTowerGeomContainer* geomEM,
+    TowerInfoContainer*    ihcalTowerContainer,
+    RawTowerGeomContainer* geomIH,
+    TowerInfoContainer*    ohcalTowerContainer,
+    RawTowerGeomContainer* geomOH,
+    float                  vtxz,         // z-vertex of the event
+    float                  clusterEta,   // pass cluster's eta externally
+    float                  clusterPhi    // pass cluster's phi externally
 )
 {
   /**
@@ -1448,18 +1472,18 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
   //-------------------------------------------------------------------------------------------------
   if (ihcalTowerContainer && geomIH && ohcalTowerContainer && geomOH)
   {
-    // find closest iHCal tower
+      // find closest iHCal tower (pass clusterEta, clusterPhi)
     auto ihcalVec = find_closest_hcal_tower(
-        cluster->get_eta(), cluster->get_phi(),
-        geomIH, ihcalTowerContainer, vtxz, true
+          clusterEta, clusterPhi,
+          geomIH, ihcalTowerContainer, vtxz, true
     );
     svars.ihcal_ieta = ihcalVec[0];
     svars.ihcal_iphi = ihcalVec[1];
 
     // find closest oHCal tower
     auto ohcalVec = find_closest_hcal_tower(
-        cluster->get_eta(), cluster->get_phi(),
-        geomOH, ohcalTowerContainer, vtxz, false
+      clusterEta, clusterPhi,
+      geomOH, ohcalTowerContainer, vtxz, false
     );
     svars.ohcal_ieta = ohcalVec[0];
     svars.ohcal_iphi = ohcalVec[1];
@@ -1520,7 +1544,7 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
 
   //-------------------------------------------------------------------------------------------------
   // 8) Compute w_eta, w_phi in real coordinates by re‐looping the E77 patch
-  //    => RMS in (eta, phi) around cluster->get_eta(), cluster->get_phi()
+  //    => RMS in (eta, phi) around clusEta and clusPhi
   //-------------------------------------------------------------------------------------------------
   {
     float sumEeta      = 0.f;
@@ -2865,7 +2889,6 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             const auto &ssv   = shapeVarsMap[clusID];
             bool  passCuts    = clusterPassedShowerCuts[clusID]; // Did it pass your shape cuts?
 
-            
             float weta_val = ssv.weta;
             float wphi_val = ssv.wphi;
             //----------------------------
@@ -3211,152 +3234,208 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 
 int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
+  //----------------------------------------------------------------------
+  // [0] Optional debug print
+  // If 'verbose' is ON, log that we have entered this function
+  //----------------------------------------------------------------------
   if (verbose)
   {
-    std::cout << "\n[DEBUG] caloTreeGen::process_event_Sim() called for event_count="
-              << event_count << " on topNode=" << topNode << std::endl;
+    std::cout << "\n[DEBUG] Entering caloTreeGen::process_event_Sim()"
+              << " => event_count=" << event_count
+              << ", topNode="      << topNode << std::endl;
   }
 
-  // 1) Keep track of how many events we've processed
+  //----------------------------------------------------------------------
+  // [1] Update event counter and check user limit
+  //----------------------------------------------------------------------
   event_count++;
   if (m_limitEvents && event_count > m_eventLimit)
   {
     if (verbose)
-      std::cout << "[SIM] Event limit " << m_eventLimit << " reached, skipping further events." << std::endl;
+    {
+      std::cout << "[SIM] Event limit (" << m_eventLimit
+                << ") reached; stopping at event=" << event_count << "." << std::endl;
+    }
     return Fun4AllReturnCodes::ABORTRUN;
   }
 
-  // 2) Grab the next entry from our TTree "slimTree"
-  static Long64_t iEntry = 0; // a static cursor
+  //----------------------------------------------------------------------
+  // [2] Retrieve next entry from TTree "slimTree"
+  //     We keep a static 'iEntry' to remember our position
+  //----------------------------------------------------------------------
+  static Long64_t iEntry = 0;
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-    std::cerr << "[WARNING] No more events in TTree or TTree is null.\n";
+    // If TTree pointer is null or no more entries => stop
+    std::cerr << "[WARNING] 'slimTree' is null or no more entries to read.\n";
     return Fun4AllReturnCodes::ABORTRUN;
   }
-  slimTree->GetEntry(iEntry++);
-  // At this point, the arrays ncluster_CEMC_SIM, cluster_iso_04_CEMC_SIM, cluster_Et_CEMC_SIM, etc.
-  // as well as nparticles_SIM, particle_pid_SIM[], etc. are filled.
 
-  //-------------------------------------------------------------------------------------
-  // (A) Example: fill hIsoFromPi0Eta and hIsoNotPi0Eta (the global histograms)
-  //-------------------------------------------------------------------------------------
-  for (int ic = 0; ic < ncluster_CEMC_SIM; ic++)
+  // Actually load the data arrays for this event
+  slimTree->GetEntry(iEntry++);
+  
+  //----------------------------------------------------------------------
+  // [2A] If verbose, let’s print info about the TTree structure once,
+  //      e.g., its branches and leaves
+  //----------------------------------------------------------------------
+  static bool printedTreeInfo = false;
+  if (verbose && !printedTreeInfo)
+  {
+    printedTreeInfo = true; // so we only do this once
+
+    std::cout << "[VERBOSE] Printing available branches in 'slimTree':\n";
+    TObjArray* branchList = slimTree->GetListOfBranches();
+    if (branchList)
+    {
+      for (int ib = 0; ib < branchList->GetEntries(); ib++)
+      {
+        TBranch* br = (TBranch*) branchList->At(ib);
+        if (!br) continue;
+        std::cout << "  Branch name: " << br->GetName()
+                  << ", Title: "      << br->GetTitle() << std::endl;
+      }
+    }
+    else
+    {
+      std::cout << "  [WARNING] No branches found in slimTree?\n";
+    }
+  }
+
+  //----------------------------------------------------------------------
+  // [3] Fill global isolation-based histograms: hIsoFromPi0Eta, hIsoNotPi0Eta
+  //----------------------------------------------------------------------
+  for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
   {
     float isoVal = cluster_iso_04_CEMC_SIM[ic];
     float cEt    = cluster_Et_CEMC_SIM[ic];
-    int   pid    = cluster_pid_CEMC_SIM[ic];  // e.g. 22,111,221, etc.
+    int   pid    = cluster_pid_CEMC_SIM[ic]; // e.g. 22=photon,111=pi0,221=eta,...
 
+    // We require isoVal <= 6 to be "isolated" in this definition
     if (isoVal <= 6.f)
     {
-      // If from pi0(111) or eta(221)
+      // If cluster is from pi0 or eta => fill hIsoFromPi0Eta
       if (pid == 111 || pid == 221)
       {
         if (hIsoFromPi0Eta) hIsoFromPi0Eta->Fill(cEt);
       }
+      // else fill hIsoNotPi0Eta
       else
       {
-        if (hIsoNotPi0Eta)  hIsoNotPi0Eta->Fill(cEt);
+        if (hIsoNotPi0Eta) hIsoNotPi0Eta->Fill(cEt);
       }
     }
   }
 
-  //-------------------------------------------------------------------------------------
-  // (B) We'll keep track of "prompt cluster" tagging for each pT bin
-  //-------------------------------------------------------------------------------------
-  std::map<std::pair<float,float>, int> nTaggedPrompt_byPt;
-  std::map<std::pair<float,float>, int> nCorrectlyPrompt_byPt;
-  // Initialize counters to zero for each bin
-  for (const auto& bin : pT_bins)
+  //----------------------------------------------------------------------
+  // [4] We define "prompt cluster" => (isoVal<6, cEt>5).
+  //     We'll measure how many such clusters are truly prompt (photonclass=1).
+  //----------------------------------------------------------------------
+  // Create counters for each pT bin
+  std::map<std::pair<float, float>, int> nTaggedPrompt_byPt;
+  std::map<std::pair<float, float>, int> nCorrectlyPrompt_byPt;
+  for (auto &bin : pT_bins)
   {
     nTaggedPrompt_byPt[bin]       = 0;
     nCorrectlyPrompt_byPt[bin]    = 0;
   }
 
-  //-------------------------------------------------------------------------------------
-  // (C) Loop over clusters in this event
-  //-------------------------------------------------------------------------------------
-  for (int ic = 0; ic < ncluster_CEMC_SIM; ic++)
-  {
-    float cEt   = cluster_Et_CEMC_SIM[ic];
-    float cEta  = cluster_Eta_CEMC_SIM[ic];
-    float cPhi  = cluster_Phi_CEMC_SIM[ic];
-    float isoVal= cluster_iso_04_CEMC_SIM[ic];
+  //----------------------------------------------------------------------
+  // [5] Additional counters: total clusters that are prompt, frag, decay, other
+  //----------------------------------------------------------------------
+  int totalPrompt = 0;
+  int totalFrag   = 0;
+  int totalDecay  = 0;
+  int totalOther  = 0;
 
-    // 1) Identify which pT bin this cluster falls into
+  //----------------------------------------------------------------------
+  // [6] Main loop over clusters => classification
+  //----------------------------------------------------------------------
+  for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
+  {
+    float cEt     = cluster_Et_CEMC_SIM[ic];
+    float cEta    = cluster_Eta_CEMC_SIM[ic];
+    float cPhi    = cluster_Phi_CEMC_SIM[ic];
+    float isoVal  = cluster_iso_04_CEMC_SIM[ic];
+
+    // [6.1] Find which pT bin we belong to
     bool inRange = false;
     std::pair<float,float> matchedPtBin;
-    for (const auto& bin : pT_bins)
+    for (auto &bin : pT_bins)
     {
-      float pTmin = bin.first;
-      float pTmax = bin.second;
-      if (cEt >= pTmin && cEt < pTmax)
+      if (cEt >= bin.first && cEt < bin.second)
       {
         matchedPtBin = bin;
         inRange = true;
         break;
       }
     }
-    if (!inRange)
-    {
-      // This cluster is outside your defined pT bins, so skip
-      continue;
-    }
+    if (!inRange) continue; // skip cluster if no pT bin match
 
-    // 2) Find best truth photon match (PID=22) within dR<0.05
-    int   bestIndex = -1;
-    float bestDR    = 9999.f;
-    for (int ip = 0; ip < nparticles_SIM; ip++)
+    // [6.2] Find best truth photon => minimal deltaR<0.05
+    int   bestMatchIndex = -1;
+    float bestDR         = 9999.f;
+    for (int ip = 0; ip < nparticles_SIM; ++ip)
     {
-      if (particle_pid_SIM[ip] != 22) continue;  // only match to actual photons
+      // must be pid=22 => real photon
+      if (particle_pid_SIM[ip] != 22) continue;
+
       float dR = deltaR(cEta, particle_Eta_SIM[ip], cPhi, particle_Phi_SIM[ip]);
       if (dR < 0.05 && dR < bestDR)
       {
-        bestDR    = dR;
-        bestIndex = ip;
+        bestDR = dR;
+        bestMatchIndex = ip;
       }
     }
 
-    // 3) Classify cluster => 1=prompt,2=fragment,3=decay,4=other
-    int truthClass = 4; // default => "other"
-    if (bestIndex >= 0)
+    // [6.3] Derive truthClass => 1=prompt,2=frag,3=decay,4=other
+    int truthClass = 4;
+    if (bestMatchIndex >= 0)
     {
-      int photClass = particle_photonclass_SIM[bestIndex]; // e.g. 1=prompt,2=frag,3=decay
-      if      (photClass == 1) truthClass = 1; // prompt
-      else if (photClass == 2) truthClass = 2; // frag
-      else if (photClass == 3) truthClass = 3; // decay
-      else                     truthClass = 4; // other
+      int photClass = particle_photonclass_SIM[bestMatchIndex];
+      switch (photClass)
+      {
+        case 1: truthClass = 1; break; // prompt
+        case 2: truthClass = 2; break; // frag
+        case 3: truthClass = 3; break; // decay
+        default: truthClass = 4; break;
+      }
     }
 
-    // 4) Fill classification histogram for *this* pT bin
+    // [6.4] Increment counters for the entire event
+    if      (truthClass == 1) totalPrompt++;
+    else if (truthClass == 2) totalFrag++;
+    else if (truthClass == 3) totalDecay++;
+    else                      totalOther++;
+
+    // [6.5] Fill “classification vs. pT bin” hist, e.g. "hClusterTruthClass_pT_2.0to3.0"
     if (hClusterTruthClass_pTbin.count(matchedPtBin))
     {
       hClusterTruthClass_pTbin[matchedPtBin]->Fill(truthClass);
     }
 
-    // 5) For demonstration, "tag" a cluster as prompt if isoVal<6 and cEt>5
-    bool clusterIsPromptCandidate = (isoVal<6.f && cEt>5.f);
+    // [6.6] Check if cluster is "prompt candidate" => isoVal<6, cEt>5
+    bool clusterIsPromptCandidate = (isoVal < 6.f && cEt > 5.f);
     if (clusterIsPromptCandidate)
     {
       nTaggedPrompt_byPt[matchedPtBin]++;
-      // If it’s truly prompt => increment the “correctly prompt” count
-      if (truthClass == 1)
+      if (truthClass == 1) // truly prompt
       {
         nCorrectlyPrompt_byPt[matchedPtBin]++;
       }
     }
   } // end cluster loop
 
-  //-------------------------------------------------------------------------------------
-  // (D) After cluster loop: fill “prompt purity” ratio in hPromptPurity_pTbin
-  //-------------------------------------------------------------------------------------
-  for (const auto& bin : pT_bins)
+  //----------------------------------------------------------------------
+  // [7] Now compute the “prompt purity” => (# truly prompt) / (# tagged)
+  //----------------------------------------------------------------------
+  for (auto &bin : pT_bins)
   {
-    int nTagged    = nTaggedPrompt_byPt[bin];
-    int nCorrect   = nCorrectlyPrompt_byPt[bin];
+    int nTagged  = nTaggedPrompt_byPt[bin];
+    int nCorrect = nCorrectlyPrompt_byPt[bin];
     if (nTagged > 0)
     {
       float ratio = float(nCorrect) / float(nTagged);
-      // Fill that ratio
+      // e.g. "hPromptPurity_pT_2.0to3.0"
       if (hPromptPurity_pTbin.count(bin))
       {
         hPromptPurity_pTbin[bin]->Fill(ratio);
@@ -3364,34 +3443,47 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  //-------------------------------------------------------------------------------------
-  // (E) Finally, we can fill any extra truth info: e.g. prompt photon pT distribution
-  //-------------------------------------------------------------------------------------
+  //----------------------------------------------------------------------
+  // [8] Also fill distribution of *all* prompt photons in pT
+  //     => look for (pid=22, photonclass=1)
+  //----------------------------------------------------------------------
   int nPromptPhotons = 0;
-  for (int ip = 0; ip < nparticles_SIM; ip++)
+  for (int ip = 0; ip < nparticles_SIM; ++ip)
   {
-    // If this truth particle is a photon (pid=22) *and* photonclass=1 => prompt
     if (particle_pid_SIM[ip] == 22 && particle_photonclass_SIM[ip] == 1)
     {
-      float pT = particle_Pt_SIM[ip];
-      if (hPhotonPtPrompt) hPhotonPtPrompt->Fill(pT);
+      float truthPt = particle_Pt_SIM[ip];
+      if (hPhotonPtPrompt) hPhotonPtPrompt->Fill(truthPt);
       nPromptPhotons++;
     }
   }
 
-  //-------------------------------------------------------------------------------------
-  // (F) Print info if verbose
-  //-------------------------------------------------------------------------------------
+  //----------------------------------------------------------------------
+  // [9] If 'verbose', print a summary for this event
+  //----------------------------------------------------------------------
   if (verbose)
   {
-    std::cout << "[SIM] Done filling cluster/truth histos for event="
-              << event_count << " with " << ncluster_CEMC_SIM
-              << " clusters, of which we found " << nPromptPhotons
-              << " prompt truth photons.\n";
+    int totalClusters   = ncluster_CEMC_SIM;
+    int totalBackground = totalFrag + totalDecay + totalOther;
+
+    std::cout << "[SIM] Event " << event_count
+              << " (iEntry=" << iEntry << ") summary:\n"
+              << "   => #clusters=" << totalClusters
+              << " => #prompt=" << totalPrompt
+              << ", #frag="   << totalFrag
+              << ", #decay="  << totalDecay
+              << ", #other="  << totalOther
+              << "  (Total BG=" << totalBackground << ")\n"
+              << "   => # prompt truth photons in event=" << nPromptPhotons
+              << "\n   => Done with process_event_Sim.\n";
   }
 
+  //----------------------------------------------------------------------
+  // All done => success
+  //----------------------------------------------------------------------
   return Fun4AllReturnCodes::EVENT_OK;
 }
+
 
 
 
@@ -3622,109 +3714,77 @@ int caloTreeGen::endData(PHCompositeNode *topNode) {
 
 int caloTreeGen::endSim(PHCompositeNode *topNode)
 {
+  // [1] Print a message that we are writing out simulation histograms
   std::cout << ANSI_COLOR_BLUE_BOLD
             << "[SIM End] Writing simulation histograms..."
             << ANSI_COLOR_RESET << std::endl;
 
-  // 1) Check that outSim file is valid and open
+  // [2] Check that outSim is valid
   if (!outSim || !outSim->IsOpen())
   {
-    std::cerr << "[ERROR] outSim is null or not open. No SIM histos will be written."
-              << std::endl;
+    std::cerr << "[ERROR] outSim is null or not open. No SIM histos can be written.\n";
     return Fun4AllReturnCodes::ABORTEVENT;
   }
 
-  // 2) Make sure we’re writing into outSim
+  // [3] Make sure to go to outSim root directory
   outSim->cd();
 
-  //--------------------------------------------------------------------------
-  // 3) Write out the “global” histograms that aren’t pT-binned
-  //--------------------------------------------------------------------------
+  // [4] A helper lambda to write a histogram if it exists
   auto writeHistIfExists = [&](TH1F* histPtr, const std::string& histName)
   {
-    if (!histPtr) return; // Skip if pointer is null
+    if (!histPtr) return; // skip if pointer is null
     if (histPtr->Write() == 0)
     {
-      std::cerr << "[ERROR] Failed to write " << histName << "." << std::endl;
+      std::cerr << "[ERROR] Failed to write " << histName << ".\n";
     }
     else if (verbose)
     {
-      std::cout << "[INFO] Wrote " << histName << " to outSim." << std::endl;
+      std::cout << "[INFO] Successfully wrote " << histName
+                << " to outSim." << std::endl;
     }
-    // Optionally delete or keep in memory:
-    // delete histPtr;
-    // histPtr = nullptr;
   };
 
-  // (a) hIsoFromPi0Eta
-  writeHistIfExists(hIsoFromPi0Eta,  "hIsoFromPi0Eta");
+  // [5] Write the “global” histograms that are not pT-binned
+  writeHistIfExists(hIsoFromPi0Eta,   "hIsoFromPi0Eta");
+  writeHistIfExists(hIsoNotPi0Eta,    "hIsoNotPi0Eta");
+  writeHistIfExists(hPhotonPtPrompt,  "hPhotonPtPrompt");
 
-  // (b) hIsoNotPi0Eta
-  writeHistIfExists(hIsoNotPi0Eta,   "hIsoNotPi0Eta");
-
-  // (c) hPhotonPtPrompt, if desired
-  writeHistIfExists(hPhotonPtPrompt, "hPhotonPtPrompt");
-
-  //--------------------------------------------------------------------------
-  // 4) Write out the pT-binned histograms
-  //    - classification: hClusterTruthClass_pTbin[bin]
-  //    - purity: hPromptPurity_pTbin[bin]
-  //--------------------------------------------------------------------------
-  for (const auto &bin : pT_bins)
+  // [6] Write out the pT-binned histograms: classification & purity
+  for (auto &bin : pT_bins)
   {
-    // e.g. bin.first= pTmin, bin.second= pTmax
+    // classification
     if (hClusterTruthClass_pTbin.count(bin))
     {
       TH1F* hClass = hClusterTruthClass_pTbin[bin];
       if (hClass)
       {
-        if (hClass->Write() == 0)
-        {
-          std::cerr << "[ERROR] Failed to write hClusterTruthClass_pT_"
-                    << bin.first << "to" << bin.second << std::endl;
-        }
-        else if (verbose)
-        {
-          std::cout << "[INFO] Wrote hClusterTruthClass_pT_"
-                    << bin.first << "to" << bin.second << " to outSim."
-                    << std::endl;
-        }
+        std::string histName = "hClusterTruthClass_pT_" +
+          formatFloatForFilename(bin.first) + "to" + formatFloatForFilename(bin.second);
+        writeHistIfExists(hClass, histName);
       }
     }
-
+    // purity
     if (hPromptPurity_pTbin.count(bin))
     {
       TH1F* hPurity = hPromptPurity_pTbin[bin];
       if (hPurity)
       {
-        if (hPurity->Write() == 0)
-        {
-          std::cerr << "[ERROR] Failed to write hPromptPurity_pT_"
-                    << bin.first << "to" << bin.second << std::endl;
-        }
-        else if (verbose)
-        {
-          std::cout << "[INFO] Wrote hPromptPurity_pT_"
-                    << bin.first << "to" << bin.second << " to outSim."
-                    << std::endl;
-        }
+        std::string histName = "hPromptPurity_pT_" +
+          formatFloatForFilename(bin.first) + "to" + formatFloatForFilename(bin.second);
+        writeHistIfExists(hPurity, histName);
       }
     }
   }
 
-  //--------------------------------------------------------------------------
-  // 5) Close the simulation TFile if we are done with it
-  //--------------------------------------------------------------------------
+  // [7] Close the simulation file
   outSim->Close();
   delete outSim;
   outSim = nullptr;
 
   if (verbose)
   {
-    std::cout << "[INFO] EndSim: Finished writing SIM histos and closed outSim."
-              << std::endl;
+    std::cout << "[INFO] endSim: Finished writing SIM histos & closed outSim.\n";
   }
-
   return Fun4AllReturnCodes::EVENT_OK;
 }
 
