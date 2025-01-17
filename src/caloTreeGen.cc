@@ -1195,74 +1195,90 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     RawTowerGeomContainer* geomIH,
     TowerInfoContainer*    ohcalTowerContainer,
     RawTowerGeomContainer* geomOH,
-    float                  vtxz,         // z-vertex of the event
-    float                  clusterEta,   // pass cluster's eta externally
-    float                  clusterPhi    // pass cluster's phi externally
+    float                  vtxz,         // z-vertex
+    float                  clusterEta,   // cluster's eta
+    float                  clusterPhi    // cluster's phi
 )
 {
-  /**
-   * @brief Calculates various energy‐based “shower shape” variables for a given EMCal cluster.
-   *
-   * The goal is to quantify the cluster’s lateral energy distribution in terms of:
-   *   - NxN energy sums (e.g. 3x3, 3x7, 7x7),
-   *   - partial “line” sums (e1x1, e1x7, etc.),
-   *   - energy‐weighted RMS widths (w72, w32, w52),
-   *   - iHCal/oHCal matched tower sums,
-   *   - and additional RMS measures in real (η, φ) space (weta, wphi).
-   *
-   * This method:
-   *   1) Extracts a local 7×7 grid of energies in tower‐index space around the cluster’s “peak tower.”
-   *   2) Computes many partial sums (like e3x3, e3x7, e1x1, …).
-   *   3) Computes weighted second‐moment widths (e.g. w72, w32, w52).
-   *   4) Finds the maximum Δη, Δφ extent among the cluster’s towers.
-   *   5) Optionally sums iHCal/oHCal energies in 1×1, 2×2, or 3×3 blocks behind the cluster.
-   *   6) Computes RMS in actual (η, φ) coordinates (weta, wphi).
-   *
-   * @return A ShowerShapeVars struct containing all computed shower‐shape variables.
-   *         If essential pointers are missing or the cluster is invalid, it returns a default
-   *         (zero‐initialized) struct.
-   */
+  /*
+    Calculates various energy-based “shower shape” variables.
+    If something fails, returns a zero-initialized ShowerShapeVars struct.
+  */
 
-  // Prepare the result struct with default‐initialized values
-  ShowerShapeVars svars;
+  ShowerShapeVars svars;  // default-constructed (all zero)
 
-  //-------------------------------------------------------------------------------------------------
-  // 0) Basic checks & cluster “center” extraction
-  //-------------------------------------------------------------------------------------------------
+  if (verbose)
+  {
+    std::cout << "[DEBUG] computeShowerShapesForCluster() entered."
+              << " cluster=" << cluster
+              << ", emcTowerContainer=" << emcTowerContainer
+              << ", geomEM=" << geomEM
+              << std::endl;
+  }
+
+  // -----------------------------------------------------------------
+  // Step 0) Basic checks
+  // -----------------------------------------------------------------
   if (!cluster || !emcTowerContainer || !geomEM)
   {
-    // If any critical pointer is missing, we return the default svars
+    if (verbose)
+    {
+      std::cout << "[DEBUG] computeShowerShapes: missing pointer(s)."
+                << " cluster=" << cluster
+                << ", emcTowerContainer=" << emcTowerContainer
+                << ", geomEM=" << geomEM
+                << " => returning default svars.\n";
+    }
     return svars;
   }
 
-  // Retrieve a vector of “shower shapes” from the cluster, e.g. used to find the cluster’s local center
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 0 passed. Attempting to retrieve shower shape from cluster...\n";
+  }
+
+  // -----------------------------------------------------------------
+  // Step 1) Retrieve cluster shower shapes
+  // -----------------------------------------------------------------
   std::vector<float> showershape = cluster->get_shower_shapes(0.070);
-  // Typically, 0.070 might be a threshold in tower energy
   if (showershape.size() < 6)
   {
-    // Not enough info returned => we cannot proceed reliably
+    if (verbose)
+    {
+      std::cout << "[DEBUG] cluster->get_shower_shapes(0.070) returned only "
+                << showershape.size() << " elements < 6 => cannot proceed.\n";
+    }
     return svars;
   }
 
-  // The cluster provides a “center” in integer tower indices but with fractional offset
-  float avg_eta = showershape[4] + 0.5f; // Possibly tower i‐index
-  float avg_phi = showershape[5] + 0.5f; // Possibly tower j‐index
+  float avg_eta = showershape[4] + 0.5f;
+  float avg_phi = showershape[5] + 0.5f;
+  int maxieta   = static_cast<int>(std::floor(avg_eta));
+  int maxiphi   = static_cast<int>(std::floor(avg_phi));
 
-  int maxieta = static_cast<int>(std::floor(avg_eta));
-  int maxiphi = static_cast<int>(std::floor(avg_phi));
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 1 done. maxieta=" << maxieta
+              << ", maxiphi=" << maxiphi
+              << " (clusterEta=" << clusterEta
+              << ", clusterPhi=" << clusterPhi << ")\n";
+  }
 
-  // We require the peak tower to be at least 3 towers away from the boundary, so we can build a 7×7
+  // Check boundary
   if (maxieta < 3 || maxieta > 92)
   {
-    // If not, we cannot fill a proper 7×7 around it
+    if (verbose)
+    {
+      std::cout << "[DEBUG] maxieta=" << maxieta
+                << " is too close to boundary for a 7x7 => returning.\n";
+    }
     return svars;
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // 1) Build a local 7×7 array around (maxieta, maxiphi) => E77
-  //-------------------------------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  // Step 2) Build local 7×7 array => E77
+  // -----------------------------------------------------------------
   float E77[7][7];
-  // Initialize everything to zero
   for (int i = 0; i < 7; i++)
   {
     for (int j = 0; j < 7; j++)
@@ -1271,36 +1287,38 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     }
   }
 
-  // Fill E77 by scanning ±3 towers around maxieta, maxiphi
   for (int di = -3; di <= 3; di++)
   {
     for (int dj = -3; dj <= 3; dj++)
     {
       int ieta = maxieta + di;
       int iphi = maxiphi + dj;
-      shift_tower_index(ieta, iphi, 96, 256); // Wrap ieta/iphi if needed (EMCal dimension)
+      shift_tower_index(ieta, iphi, 96, 256);
 
-      // Check out‐of‐range ieta
       if (ieta < 0 || ieta > 95) continue;
 
-      // Identify the tower key in TowerInfo space
       unsigned int twKey = TowerInfoDefs::encode_emcal(ieta, iphi);
       TowerInfo* tower   = emcTowerContainer->get_tower_at_key(twKey);
       if (!tower) continue;
 
-      // Grab the tower’s energy, clamp negative to zero
       float tE = tower->get_energy();
       if (tE < 0.f) tE = 0.f;
 
-      int arrI = di + 3; // convert range [-3,+3] => [0..6]
+      int arrI = di + 3;
       int arrJ = dj + 3;
       E77[arrI][arrJ] = tE;
     }
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // 2) Define helper lambdas to sum partial blocks within the E77 array
-  //-------------------------------------------------------------------------------------------------
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 2 done. E77 local 7x7 constructed around ("
+              << maxieta << "," << maxiphi << ").\n";
+  }
+
+  // -----------------------------------------------------------------
+  // Step 3) NxN sums
+  // -----------------------------------------------------------------
   auto blockSum = [&](int i1, int i2, int j1, int j2)
   {
     float sum = 0.f;
@@ -1332,23 +1350,19 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     return sum;
   };
 
-  //-------------------------------------------------------------------------------------------------
-  // 3) NxN sums for typical patterns
-  //-------------------------------------------------------------------------------------------------
-  float e77      = blockSum(0, 6, 0, 6);
-  svars.e7x7     = e77;
-  svars.e77      = e77; // for legacy naming
-  svars.e3x7     = blockSum(0, 6, 2, 4);
-  svars.e3x3     = blockSum(2, 4, 2, 4);
-  svars.e1x1     = E77[3][3];  // center tower
-  svars.e3x2     = blockSum(2, 4, 2, 3);
-  svars.e5x5     = blockSum(1, 5, 1, 5);
+  float e77  = blockSum(0, 6, 0, 6);
+  svars.e7x7 = e77;
+  svars.e77  = e77;
 
-  //-------------------------------------------------------------------------------------------------
-  // 4) Partial sums (like rowSum or colSum around the center)
-  //-------------------------------------------------------------------------------------------------
-  svars.e11 = E77[3][3];            // same as e1x1
-  svars.e22 = blockSum(2,3, 2,3);
+  svars.e3x7 = blockSum(0, 6, 2, 4);
+  svars.e3x3 = blockSum(2, 4, 2, 4);
+  svars.e1x1 = E77[3][3];
+  svars.e3x2 = blockSum(2, 4, 2, 3);
+  svars.e5x5 = blockSum(1, 5, 1, 5);
+
+  // partial sums
+  svars.e11 = svars.e1x1;
+  svars.e22 = blockSum(2, 3, 2, 3);
   svars.e13 = rowSum(3, 2, 4);
   svars.e15 = rowSum(3, 1, 5);
   svars.e17 = rowSum(3, 0, 6);
@@ -1357,24 +1371,30 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
   svars.e51 = colSum(3, 1, 5);
   svars.e71 = colSum(3, 0, 6);
 
-  svars.e33 = blockSum(2,4, 2,4);   // same as e3x3
-  svars.e35 = blockSum(2,4, 1,5);
-  svars.e37 = blockSum(2,4, 0,6);
-  svars.e53 = blockSum(1,5, 2,4);
-  svars.e73 = blockSum(0,6, 2,4);
+  svars.e33 = blockSum(2, 4, 2, 4);
+  svars.e35 = blockSum(2, 4, 1, 5);
+  svars.e37 = blockSum(2, 4, 0, 6);
+  svars.e53 = blockSum(1, 5, 2, 4);
+  svars.e73 = blockSum(0, 6, 2, 4);
 
-  svars.e55 = blockSum(1,5, 1,5);   // same as e5x5
-  svars.e57 = blockSum(1,5, 0,6);
-  svars.e75 = blockSum(0,6, 1,5);
+  svars.e55 = blockSum(1, 5, 1, 5);
+  svars.e57 = blockSum(1, 5, 0, 6);
+  svars.e75 = blockSum(0, 6, 1, 5);
 
-  //-------------------------------------------------------------------------------------------------
-  // 5) Weighted widths in tower‐index space: w72, w32, w52
-  //    (like RMS in tower i, ignoring tower j dimension or partially ignoring it).
-  //-------------------------------------------------------------------------------------------------
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 3 done. e7x7=" << svars.e7x7
+              << ", e3x3=" << svars.e3x3
+              << ", e5x5=" << svars.e5x5
+              << "\n";
+  }
+
+  // -----------------------------------------------------------------
+  // Step 4) Weighted widths (w72, w32, w52)
+  // -----------------------------------------------------------------
   int signphi = ((avg_phi - std::floor(avg_phi)) > 0.5f) ? 1 : -1;
-  // signphi is used to pick which side in the E77 array we treat as “phi > center”.
 
-  // w72: Use the vertical “strip” of columns [2..4], i.e. 3 in phi dimension, all 7 in i dimension
+  // w72
   {
     float sumE72 = 0.f;
     float sumW72 = 0.f;
@@ -1384,16 +1404,15 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
       {
         float cE = E77[i][j];
         sumE72   += cE;
-        float di  = static_cast<float>(i - 3); // distance from center row
-        sumW72   += cE * (di * di);
+        float di  = (float)(i - 3);
+        sumW72   += cE * di * di;
       }
     }
     svars.e72 = sumE72;
     svars.w72 = (sumE72 > 1e-6f) ? std::sqrt(sumW72 / sumE72) : 0.f;
   }
 
-  // w32: sum over a narrower band (|di| <=1, plus a particular phi “strip”).
-  // Typically used to define an RMS in i around a narrower cross‐section in j.
+  // w32
   {
     float sumE32 = 0.f;
     float sumW32 = 0.f;
@@ -1403,12 +1422,12 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
       {
         int di = std::abs(i - 3);
         int dj = std::abs(j - 3);
-        // The “(dj==0|| j==(3+signphi))” logic picks 2 columns in the E77 cross‐section
+        // picks 2 columns in the cross‐section
         if (di <= 1 && (dj == 0 || j == (3 + signphi)))
         {
           float cE = E77[i][j];
           sumE32   += cE;
-          float dI = static_cast<float>(i - 3);
+          float dI  = (float)(i - 3);
           sumW32   += cE * (dI * dI);
         }
       }
@@ -1417,7 +1436,7 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.w32 = (sumE32 > 1e-6f) ? std::sqrt(sumW32 / sumE32) : 0.f;
   }
 
-  // w52: similar idea but extends di <= 2
+  // w52
   {
     float sumE52 = 0.f;
     float sumW52 = 0.f;
@@ -1431,7 +1450,7 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
         {
           float cE = E77[i][j];
           sumE52   += cE;
-          float dI  = static_cast<float>(i - 3);
+          float dI  = (float)(i - 3);
           sumW52   += cE * (dI * dI);
         }
       }
@@ -1440,27 +1459,38 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.w52 = (sumE52 > 1e-6f) ? std::sqrt(sumW52 / sumE52) : 0.f;
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // 6) detamax, dphimax
-  //    = maximum tower index offset in the cluster from the “peak tower”
-  //-------------------------------------------------------------------------------------------------
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 4 done. w72=" << svars.w72
+              << ", w32=" << svars.w32
+              << ", w52=" << svars.w52
+              << "\n";
+  }
+
+  // -----------------------------------------------------------------
+  // Step 5) detamax, dphimax from cluster's towermap
+  // -----------------------------------------------------------------
   {
     int dEtaMax = 0;
     int dPhiMax = 0;
     const auto &twmap = cluster->get_towermap();
+    if (verbose)
+    {
+      std::cout << "[DEBUG] cluster->get_towermap() size="
+                << twmap.size() << "\n";
+    }
+
     for (const auto &it : twmap)
     {
       auto rawkey = it.first;
       int ieta2   = RawTowerDefs::decode_index1(rawkey);
       int iphi2   = RawTowerDefs::decode_index2(rawkey);
 
-      int ddEta = std::abs(ieta2 - maxieta);
-
-      // handle “wrap” in phi dimension
+      int ddEta   = std::abs(ieta2 - maxieta);
       int raw_dPhi = iphi2 - maxiphi;
       if (raw_dPhi > 128)  raw_dPhi -= 256;
       if (raw_dPhi < -128) raw_dPhi += 256;
-      int ddPhi = std::abs(raw_dPhi);
+      int ddPhi   = std::abs(raw_dPhi);
 
       if (ddEta > dEtaMax) dEtaMax = ddEta;
       if (ddPhi > dPhiMax) dPhiMax = ddPhi;
@@ -1469,20 +1499,29 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.dphimax = dPhiMax;
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // 7) iHCal / oHCal sums (optional). Summation of matched HCal tower energies behind cluster
-  //-------------------------------------------------------------------------------------------------
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 5 done. detamax=" << svars.detamax
+              << ", dphimax=" << svars.dphimax << "\n";
+  }
+
+  // -----------------------------------------------------------------
+  // Step 6) iHCal / oHCal sums
+  // -----------------------------------------------------------------
   if (ihcalTowerContainer && geomIH && ohcalTowerContainer && geomOH)
   {
-      // find closest iHCal tower (pass clusterEta, clusterPhi)
+    if (verbose)
+    {
+      std::cout << "[DEBUG] Step 6: Summing iHCal/oHCal behind cluster.\n";
+    }
+
     auto ihcalVec = find_closest_hcal_tower(
-          clusterEta, clusterPhi,
-          geomIH, ihcalTowerContainer, vtxz, true
+      clusterEta, clusterPhi,
+      geomIH, ihcalTowerContainer, vtxz, true
     );
     svars.ihcal_ieta = ihcalVec[0];
     svars.ihcal_iphi = ihcalVec[1];
 
-    // find closest oHCal tower
     auto ohcalVec = find_closest_hcal_tower(
       clusterEta, clusterPhi,
       geomOH, ohcalTowerContainer, vtxz, false
@@ -1490,10 +1529,9 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     svars.ohcal_ieta = ohcalVec[0];
     svars.ohcal_iphi = ohcalVec[1];
 
-    // Helper lambda for summing an iHCal or oHCal block in tower space.
     auto sumHcalBlock = [&](TowerInfoContainer* cTC,
                             RawTowerGeomContainer* cGeom,
-                            bool inOrOut,      // true => iHCal, false => oHCal
+                            bool inOrOut,
                             int centerEta, int centerPhi,
                             int dEtaMin, int dEtaMax,
                             int dPhiMin, int dPhiMax)
@@ -1505,13 +1543,14 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
         {
           int ieta_ = centerEta + di;
           int iphi_ = centerPhi + dj;
+          shift_tower_index(ieta_, iphi_, 24, 64);
 
-          shift_tower_index(ieta_, iphi_, 24, 64); // wrap ieta/iphi in HCal dimension
           unsigned int tKey = TowerInfoDefs::encode_hcal(ieta_, iphi_);
           TowerInfo* tw = cTC->get_tower_at_key(tKey);
-          if (!tw || !tw->get_isGood()) continue; // skip invalid towers
+          if (!tw || !tw->get_isGood()) continue;
 
-          RawTowerDefs::CalorimeterId calID = inOrOut ? RawTowerDefs::HCALIN : RawTowerDefs::HCALOUT;
+          RawTowerDefs::CalorimeterId calID = inOrOut ? RawTowerDefs::HCALIN
+                                                      : RawTowerDefs::HCALOUT;
           auto rkey = RawTowerDefs::encode_towerid(calID, ieta_, iphi_);
           auto tg   = cGeom->get_tower_geometry(rkey);
           if (!tg) continue;
@@ -1525,44 +1564,67 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
       return accum;
     };
 
-    // single tower sums
-    svars.ihcal_et = sumHcalBlock(ihcalTowerContainer, geomIH, true,
-                                  svars.ihcal_ieta, svars.ihcal_iphi, 0, 0, 0, 0);
-    svars.ohcal_et = sumHcalBlock(ohcalTowerContainer, geomOH, false,
-                                  svars.ohcal_ieta, svars.ohcal_iphi, 0, 0, 0, 0);
+    // single tower
+    svars.ihcal_et = sumHcalBlock(
+      ihcalTowerContainer, geomIH, true,
+      svars.ihcal_ieta, svars.ihcal_iphi,
+      0, 0, 0, 0
+    );
+    svars.ohcal_et = sumHcalBlock(
+      ohcalTowerContainer, geomOH, false,
+      svars.ohcal_ieta, svars.ohcal_iphi,
+      0, 0, 0, 0
+    );
 
     // 2×2
-    svars.ihcal_et22 = sumHcalBlock(ihcalTowerContainer, geomIH, true,
-                                    svars.ihcal_ieta, svars.ihcal_iphi, -1, 0, -1, 0);
-    svars.ohcal_et22 = sumHcalBlock(ohcalTowerContainer, geomOH, false,
-                                    svars.ohcal_ieta, svars.ohcal_iphi, -1, 0, -1, 0);
+    svars.ihcal_et22 = sumHcalBlock(
+      ihcalTowerContainer, geomIH, true,
+      svars.ihcal_ieta, svars.ihcal_iphi,
+      -1, 0, -1, 0
+    );
+    svars.ohcal_et22 = sumHcalBlock(
+      ohcalTowerContainer, geomOH, false,
+      svars.ohcal_ieta, svars.ohcal_iphi,
+      -1, 0, -1, 0
+    );
 
     // 3×3
-    svars.ihcal_et33 = sumHcalBlock(ihcalTowerContainer, geomIH, true,
-                                    svars.ihcal_ieta, svars.ihcal_iphi, -1, 1, -1, 1);
-    svars.ohcal_et33 = sumHcalBlock(ohcalTowerContainer, geomOH, false,
-                                    svars.ohcal_ieta, svars.ohcal_iphi, -1, 1, -1, 1);
+    svars.ihcal_et33 = sumHcalBlock(
+      ihcalTowerContainer, geomIH, true,
+      svars.ihcal_ieta, svars.ihcal_iphi,
+      -1, 1, -1, 1
+    );
+    svars.ohcal_et33 = sumHcalBlock(
+      ohcalTowerContainer, geomOH, false,
+      svars.ohcal_ieta, svars.ohcal_iphi,
+      -1, 1, -1, 1
+    );
+  }
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 6 done. ihcal_et=" << svars.ihcal_et
+              << ", ohcal_et=" << svars.ohcal_et
+              << ", ihcal_et33=" << svars.ihcal_et33
+              << ", ohcal_et33=" << svars.ohcal_et33
+              << "\n";
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // 8) Compute w_eta, w_phi in real coordinates by re‐looping the E77 patch
-  //    => RMS in (eta, phi) around clusEta and clusPhi
-  //-------------------------------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  // Step 7) RMS in real (eta,phi)
+  // -----------------------------------------------------------------
   {
     float sumEeta      = 0.f;
     float sumWetaLocal = 0.f;
     float sumEphi      = 0.f;
     float sumWphiLocal = 0.f;
 
-    // A small lambda to wrap Δφ into [−π, +π]
     auto wrapDeltaPhi = [](float dphi)
     {
-      while (dphi >  M_PI)  dphi -= 2.f * M_PI;
-      while (dphi < -M_PI)  dphi += 2.f * M_PI;
+      while (dphi >  M_PI)  dphi -= 2.f*M_PI;
+      while (dphi < -M_PI)  dphi += 2.f*M_PI;
       return dphi;
     };
 
-    // Loop again over the same 7×7
     for (int di = -3; di <= 3; di++)
     {
       for (int dj = -3; dj <= 3; dj++)
@@ -1574,11 +1636,10 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
         if (ieta < 0 || ieta > 95) continue;
 
         float tE = E77[di + 3][dj + 3];
-        if (tE < 1e-9f) continue; // skip towers with negligible energy
+        if (tE < 1e-9f) continue;
 
-        // Tower geometry => real (eta, phi)
         RawTowerDefs::keytype twKey = TowerInfoDefs::encode_emcal(ieta, iphi);
-        RawTowerGeom* towerGeom     = geomEM->get_tower_geometry(twKey);
+        RawTowerGeom* towerGeom = geomEM->get_tower_geometry(twKey);
         if (!towerGeom) continue;
 
         float towerEta = getTowerEta(towerGeom, 0, 0, vtxz);
@@ -1587,7 +1648,6 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
         float dEta = towerEta - clusterEta;
         float dPhi = wrapDeltaPhi(towerPhi - clusterPhi);
 
-        // accumulate energy‐weighted sum of squared distances
         sumEeta      += tE;
         sumWetaLocal += tE * (dEta * dEta);
 
@@ -1596,21 +1656,24 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
       }
     }
 
-    // Finally set weta, wphi
     if (sumEeta > 1e-9f)
       svars.weta = std::sqrt(sumWetaLocal / sumEeta);
-    else
-      svars.weta = 0.f;
-
     if (sumEphi > 1e-9f)
       svars.wphi = std::sqrt(sumWphiLocal / sumEphi);
-    else
-      svars.wphi = 0.f;
+  }
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Step 7 done. weta=" << svars.weta
+              << ", wphi=" << svars.wphi << "\n";
   }
 
-  // Done! Return the filled struct
+  if (verbose)
+  {
+    std::cout << "[DEBUG] computeShowerShapesForCluster finished successfully.\n";
+  }
   return svars;
 }
+
 
 
 
@@ -2535,7 +2598,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
      -TOWERINFO_CALIB_HCALOUT_SUB1
      */
     /*
-     switch to non retowered emcal -- TOWERINFO_CALIB_CEMC
+     switch to non retowered emcal -- TOWERINFO_CALIB_CEMC OR TOWERINFO_CALIB_CEMC_RETOWER
      */
     TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC_RETOWER");
     TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
