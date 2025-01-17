@@ -558,46 +558,70 @@ void caloTreeGen::createHistos_Data() {
         
         std::map<std::pair<float, float>, std::map<std::string, TObject*>>& qaIsolationHistograms = qaIsolationHistogramsByTriggerAndPt[triggerName];
 
-        for (const auto& pT_bin : pT_bins) {
+        for (const auto& pT_bin : pT_bins)
+        {
             float pT_min = pT_bin.first;
             float pT_max = pT_bin.second;
             std::pair<float, float> pT_range = {pT_min, pT_max};
 
-            // Create unique names for the unsubtracted histograms based on the pT range
-            std::string hist2DName_unsubtracted = "h2_cluster_iso_Et_unsubtracted_pT_" +
-                formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + triggerName;
-            std::string hist1DName_unsubtracted = "h1_isoEt_unsubtracted_pT_" +
-                formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + triggerName;
+            // ---------- 1) "Unsubtracted" iso hist for this pT bin
+            {
+                std::string hist2DName_unsub = "h2_cluster_iso_Et_unsubtracted_pT_" +
+                    formatFloatForFilename(pT_min) + "to" +
+                    formatFloatForFilename(pT_max) + "_" + triggerName;
 
-            // Create and store the unsubtracted histograms in the existing map
-            qaIsolationHistograms[pT_range][hist2DName_unsubtracted] = create2DHistogram(
-                hist2DName_unsubtracted,
-                "Cluster Isolation Energy vs Cluster Et (Unsubtracted);Cluster Et [GeV];E_{T}^{iso} [GeV]",
-                100, 0, 20, 100, -20, 20);
-            qaIsolationHistograms[pT_range][hist1DName_unsubtracted] = createHistogram(
-                hist1DName_unsubtracted,
-                "Isolation Energy Distribution (Unsubtracted);E_{T}^{iso} [GeV];Counts",
-                100, -20, 20);
+                std::string hist1DName_unsub = "h1_isoEt_unsubtracted_pT_" +
+                    formatFloatForFilename(pT_min) + "to" +
+                    formatFloatForFilename(pT_max) + "_" + triggerName;
 
-            // Create unique names for the subtracted histograms
-            std::string hist2DName_subtracted = "h2_cluster_iso_Et_subtracted_pT_" +
-                formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + triggerName;
-            std::string hist1DName_subtracted = "h1_isoEt_subtracted_pT_" +
-                formatFloatForFilename(pT_min) + "to" +
-                formatFloatForFilename(pT_max) + "_" + triggerName;
+                qaIsolationHistograms[pT_range][hist2DName_unsub] = create2DHistogram(
+                    hist2DName_unsub,
+                    "Cluster Isolation Energy vs Cluster Et (Unsub);Cluster Et [GeV];E_{T}^{iso} [GeV]",
+                    100, 0, 20, 100, -20, 20);
 
-            // Create and store the subtracted histograms in the same map
-            qaIsolationHistograms[pT_range][hist2DName_subtracted] = create2DHistogram(
-                hist2DName_subtracted,
-                "Cluster Isolation Energy vs Cluster Et (Subtracted);Cluster Et [GeV];E_{T}^{iso} [GeV]",
-                100, 0, 20, 100, -20, 20);
-            qaIsolationHistograms[pT_range][hist1DName_subtracted] = createHistogram(
-                hist1DName_subtracted,
-                "Isolation Energy Distribution (Subtracted);E_{T}^{iso} [GeV];Counts",
-                100, -20, 20);
+                qaIsolationHistograms[pT_range][hist1DName_unsub] = createHistogram(
+                    hist1DName_unsub,
+                    "Isolation Energy Distribution (Unsub);E_{T}^{iso} [GeV];Counts",
+                    100, -20, 20);
+            }
+
+            // ---------- 2) "Subtracted" iso hist for this pT bin
+            {
+                std::string hist2DName_sub = "h2_cluster_iso_Et_subtracted_pT_" +
+                    formatFloatForFilename(pT_min) + "to" +
+                    formatFloatForFilename(pT_max) + "_" + triggerName;
+
+                std::string hist1DName_sub = "h1_isoEt_subtracted_pT_" +
+                    formatFloatForFilename(pT_min) + "to" +
+                    formatFloatForFilename(pT_max) + "_" + triggerName;
+
+                qaIsolationHistograms[pT_range][hist2DName_sub] = create2DHistogram(
+                    hist2DName_sub,
+                    "Cluster Isolation Energy vs Cluster Et (Sub);Cluster Et [GeV];E_{T}^{iso} [GeV]",
+                    100, 0, 20, 100, -20, 20);
+
+                qaIsolationHistograms[pT_range][hist1DName_sub] = createHistogram(
+                    hist1DName_sub,
+                    "Isolation Energy Distribution (Sub);E_{T}^{iso} [GeV];Counts",
+                    100, -20, 20);
+            }
+
+            // ---------- 3) Create the nClustersInEvent_pT_... histogram here
+            {
+                std::string nClusHistName = "nClustersInEvent_pT_" +
+                    formatFloatForFilename(pT_min) + "to" +
+                    formatFloatForFilename(pT_max) + "_" + triggerName;
+
+                TH1F* nClusHist = new TH1F(
+                    nClusHistName.c_str(),
+                    (nClusHistName + ";N_{clusters};Events").c_str(),
+                    200, 0, 200
+                );
+                nClusHist->SetDirectory(out);
+
+                // Store it in the same map
+                qaIsolationHistograms[pT_range][nClusHistName] = nClusHist;
+            }
         }
 
 
@@ -657,28 +681,6 @@ void caloTreeGen::createHistos_Data() {
                                                           "Eta Mass vs Isolation Energy;M_{#eta} [GeV];E_{T}^{iso} [GeV]",
                                                           80, 0, 1, 100, -20, 20);
                         massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][etaHistName] = etaMassVsIsoHist;
-                        
-                        
-                        // 1) Create a "dummy" tuple key
-                        auto dummyCutTuple = std::make_tuple(-1.f, -1.f, -1.f);
-
-                        // 2) Build a name for the histogram
-                        //    e.g. "nClustersInEvent_pT_2.0to3.0_TriggerName"
-                        std::string nClusHistName = "nClustersInEvent_pT_" +
-                            formatFloatForFilename(pT_bin.first) + "to" +
-                            formatFloatForFilename(pT_bin.second) + "_" + triggerName;
-
-                        // 3) Create a 1D histogram with e.g. 200 bins from 0..200
-                        //    (or adjust the range as you like)
-                        TH1F* nClusHist = new TH1F(
-                            nClusHistName.c_str(),
-                            (nClusHistName + ";N_{clusters};Events").c_str(),
-                            200, 0, 200
-                        );
-
-                        // 4) Insert it into massAndIsolationHistograms
-                        //    => pick the same data structure used for your other pT-binned histos
-                        massAndIsolationHistograms[triggerName][dummyCutTuple][pT_bin][nClusHistName] = nClusHist;
                         
 
                         for (const std::string& massWindowLabel : {IN_MASS_WINDOW_LABEL, OUTSIDE_MASS_WINDOW_LABEL}) {
@@ -2802,14 +2804,16 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         if (verbose) {
             std::cout << "Processing Trigger: " << firedShortName << std::endl;
         }
-        auto& cutHistMap_All = massAndIsolationHistograms[firedShortName];
-
-        for (const auto& pT_bin : pT_bins)
+        // ------------------------------------------------
+        // Fill nClustersInEvent_pT_... histogram for each pT bin
+        // ------------------------------------------------
+        for (const auto &pT_bin : pT_bins)
         {
           float pT_min = pT_bin.first;
           float pT_max = pT_bin.second;
+          std::pair<float,float> pT_range = {pT_min, pT_max};
 
-          // Count how many clusters in that bin
+          // Count how many clusters in this pT bin
           int nClustersInBin = 0;
           for (size_t iclus = 0; iclus < m_clusterPt.size(); ++iclus)
           {
@@ -2820,24 +2824,32 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             }
           }
 
-          // Retrieve the subMap for the "dummy" cut tuple => (-1.f, -1.f, -1.f)
-          auto &subMap = cutHistMap_All[ std::make_tuple(-1.f, -1.f, -1.f) ];
-
+          // Build the histogram name
           std::string nClusHistName = "nClustersInEvent_pT_" +
               formatFloatForFilename(pT_min) + "to" +
               formatFloatForFilename(pT_max) + "_" + firedShortName;
 
-          TH1F* nClusHist = dynamic_cast<TH1F*>( subMap[pT_bin][nClusHistName] );
+          // Retrieve from qaIsolationHistograms (the same place you created it)
+          TH1F* nClusHist = dynamic_cast<TH1F*>(
+              qaIsolationHistograms[pT_range][nClusHistName]
+          );
+
           if (nClusHist)
           {
             nClusHist->Fill(nClustersInBin);
+            if (verbose)
+            {
+              std::cout << "[DEBUG] Filled " << nClusHistName
+                        << " with " << nClustersInBin << " clusters." << std::endl;
+            }
           }
           else
           {
             if (verbose)
             {
-              std::cerr << "Warning: Could not find histogram " << nClusHistName
-                        << " for trigger " << firedShortName << std::endl;
+              std::cerr << "[WARNING] Could not find histogram '"
+                        << nClusHistName << "' for trigger '"
+                        << firedShortName << "'" << std::endl;
             }
           }
         }
