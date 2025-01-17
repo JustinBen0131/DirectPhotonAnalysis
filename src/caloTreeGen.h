@@ -60,7 +60,15 @@ public:
     
     void setGenEvent(int eventGet)     {getEvent = eventGet;}
     
+    /// Enable or disable the event limit check
+    void setLimitEvents(bool limit) { m_limitEvents = limit; }
+
+    /// Set the maximum number of events allowed if m_limitEvents is true
+    void setEventLimit(int limit) { m_eventLimit = limit; }
+
+    /// Turn verbose mode on or off
     void setVerbose(bool v) { verbose = v; }
+
 
     
     struct EnergyMaps {
@@ -112,9 +120,6 @@ public:
     void setSimInputFileName(const std::string &fname) { simInputFileName = fname; }
 
     
-    bool getWantSim()  const    { return wantSim;  }
-    bool getWantData() const    { return wantData; }
-    
 private:
     
     bool wantSim = false;   // default false
@@ -161,10 +166,10 @@ private:
     };
     std::map<std::tuple<std::string, float, float, float, float, float>, MesonMassWindow> mesonMassWindowsMap;
 
-    
+    //default settings for setters in Fun4all
     bool verbose = true;
     bool m_limitEvents = true;   // Enable event limiting by default
-    int m_eventLimit = 50000;    // Maximum number of events to process (10,000 by default)
+    int m_eventLimit = 50000;
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
     std::vector<float> clus_chi_values = {3, 4, 5};
