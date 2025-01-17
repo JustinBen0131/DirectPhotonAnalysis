@@ -2664,8 +2664,8 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         ShowerShapeVars ssv = computeShowerShapesForCluster(
             cluster,
             emcTowerContainer, geomEM,
-            ihcalTowerContainer, geomIH,
-            ohcalTowerContainer, geomOH,
+            ihcTowerContainer, geomIH,
+            ohcTowerContainer, geomOH,
             m_vz,              // the z-vertex
             clus_eta,          // pass previously computed
             clus_phi           // pass previously computed
@@ -2770,7 +2770,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         }
         std::cout << "------------------------------------------------\n";
     }
-    processClusterInvariantMass(m_clusterEnergy, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi, m_clusterIds, clusterEtIsoMap_unsubtracted, activeTriggerNames);
+    processClusterInvariantMass(m_clusterEnergy, m_clusterPt, m_clusterChi, m_clusterEta, m_clusterPhi, m_clusterIds, clusterEtIsoMap_unsubtracted, activeTriggerNames, clusterPassedShowerCuts);
 
     
     /*
