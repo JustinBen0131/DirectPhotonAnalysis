@@ -327,14 +327,13 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             simfile.close();
             se->registerInputManager(inSim);
         }
-        
-        std::cout << "[DEBUG] About to run for " << nEvents << " events...\n";
-        se->run(nEvents);
-        
-        std::cout << "[DEBUG] run() finished. Now calling se->End()...\n";
-        se->End();
-        
-        std::cout << "[DEBUG] Done with se->End(). All done!\n";
-        gSystem->Exit(0);
     }
+    std::cout << "[DEBUG] About to run for " << nEvents << " events...\n";
+    se->run(nEvents);
+    
+    std::cout << "[DEBUG] run() finished. Now calling se->End()...\n";
+    se->End();
+    
+    std::cout << "[DEBUG] Done with se->End(). All done!\n";
+    gSystem->Exit(0);
 }
