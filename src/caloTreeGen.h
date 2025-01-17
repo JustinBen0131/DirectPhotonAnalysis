@@ -494,7 +494,9 @@ private:
         RawTowerGeomContainer* geomIH,
         TowerInfoContainer* ohcalTowerContainer,
         RawTowerGeomContainer* geomOH,
-        float vtxz
+        float vtxz,
+        float clusterEta,    // newly added
+        float clusterPhi     // newly added
     );
     
     std::unordered_map<int, bool> clusterPassedShowerCuts;
