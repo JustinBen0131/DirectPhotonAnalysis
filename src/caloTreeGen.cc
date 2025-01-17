@@ -2600,7 +2600,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     /*
      switch to non retowered emcal -- TOWERINFO_CALIB_CEMC OR TOWERINFO_CALIB_CEMC_RETOWER
      */
-    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC_RETOWER");
+    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC"); // RETOWER MADE THE SHOWER PROFILE CLACULATION NOT WORK
     TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
     TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
     if (!emcTowerContainer && !ihcTowerContainer && !ohcTowerContainer) {
