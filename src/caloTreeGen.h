@@ -21,7 +21,7 @@
 #include <calobase/TowerInfo.h>
 #include <calobase/TowerInfoDefs.h>
 #include <calobase/RawTowerGeomContainer.h>
-
+#include <unordered_map>
 
 //for the vertex
 #include <globalvertex/GlobalVertex.h>
@@ -281,6 +281,9 @@ private:
     std::map<int, std::pair<float, float>> clusterEtIsoMap_unsubtracted;
     std::map<int, std::pair<float, float>> clusterEtIsoMap_subtracted;
     
+    // A map from histogram-name -> set-of-clusterIDs we already used
+    std::unordered_map<std::string, std::unordered_set<int>> m_usedClustersThisEvent;
+    
     // We want a classification histogram for each pT bin
     std::map<std::pair<float, float>, TH1F*> hClusterTruthClass_pTbin;
     // We also want a “prompt purity” histogram for each pT bin
@@ -366,7 +369,8 @@ private:
         std::map<std::pair<float, float>, std::map<std::string, TObject*>>& cutHistMap,
         bool& filledHistogram,
         bool verbose,
-        const std::pair<float, float>& pT_bin
+        const std::pair<float, float>& pT_bin,
+        const std::unordered_map<int,bool> &clusterPassedShowerCuts
     );
     
     void fillHistogramsForTriggers(
@@ -384,7 +388,8 @@ private:
         const std::vector<int>& clusterIDs,
         const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
         const std::vector<std::string>& activeTriggerNames,
-        bool& filledHistogram);
+        bool& filledHistogram,
+        const std::unordered_map<int,bool> &clusterPassedShowerCuts);
 
     void processClusterInvariantMass(
         const std::vector<float>& clusterE,
@@ -394,7 +399,8 @@ private:
         const std::vector<float>& clusterPhi,
         const std::vector<int>& clusterIDs,
         const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
-        const std::vector<std::string>& activeTriggerNames);
+        const std::vector<std::string>& activeTriggerNames,
+        const std::unordered_map<int,bool> &clusterPassedShowerCuts);
 
 
 
@@ -444,6 +450,52 @@ private:
     }
     
     bool IsAcceptableTower(TowerInfo* tower);
+    double getTowerEta(RawTowerGeom *tower_geom, double vx, double vy, double vz);
+    
+    /**
+     * @brief Finds the closest HCAL tower in iEta/iPhi space to a given (eta, phi).
+     *
+     * @param eta The EMCAL cluster's eta
+     * @param phi The EMCAL cluster's phi
+     * @param geom A pointer to the RawTowerGeomContainer for (iHCal or oHCal)
+     * @param towerContainer The TowerInfoContainer (iHCal or oHCal)
+     * @param vertex_z The event's z-vertex
+     * @param isihcal If true => iHCal, else => oHCal
+     * @return A vector of 4 integers: {matched ieta, matched iphi, sign(dEta), sign(dPhi)}
+     */
+    std::vector<int> find_closest_hcal_tower(
+        float eta,
+        float phi,
+        RawTowerGeomContainer *geom,
+        TowerInfoContainer *towerContainer,
+        float vertex_z,
+        bool isihcal
+    );
+
+    /**
+     * @brief Computes various EMCal shower shape variables (3x3, 7x7 sums, w72, weta, wphi, etc.)
+     *        and optionally sums iHCal/oHCal energies behind the cluster.
+     *
+     * @param cluster The RawCluster in EMCal
+     * @param emcTowerContainer The EMCal TowerInfoContainer
+     * @param geomEM The EMCal geometry container
+     * @param ihcalTowerContainer The iHCal TowerInfoContainer
+     * @param geomIH The iHCal geometry container
+     * @param ohcalTowerContainer The oHCal TowerInfoContainer
+     * @param geomOH The oHCal geometry container
+     * @param vtxz The event's z-vertex
+     * @return A filled ShowerShapeVars struct with the computed shape variables
+     */
+    ShowerShapeVars computeShowerShapesForCluster(
+        RawCluster* cluster,
+        TowerInfoContainer* emcTowerContainer,
+        RawTowerGeomContainer* geomEM,
+        TowerInfoContainer* ihcalTowerContainer,
+        RawTowerGeomContainer* geomIH,
+        TowerInfoContainer* ohcalTowerContainer,
+        RawTowerGeomContainer* geomOH,
+        float vtxz
+    );
     
     std::unordered_map<int, bool> clusterPassedShowerCuts;
     
