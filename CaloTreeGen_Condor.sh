@@ -27,8 +27,8 @@ if [ "$runNumber" == "SIMMODE" ]; then
   fileBaseName=$(basename "${rootFiles[0]}")
   treeOutName="${outputDir}/CaloTreeGenSim_${fileBaseName%.*}.root"
 
-  # Here we rely on the macro being set to wantSim = true and wantData = false
-  root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\")"
+  # use runSim=true, runData=false
+  root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\", true, false)"
 
 else
     echo "[INFO] Detected data mode. runNumber = $runNumber"
@@ -50,5 +50,5 @@ else
     treeOutName="${outputDir}/CaloTreeGen_${fileBaseName%.*}.root"
 
     # Run the ROOT macro with the list of input files
-    root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\")"
+    root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\", false, true)"
 fi
