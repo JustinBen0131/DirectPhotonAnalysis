@@ -39,11 +39,21 @@ run_local_job_data() {
   # We can pick the first file or first two files, etc.
   echo -e "${files[0]}" > "$fileList"
 
+  # Prepare the output directory for this run
   local outputDir="/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/${runNumber}"
-  mkdir -p ${outputDir}
+
+  if [ -d "$outputDir" ]; then
+    echo "[WARNING] Output directory already exists: $outputDir"
+    echo "          Removing existing files to avoid mixing old/new data."
+    rm -f "$outputDir"/*
+  else
+    mkdir -p "$outputDir"
+  fi
 
   fileBaseName=$(basename "${files[0]}")
   treeOutName="${outputDir}/CaloTreeGen_${fileBaseName%.*}.root"
+
+  echo "[INFO] Writing output to: $treeOutName"
 
   # Pass runData=true, runSim=false
   root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$fileList\", \"$treeOutName\", false, true)"
@@ -132,9 +142,19 @@ run_local_sim() {
   echo "[INFO] Running local simulation for file: $firstSimFile"
 
   local outputDirSim="/sphenix/tg/tg01/bulk/jbennett/DirectPhotons/output/SimOut"
-  mkdir -p ${outputDirSim}
+
+  if [ -d "$outputDirSim" ]; then
+    echo "[WARNING] Simulation output directory already exists: $outputDirSim"
+    echo "          Removing existing files to avoid mixing old/new data."
+    rm -f "$outputDirSim"/*
+  else
+    mkdir -p "$outputDirSim"
+  fi
+
   fileBaseName=$(basename "${firstSimFile}")
   local simOutName="${outputDirSim}/CaloTreeGenSim_${fileBaseName%.*}.root"
+
+  echo "[INFO] Writing simulation output to: $simOutName"
 
   # runSim=true, runData=false
   root -b -l -q "macro/Fun4All_CaloTreeGen.C(0, \"$simList\", \"$simOutName\", true, false)"
