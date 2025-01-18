@@ -1134,45 +1134,110 @@ caloTreeGen::EnergyMaps caloTreeGen::processEnergyMaps(const std::vector<float>*
     return result;
 }
 
-std::vector<int> caloTreeGen::find_closest_hcal_tower(float eta, float phi, RawTowerGeomContainer *geom, TowerInfoContainer *towerContainer, float vertex_z, bool isihcal)
+std::vector<int> caloTreeGen::find_closest_hcal_tower(
+    float eta, float phi,
+    RawTowerGeomContainer* geom,
+    TowerInfoContainer* towerContainer,
+    float vertex_z,
+    bool isihcal
+)
 {
-  int matchedieta = -1;
-  int matchediphi = -1;
-  double matchedeta = -999;
-  double matchedphi = -999;
+  if (verbose)
+  {
+    std::cout << "[DEBUG] find_closest_hcal_tower(...) called with: "
+              << "eta=" << eta << ", phi=" << phi
+              << ", vertex_z=" << vertex_z
+              << ", isihcal=" << isihcal << std::endl
+              << "[DEBUG]   towerContainer->size()=" << towerContainer->size()
+              << ", geom->size()=" << geom->size() << std::endl;
+  }
+    
+  // Initialize "best match" results
+  int    matchedieta = -1;
+  int    matchediphi = -1;
+  double matchedeta  = -999.;
+  double matchedphi  = -999.;
+    
+  // We'll search for the tower with the smallest deltaR in (eta,phi)
+  float  minR = 999.f;
   unsigned int ntowers = towerContainer->size();
 
-  float minR = 999;
-
+  // Loop over all towers in TowerInfoContainer
   for (unsigned int channel = 0; channel < ntowers; channel++)
   {
-    TowerInfo *tower = towerContainer->get_tower_at_channel(channel);
+    TowerInfo* tower = towerContainer->get_tower_at_channel(channel);
     if (!tower)
     {
+      if (verbose)
+      {
+        std::cout << "[DEBUG] tower pointer for channel=" << channel
+                  << " is NULL, skipping.\n";
+      }
       continue;
     }
-    unsigned int towerkey = towerContainer->encode_key(channel);
 
+    // Decode the tower key => ieta, iphi
+    unsigned int towerkey = towerContainer->encode_key(channel);
     int ieta = towerContainer->getTowerEtaBin(towerkey);
     int iphi = towerContainer->getTowerPhiBin(towerkey);
-    RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::HCALIN, ieta, iphi);
-    if (!isihcal)
+
+    //  geometry has 24 ieta bins [0..23] & 64 iphi bins [0..63],
+    // skip anything out of that range:
+    if (ieta < 0 || ieta >= 24)
     {
-      key = RawTowerDefs::encode_towerid(RawTowerDefs::CalorimeterId::HCALOUT, ieta, iphi);
+      if (verbose)
+      {
+        std::cout << "[DEBUG] ieta=" << ieta
+                  << " is out of range => skipping.\n";
+      }
+      continue;
     }
-    RawTowerGeom *tower_geom = geom->get_tower_geometry(key);
+    if (iphi < 0 || iphi >= 64)
+    {
+      if (verbose)
+      {
+        std::cout << "[DEBUG] iphi=" << iphi
+                  << " is out of range => skipping.\n";
+      }
+      continue;
+    }
+
+    // Build the raw tower geometry key
+    RawTowerDefs::CalorimeterId calID = isihcal ? RawTowerDefs::HCALIN
+                                                : RawTowerDefs::HCALOUT;
+    RawTowerDefs::keytype key = RawTowerDefs::encode_towerid(calID, ieta, iphi);
+
+    // Grab geometry for that tower
+    RawTowerGeom* tower_geom = geom->get_tower_geometry(key);
+    if (!tower_geom)
+    {
+      // If geometry is missing, skip
+      if (verbose)
+      {
+        std::cout << "[DEBUG] tower_geom is NULL for channel=" << channel
+                  << " ieta=" << ieta << ", iphi=" << iphi
+                  << " => skipping.\n";
+      }
+      continue;
+    }
+
+    // Get this tower’s (eta, phi), compute deltaR to the cluster
     double this_phi = tower_geom->get_phi();
     double this_eta = getTowerEta(tower_geom, 0, 0, vertex_z);
-    double dR = deltaR(eta, this_eta, phi, this_phi);
+    double dR       = deltaR(eta, this_eta, phi, this_phi);
+
+    // Update "closest tower" if this tower is closer
     if (dR < minR)
     {
-      minR = dR;
-      matchedieta = ieta;
-      matchediphi = iphi;
+      minR       = dR;
+      matchedieta= ieta;
+      matchediphi= iphi;
       matchedeta = this_eta;
       matchedphi = this_phi;
     }
-  }
+  } // end for(channel)
+
+  // Now we have the best-match tower => compute sign of (dEta, dPhi)
   float deta = eta - matchedeta;
   float dphi = phi - matchedphi;
   float dphiwrap = 2 * M_PI - std::abs(dphi);
@@ -1183,9 +1248,12 @@ std::vector<int> caloTreeGen::find_closest_hcal_tower(float eta, float phi, RawT
   int dphisign = (dphi > 0) ? 1 : -1;
   int detasign = (deta > 0) ? 1 : -1;
 
+  // Return results in a small integer vector
   std::vector<int> result = {matchedieta, matchediphi, detasign, dphisign};
   return result;
 }
+
+
 
 caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     RawCluster*            cluster,
@@ -1521,6 +1589,15 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     );
     svars.ihcal_ieta = ihcalVec[0];
     svars.ihcal_iphi = ihcalVec[1];
+      
+    // Add debug prints to confirm the returned tower indices
+    if (verbose)
+    {
+      std::cout << "[DEBUG] iHCal tower indices from find_closest_hcal_tower: "
+              << "ieta=" << svars.ihcal_ieta << ", iphi=" << svars.ihcal_iphi
+              << std::endl;
+    }
+
 
     auto ohcalVec = find_closest_hcal_tower(
       clusterEta, clusterPhi,
@@ -1528,42 +1605,126 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
     );
     svars.ohcal_ieta = ohcalVec[0];
     svars.ohcal_iphi = ohcalVec[1];
-
-    auto sumHcalBlock = [&](TowerInfoContainer* cTC,
-                            RawTowerGeomContainer* cGeom,
-                            bool inOrOut,
-                            int centerEta, int centerPhi,
-                            int dEtaMin, int dEtaMax,
-                            int dPhiMin, int dPhiMax)
-    {
-      float accum = 0.f;
-      for (int di = dEtaMin; di <= dEtaMax; di++)
+      
+    if (verbose)
       {
-        for (int dj = dPhiMin; dj <= dPhiMax; dj++)
+        std::cout << "[DEBUG] oHCal tower indices from find_closest_hcal_tower: "
+                  << "ieta=" << svars.ohcal_ieta << ", iphi=" << svars.ohcal_iphi
+                  << std::endl;
+    }
+      
+
+      auto sumHcalBlock = [&](TowerInfoContainer* cTC,
+                              RawTowerGeomContainer* cGeom,
+                              bool inOrOut,
+                              int centerEta, int centerPhi,
+                              int dEtaMin, int dEtaMax,
+                              int dPhiMin, int dPhiMax)
+      {
+        if (verbose)
         {
-          int ieta_ = centerEta + di;
-          int iphi_ = centerPhi + dj;
-          shift_tower_index(ieta_, iphi_, 24, 64);
-
-          unsigned int tKey = TowerInfoDefs::encode_hcal(ieta_, iphi_);
-          TowerInfo* tw = cTC->get_tower_at_key(tKey);
-          if (!tw || !tw->get_isGood()) continue;
-
-          RawTowerDefs::CalorimeterId calID = inOrOut ? RawTowerDefs::HCALIN
-                                                      : RawTowerDefs::HCALOUT;
-          auto rkey = RawTowerDefs::encode_towerid(calID, ieta_, iphi_);
-          auto tg   = cGeom->get_tower_geometry(rkey);
-          if (!tg) continue;
-
-          float e_   = tw->get_energy();
-          float eta_ = getTowerEta(tg, 0, 0, vtxz);
-          float et_  = e_ / std::cosh(eta_);
-          accum     += et_;
+          std::cout << "[DEBUG] sumHcalBlock() called with:\n"
+                    << "   centerEta=" << centerEta
+                    << ", centerPhi=" << centerPhi
+                    << ", dEtaMin=" << dEtaMin
+                    << ", dEtaMax=" << dEtaMax
+                    << ", dPhiMin=" << dPhiMin
+                    << ", dPhiMax=" << dPhiMax
+                    << ", inOrOut=" << (inOrOut ? "HCALIN" : "HCALOUT")
+                    << std::endl;
         }
-      }
-      return accum;
-    };
 
+        float accum = 0.f;
+        for (int di = dEtaMin; di <= dEtaMax; di++)
+        {
+          for (int dj = dPhiMin; dj <= dPhiMax; dj++)
+          {
+            int ieta_ = centerEta + di;
+            int iphi_ = centerPhi + dj;
+
+            // Wrap phi only; ieta_ remains as-is if negative or beyond
+            shift_tower_index(ieta_, iphi_, 24, 64);
+
+            // --- NEW RANGE CHECK: ieta_ must be in [0..23], iphi_ in [0..63] ---
+            if (ieta_ < 0 || ieta_ >= 24)
+            {
+              if (verbose)
+              {
+                std::cout << "   -> ieta_=" << ieta_
+                          << " out of range [0..23], skipping.\n";
+              }
+              continue;
+            }
+            if (iphi_ < 0 || iphi_ >= 64)
+            {
+              if (verbose)
+              {
+                std::cout << "   -> iphi_=" << iphi_
+                          << " out of range [0..63], skipping.\n";
+              }
+              continue;
+            }
+
+            // Now safe to encode
+            unsigned int tKey = TowerInfoDefs::encode_hcal(ieta_, iphi_);
+            TowerInfo* tw = cTC->get_tower_at_key(tKey);
+
+            if (verbose)
+            {
+              std::cout << "   -> Summation tower: (ieta_=" << ieta_
+                        << ", iphi_=" << iphi_
+                        << "), TowerInfoKey=" << tKey
+                        << ". Tower pointer=" << tw << std::endl;
+            }
+
+            if (!tw)
+            {
+              if (verbose)
+              {
+                std::cout << "      [DEBUG] Tower pointer is NULL, skipping.\n";
+              }
+              continue;
+            }
+            if (!tw->get_isGood())
+            {
+              if (verbose)
+              {
+                std::cout << "      [DEBUG] Tower is not 'good', skipping.\n";
+              }
+              continue;
+            }
+
+            RawTowerDefs::CalorimeterId calID =
+                inOrOut ? RawTowerDefs::HCALIN : RawTowerDefs::HCALOUT;
+            auto rkey = RawTowerDefs::encode_towerid(calID, ieta_, iphi_);
+            auto tg   = cGeom->get_tower_geometry(rkey);
+            if (!tg)
+            {
+              if (verbose)
+              {
+                std::cout << "      [DEBUG] Could not find tower geometry (tg is NULL). "
+                          << "Skipping.\n";
+              }
+              continue;
+            }
+
+            float e_   = tw->get_energy();
+            float eta_ = getTowerEta(tg, 0, 0, vtxz);
+            float et_  = e_ / std::cosh(eta_);
+            accum     += et_;
+
+            if (verbose)
+            {
+              std::cout << "      [DEBUG] Tower is good. E=" << e_
+                        << ", eta=" << eta_ << ", ET=" << et_
+                        << ", new accum=" << accum << std::endl;
+            }
+          }
+        }
+        return accum;
+      };
+      
+      
     // single tower
     svars.ihcal_et = sumHcalBlock(
       ihcalTowerContainer, geomIH, true,
@@ -1633,14 +1794,34 @@ caloTreeGen::ShowerShapeVars caloTreeGen::computeShowerShapesForCluster(
         int iphi = maxiphi + dj;
         shift_tower_index(ieta, iphi, 96, 256);
 
-        if (ieta < 0 || ieta > 95) continue;
+        if (ieta < 0 || ieta >= 96)
+          {
+            if (verbose)
+            {
+              std::cout << "[DEBUG] ieta=" << ieta
+                        << " out of [0..95] => skipping.\n";
+            }
+            continue;
+          }
+          if (iphi < 0 || iphi >= 256)
+          {
+            if (verbose)
+            {
+              std::cout << "[DEBUG] iphi=" << iphi
+                        << " out of [0..255] => skipping.\n";
+            }
+            continue;
+        }
+
 
         float tE = E77[di + 3][dj + 3];
         if (tE < 1e-9f) continue;
 
-        RawTowerDefs::keytype twKey = TowerInfoDefs::encode_emcal(ieta, iphi);
+        RawTowerDefs::CalorimeterId caloID = RawTowerDefs::CEMC;
+        RawTowerDefs::keytype twKey = RawTowerDefs::encode_towerid(caloID, ieta, iphi);
         RawTowerGeom* towerGeom = geomEM->get_tower_geometry(twKey);
         if (!towerGeom) continue;
+
 
         float towerEta = getTowerEta(towerGeom, 0, 0, vtxz);
         float towerPhi = towerGeom->get_phi();
@@ -2900,11 +3081,6 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
           if (nClusHist)
           {
             nClusHist->Fill(nClustersInBin);
-            if (verbose)
-            {
-              std::cout << "[DEBUG] Filled " << nClusHistName
-                        << " with " << nClustersInBin << " clusters." << std::endl;
-            }
           }
           else
           {
