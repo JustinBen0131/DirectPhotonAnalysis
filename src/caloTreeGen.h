@@ -59,12 +59,6 @@ public:
     void Print(const std::string &what = "ALL") const override;
     
     void setGenEvent(int eventGet)     {getEvent = eventGet;}
-    
-    /// Enable or disable the event limit check
-    void setLimitEvents(bool limit) { m_limitEvents = limit; }
-
-    /// Set the maximum number of events allowed if m_limitEvents is true
-    void setEventLimit(int limit) { m_eventLimit = limit; }
 
     /// Turn verbose mode on or off
     void setVerbose(bool v) { verbose = v; }
@@ -168,12 +162,10 @@ private:
 
     //default settings for setters in Fun4all
     bool verbose = true;
-    bool m_limitEvents = true;   // Enable event limiting by default
-    int m_eventLimit = 50000;
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
-    std::vector<float> clus_chi_values = {3, 4, 5};
-    std::vector<float> clus_Energy_values = {1.0, 1.5, 3.0, 5.0, 8.0};
+    std::vector<float> clus_chi_values = {2, 3, 4, 5};
+    std::vector<float> clus_Energy_values = {1.0, 1.5, 3.0, 5.0};
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}, {20, 30}
     };
@@ -227,12 +219,18 @@ private:
     
     int event_count = 0;
     
+    // Instead of forcing ieta = -1, just do nothing if ieta < 0 or ieta >= maxeta.
+    // Let ieta remain as is, so we can detect out-of-bounds after this call.
+    //
+    // For phi, we wrap negative or > maxphi by adding/subtracting maxphi.
+
     void shift_tower_index(int &ieta, int &iphi, int maxeta, int maxphi)
     {
-      if (ieta < 0)
-        ieta = -1;
-      if (ieta >= maxeta)
-        ieta = -1;
+      // Remove the lines:
+      //    if (ieta < 0) ieta = -1;
+      //    if (ieta >= maxeta) ieta = -1;
+      // because that just yields ieta = -1 which leads to bad tower lookups.
+
       if (iphi < 0)
         iphi += maxphi;
       if (iphi >= maxphi)
