@@ -63,6 +63,13 @@ namespace HIJETS
 
 #endif
 
+
+////////////////////////////////////////////////////////////////////////////////
+//  1) **HARDCODE** A Boolean and an Integer limit
+////////////////////////////////////////////////////////////////////////////////
+static const bool WANT_MANUAL_EVENT_LIMIT = true;  // or false if you want unlimited
+static const int MANUAL_EVENT_LIMIT       = 2000;  // e.g. 5k
+
 /**
  * @brief Macro to run either Data pipeline or Simulation pipeline for caloTreeGen
  *
@@ -262,8 +269,6 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     std::cout << "[INFO] Registering caloTreeGen subsystem...\n";
     
     eval->setVerbose(true);         // e.g. set false if you don't want the debug printing
-    eval->setLimitEvents(true);      // choose whether to limit or not
-    eval->setEventLimit(50000);     // if limiting events, set the maximum events
     
     /*
      SET RUNNING OF DATA AND SIM from inputted condor submit arguments
@@ -328,12 +333,51 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             se->registerInputManager(inSim);
         }
     }
-    std::cout << "[DEBUG] About to run for " << nEvents << " events...\n";
-    se->run(nEvents);
-    
-    std::cout << "[DEBUG] run() finished. Now calling se->End()...\n";
+    if (!WANT_MANUAL_EVENT_LIMIT)
+    {
+      // -----------------------------------------------------------------
+      // If WANT_MANUAL_EVENT_LIMIT is true => IGNORE manual capping
+      // If nEvents==0 => process all. If nEvents>0 => that many events
+      // -----------------------------------------------------------------
+      std::cout << "[DEBUG] WANT_MANUAL_EVENT_LIMIT=true => calling se->run("
+                << nEvents << ") directly.\n";
+      se->run(nEvents);
+    }
+    else
+    {
+      // -----------------------------------------------------------------
+      // If WANT_MANUAL_EVENT_LIMIT is true => use manual loop
+      // that stops at MANUAL_EVENT_LIMIT
+      // -----------------------------------------------------------------
+      std::cout << "[DEBUG] WANT_MANUAL_EVENT_LIMIT=false => "
+                << "manual loop for " << MANUAL_EVENT_LIMIT << " events.\n";
+
+      int eventCount = 0;
+      while (true)
+      {
+        // run exactly 1 event
+        int retval = se->run(1);
+        if (retval != 0)
+        {
+          // no more events => stop
+          std::cout << "[INFO] run(1) returned " << retval
+                    << "; likely EOF => break.\n";
+          break;
+        }
+
+        eventCount++;
+        if (eventCount >= MANUAL_EVENT_LIMIT)
+        {
+          std::cout << "[INFO] Reached manual limit of " << eventCount
+                    << " events => stopping.\n";
+          break;
+        }
+      }
+    } // end if(WANT_MANUAL_EVENT_LIMIT)
+
+    // Now end the job
+    std::cout << "[DEBUG] event loop finished => calling se->End()...\n";
     se->End();
-    
-    std::cout << "[DEBUG] Done with se->End(). All done!\n";
+    std::cout << "[DEBUG] Done => exiting.\n";
     gSystem->Exit(0);
 }
