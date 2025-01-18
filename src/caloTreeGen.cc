@@ -3849,96 +3849,361 @@ int caloTreeGen::End(PHCompositeNode *topNode)
 }
 
 
-int caloTreeGen::endData(PHCompositeNode *topNode) {
-    std::cout << ANSI_COLOR_BLUE_BOLD << "caloTreeGen::End(PHCompositeNode *topNode) All events have been processed. Beginning final analysis steps..." << ANSI_COLOR_RESET << std::endl;
-    // Ensure the output file is open and set as the current directory
-    if (out && out->IsOpen()) {
-        out->cd();
-        gDirectory = out; // Explicitly set the global ROOT directory
-    } else {
-        std::cerr << ANSI_COLOR_RED_BOLD << "Error: Output file is not open. Exiting End() without writing histograms." << ANSI_COLOR_RESET << std::endl;
+int caloTreeGen::endData(PHCompositeNode *topNode)
+{
+    // Always announce we’re beginning final steps
+    std::cout << ANSI_COLOR_BLUE_BOLD
+              << "caloTreeGen::End(...) => All events have been processed. Beginning final analysis..."
+              << ANSI_COLOR_RESET << std::endl;
+
+    // 1) Ensure the output file is open
+    if (!out || !out->IsOpen())
+    {
+        std::cerr << ANSI_COLOR_RED_BOLD
+                  << "Error: Output file is not open. Exiting End() without writing histograms."
+                  << ANSI_COLOR_RESET << std::endl;
         return Fun4AllReturnCodes::ABORTEVENT;
     }
+    out->cd();  // go to the root dir in the output file
+    gDirectory = out; // explicitly set the global ROOT directory
 
-    auto writeHistogram = [&](TObject* hist, const std::string& name) {
-        if (!hist) {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Histogram " << name << " is null, skipping write." << ANSI_COLOR_RESET << std::endl;
-            return;
-        }
+    // 2) Data structures to keep track of duplicates + final hist list to write
+    std::unordered_set<std::string> usedNames; // tracks histogram names we’ve encountered
+    bool foundDuplicate = false;
 
-        if (hist->Write() == 0) {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Error: Failed to write histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
-        } else if (verbose) {
-            std::cout << ANSI_COLOR_GREEN_BOLD << "Successfully wrote histogram " << name << "." << ANSI_COLOR_RESET << std::endl;
-        }
-
-        delete hist; // Clean up after writing
+    // We’ll store all histograms we intend to write in a vector so we can do a progress print
+    // Each entry is: (triggerDirName, histName, pointerToHist)
+    struct HistToWrite
+    {
+      std::string triggerDir;
+      std::string histName;
+      TObject*    histPtr;
     };
-    
-    
-    // Iterate over each trigger and write the QA histograms to the correct directory
-    for (const auto& [shortTriggerName, qaHistograms] : qaHistogramsByTrigger) {
-        // Navigate to the specific trigger directory
-        TDirectory* triggerDir = out->GetDirectory(shortTriggerName.c_str());
-        if (triggerDir) {
-            triggerDir->cd();
-        } else {
-            std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Directory for trigger " << shortTriggerName << " does not exist." << ANSI_COLOR_RESET << std::endl;
+    std::vector<HistToWrite> finalHistList; // everything we actually want to write
+
+    // 3) Helper to see if a TH1 is zero‐entry => skip
+    auto isZeroEntry = [&](TObject* obj)
+    {
+      TH1* checkHist = dynamic_cast<TH1*>(obj);
+      if (checkHist)
+      {
+        return (checkHist->GetEntries() == 0);
+      }
+      // For non‐TH1 types, you can choose to treat them as never empty or also skip.
+      return false;
+    };
+
+    // 4) "Dry run" collecting histograms from each trigger:
+    //    - We first check if `hTriggerCount_<trigger>` is zero.
+    //    - If so => skip the entire trigger folder quickly.
+    //    - If not zero => we gather all *non-empty* hists, skip duplicates, etc.
+
+    // This function collects the main QA histograms for a single trigger.
+    // A lambda that collects QA histograms from the "main" trigger map
+    //  but can also handle map<std::string, TH1F*> or TH2F*, etc.
+    auto collectTriggerDir = [&](const std::string& trigName, auto & histMap)
+    {
+      // Deduce the map's mapped_type (could be TObject*, TH1F*, etc.)
+      using MMap    = std::remove_reference_t<decltype(histMap)>;
+      using ValuePtr = typename MMap::mapped_type;  // e.g. TH1F*
+
+      // 1) Check if hTriggerCount_<trigName> exists and is >0
+      std::string trigCountName = "hTriggerCount_" + trigName;
+      ValuePtr trigCountObj = nullptr;
+      if (auto it = histMap.find(trigCountName); it != histMap.end())
+      {
+        trigCountObj = it->second;  // e.g. TH1F*
+      }
+
+      // If no trigger count histogram or zero entries => skip entire folder
+      bool skipEntireTrigger = true;
+      if (trigCountObj)
+      {
+        // cast from TH1F* (or T*) to TH1*
+        //  (TH1 inherits from TObject, so dynamic_cast is safe)
+        TH1* hTrigCount = dynamic_cast<TH1*>(static_cast<TObject*>(trigCountObj));
+        if (hTrigCount && hTrigCount->GetEntries() > 0)
+        {
+          skipEntireTrigger = false;
+        }
+      }
+      if (skipEntireTrigger)
+      {
+        if (verbose)
+        {
+          std::cout << "[INFO] Skipping entire trigger directory \""
+                    << trigName << "\" => hTriggerCount is zero or missing.\n";
+        }
+        return; // do not collect anything for this trigger
+      }
+
+      // 2) Otherwise, gather non-empty histograms, skip duplicates
+      int countNonEmpty = 0;
+      for (auto &kv : histMap)
+      {
+        const std::string& hName = kv.first;
+        ValuePtr hObj            = kv.second; // e.g. TH1F* pointer
+
+        // If pointer is null => skip
+        if (!hObj) continue;
+
+        // cast to TH1* for the "get entries" check
+        TH1* checkHist = dynamic_cast<TH1*>(static_cast<TObject*>(hObj));
+        if (checkHist && checkHist->GetEntries() == 0)
+        {
+          // zero‐entry => skip
+          if (verbose)
+          {
+            std::cout << "[INFO] Trigger=" << trigName
+                      << ": skipping histogram \"" << hName
+                      << "\" => zero entries.\n";
+          }
+          continue;
+        }
+
+        // Check duplicates by name
+        if (usedNames.count(hName) > 0)
+        {
+          std::cerr << ANSI_COLOR_RED_BOLD
+                    << "[ERROR] Duplicate histogram name: \""
+                    << hName << "\" => aborting."
+                    << ANSI_COLOR_RESET << std::endl;
+          foundDuplicate = true;
+          return; // immediate stop
+        }
+        usedNames.insert(hName);
+
+        countNonEmpty++;
+
+        // We'll store it in finalHistList as a TObject*
+        TObject* castObj = static_cast<TObject*>(hObj);
+        finalHistList.push_back({ trigName, hName, castObj });
+      }
+
+      // If countNonEmpty==0 => everything was zero => skip entire dir
+      if (countNonEmpty == 0 && verbose)
+      {
+        std::cout << "[INFO] Trigger \"" << trigName
+                  << "\": all histograms zero => skipping directory.\n";
+      }
+    };
+
+    // For pT maps or cut combos => gather them
+    auto collectTriggerPtMap = [&](const std::string &trigName, auto &ptMap)
+    {
+      // outer loop => pT bins or cut combos
+      // we do *not* skip the entire trigger if zero, because it may partially fill some sub-bins
+      for (auto &outerKV : ptMap)
+      {
+        // outerKV.second => a map<string, TObject*>
+        auto & innerHistMap = outerKV.second;
+        for (auto & kv : innerHistMap)
+        {
+          const std::string& hName = kv.first;
+          TObject* hObj           = kv.second;
+
+          if (!hObj || isZeroEntry(hObj))
+          {
+            if (verbose)
+            {
+              std::cout << "[INFO] Trigger=" << trigName
+                        << ": skipping hist \"" << hName
+                        << "\" => null or zero entries.\n";
+            }
             continue;
+          }
+          if (usedNames.count(hName) > 0)
+          {
+            std::cerr << ANSI_COLOR_RED_BOLD
+                      << "[ERROR] Duplicate histogram name: \""
+                      << hName << "\" => aborting."
+                      << ANSI_COLOR_RESET << std::endl;
+            foundDuplicate = true;
+            return;
+          }
+          usedNames.insert(hName);
+          finalHistList.push_back( { trigName, hName, hObj } );
         }
+        if (foundDuplicate) return;
+      }
+    };
 
-        // Write QA histograms for this trigger
-        for (const auto& [name, hist] : qaHistograms) {
-            writeHistogram(hist, name);
-        }
-
-        // Write isolation histograms for this trigger
-        if (qaIsolationHistogramsByTriggerAndPt.count(shortTriggerName)) {
-            for (const auto& [pT_bin, histMap] : qaIsolationHistogramsByTriggerAndPt.at(shortTriggerName)) {
-                for (const auto& [name, hist] : histMap) {
-                    writeHistogram(hist, name);
-                }
-            }
-        }
-
-        // Write mass and isolation histograms with pT bins
-        if (massAndIsolationHistograms.count(shortTriggerName)) {
-            for (const auto& [cutCombination, pTHistMap] : massAndIsolationHistograms.at(shortTriggerName)) {
-                for (const auto& [pT_bin, histMap] : pTHistMap) {
-                    for (const auto& [histName, hist] : histMap) {
-                        writeHistogram(hist, histName);
-                    }
-                }
-            }
-        }
-
-        // Write mass histograms without pT bins
-        if (massAndIsolationHistogramsNoPtBins.count(shortTriggerName)) {
-            for (const auto& [histName, hist] : massAndIsolationHistogramsNoPtBins.at(shortTriggerName)) {
-                writeHistogram(hist, histName);
-            }
-        }
-
-        out->cd(); // Return to the root directory
+    // 5) Now gather from the main "qaHistogramsByTrigger" maps
+    for (auto & trigKV : qaHistogramsByTrigger)
+    {
+      if (foundDuplicate) break; // stop if we found a conflict
+      const std::string & shortTriggerName = trigKV.first;
+      auto & histMap = trigKV.second;
+      collectTriggerDir(shortTriggerName, histMap);
     }
-    // Close the output file and clean up
-    std::cout << ANSI_COLOR_BLUE_BOLD << "Closing output file and cleaning up..." << ANSI_COLOR_RESET << std::endl;
-    if (out) {
+
+    // Then gather from the isolation hist
+    for (auto & trigKV : qaIsolationHistogramsByTriggerAndPt)
+    {
+      if (foundDuplicate) break;
+      const std::string & shortTriggerName = trigKV.first;
+      auto & ptMap = trigKV.second;
+      collectTriggerPtMap(shortTriggerName, ptMap);
+    }
+
+    // Then from massAndIsolationHistograms
+    for (auto & trigKV : massAndIsolationHistograms)
+    {
+      if (foundDuplicate) break;
+      const std::string & shortTriggerName = trigKV.first;
+
+      // cut combos => pT bins => hist
+      auto & outerMap = trigKV.second;
+      for (auto & cutKV : outerMap)
+      {
+        auto & pTHistMap = cutKV.second;
+        for (auto & ptBinKV : pTHistMap)
+        {
+          auto & histMap2 = ptBinKV.second;
+          for (auto & kv : histMap2)
+          {
+            const std::string & hName = kv.first;
+            TObject* hObj            = kv.second;
+            if (!hObj || isZeroEntry(hObj))
+            {
+              if (verbose)
+              {
+                std::cout << "[INFO] Trigger=" << shortTriggerName
+                          << ": skipping \"" << hName
+                          << "\" => null or zero entries.\n";
+              }
+              continue;
+            }
+            if (usedNames.count(hName) > 0)
+            {
+              std::cerr << ANSI_COLOR_RED_BOLD
+                        << "[ERROR] Duplicate name \"" << hName
+                        << "\" => aborting.\n"
+                        << ANSI_COLOR_RESET;
+              foundDuplicate = true;
+              break;
+            }
+            usedNames.insert(hName);
+            finalHistList.push_back( { shortTriggerName, hName, hObj } );
+          }
+          if (foundDuplicate) break;
+        }
+        if (foundDuplicate) break;
+      }
+    }
+
+    // Then massAndIsolationHistogramsNoPtBins
+    for (auto & trigKV : massAndIsolationHistogramsNoPtBins)
+    {
+      if (foundDuplicate) break;
+      const std::string & shortTriggerName = trigKV.first;
+      auto & histMapNoPt = trigKV.second;
+      collectTriggerDir(shortTriggerName, histMapNoPt);
+    }
+
+    // 6) If found a duplicate => abort now
+    if (foundDuplicate)
+    {
+      std::cerr << ANSI_COLOR_RED_BOLD
+                << "Aborting => duplicate histogram found. Closing file..."
+                << ANSI_COLOR_RESET << std::endl;
+
+      out->Close();
+      delete out;
+      out = nullptr;
+      return Fun4AllReturnCodes::ABORTRUN;
+    }
+
+    // 7) We now have finalHistList of all histograms to write => do a progress tracker
+    size_t totalHists = finalHistList.size();
+    if (verbose)
+    {
+      std::cout << "[INFO] Ready to write " << totalHists
+                << " non-empty histograms in total.\n";
+    }
+    size_t hCounter = 0;
+
+    // 8) Write them
+    for (auto & item : finalHistList)
+    {
+      hCounter++;
+      // Print progress every 500 if verbose
+      if (verbose && (hCounter % 500 == 0))
+      {
+        std::cout << "[INFO] Wrote " << hCounter
+                  << " / " << totalHists
+                  << " histograms so far...\n";
+      }
+
+      // cd to the directory if it exists
+      TDirectory* trigDir = out->GetDirectory(item.triggerDir.c_str());
+      if (!trigDir)
+      {
+        if (verbose)
+        {
+          std::cout << "[INFO] Directory \"" << item.triggerDir
+                    << "\" not found => skipping histogram \""
+                    << item.histName << "\".\n";
+        }
+        continue;
+      }
+      trigDir->cd();
+
+      // Attempt to write
+      if (item.histPtr->Write() == 0)
+      {
+        std::cerr << ANSI_COLOR_RED_BOLD
+                  << "[ERROR] Failed to write hist \""
+                  << item.histName << "\".\n"
+                  << ANSI_COLOR_RESET;
+      }
+      else if (verbose)
+      {
+        std::cout << "[INFO] Wrote histogram \"" << item.histName
+                  << "\" in directory \"" << item.triggerDir << "\".\n";
+      }
+    }
+
+    // final progress message
+    if (verbose)
+    {
+      std::cout << "[INFO] Done writing all " << hCounter
+                << " histograms.\n";
+    }
+
+    // Return to root dir
+    out->cd();
+
+    // 9) Now close the file
+    std::cout << ANSI_COLOR_BLUE_BOLD
+              << "Closing output file and cleaning up..."
+              << ANSI_COLOR_RESET << std::endl;
+    if (out)
+    {
         out->Close();
         delete out;
         out = nullptr;
-        if (verbose) {
-            std::cout << ANSI_COLOR_GREEN_BOLD << "Output file successfully closed and deleted." << ANSI_COLOR_RESET << std::endl;
+        if (verbose)
+        {
+            std::cout << ANSI_COLOR_GREEN_BOLD
+                      << "Output file successfully closed and deleted."
+                      << ANSI_COLOR_RESET << std::endl;
         }
-
-    } else {
-        std::cerr << ANSI_COLOR_RED_BOLD << "Warning: Output file was already null, possibly already closed or deleted." << ANSI_COLOR_RESET << std::endl;
+    }
+    else
+    {
+        std::cerr << ANSI_COLOR_RED_BOLD
+                  << "Warning: Output file was already null, possibly already closed or deleted."
+                  << ANSI_COLOR_RESET << std::endl;
     }
 
-    std::cout << ANSI_COLOR_GREEN_BOLD << "End of caloTreeGen::End(PHCompositeNode *topNode). Exiting smoothly." << ANSI_COLOR_RESET << std::endl;
+    std::cout << ANSI_COLOR_GREEN_BOLD
+              << "End of caloTreeGen::End(PHCompositeNode *topNode). Exiting smoothly."
+              << ANSI_COLOR_RESET << std::endl;
 
     return Fun4AllReturnCodes::EVENT_OK;
 }
+
 
 int caloTreeGen::endSim(PHCompositeNode *topNode)
 {
