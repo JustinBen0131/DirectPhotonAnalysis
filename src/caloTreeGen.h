@@ -113,6 +113,29 @@ public:
     // Set user options
     void setWantSim(bool s)  { wantSim = s; }
     void setWantData(bool d) { wantData = d; }
+    
+    // Running total of simulation events processed
+    long long totalSimEventsProcessed = 0;
+
+    // Running total of clusters (summed over all events)
+    long long totalSimClusters        = 0;
+
+    // Summed classification counts
+    long long totalSimPrompt = 0;
+    long long totalSimFrag   = 0;
+    long long totalSimDecay  = 0;
+    long long totalSimOther  = 0;
+
+    // Summed total # of prompt truth photons found
+    long long totalSimPromptPhotons = 0;
+
+    // For pT-binned summary: how many clusters were “tagged prompt” vs. “correctly prompt”
+    std::map<std::pair<float,float>, long long> total_nTaggedPrompt_byPt;
+    std::map<std::pair<float,float>, long long> total_nCorrectlyPrompt_byPt;
+    //5by2 b/c we use indices [1..4] for the truthClass (since  assign 1=prompt,2=frag,3=decay,4=other) and [0..1] for predicted (“not tagged prompt”=0, “tagged prompt”=1).
+    //0th row is unused (for consistency with truthClass indexing).
+    long long confusionMatrix[5][2] = { {0} };
+
 
     
 private:
