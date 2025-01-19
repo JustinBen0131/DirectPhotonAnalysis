@@ -135,6 +135,9 @@ public:
     //5by2 b/c we use indices [1..4] for the truthClass (since  assign 1=prompt,2=frag,3=decay,4=other) and [0..1] for predicted (“not tagged prompt”=0, “tagged prompt”=1).
     //0th row is unused (for consistency with truthClass indexing).
     long long confusionMatrix[5][2] = { {0} };
+    // We'll store confusionMatrix_byPt[ bin ][truthClass][predClass]
+    std::map<std::pair<float,float>, std::array<std::array<long long, 2>, 5>> confusionMatrix_byPt;
+
 
 
     
