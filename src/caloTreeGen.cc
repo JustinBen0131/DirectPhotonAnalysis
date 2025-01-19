@@ -240,69 +240,88 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
     // ---------------------------
     if (wantSim)
     {
-      if (verbose) std::cout << "[INFO] Running in SIMULATION mode.\n";
-
-      // Create a separate output TFile for sim
-      outSim = new TFile(SimOutfile.c_str(), "RECREATE");
-      if (!outSim || outSim->IsZombie())
-      {
-        std::cerr << "[ERROR] Could not open simulation output file: "
-                  << SimOutfile << std::endl;
-        return Fun4AllReturnCodes::ABORTEVENT;
-      }
-
-      // Build simulation QA histograms
-      createHistos_ForSimulation();
-
-      // If user did not provide a simInputFileName => we skip or error
-      if (simInputFileName.empty())
-      {
-        // If you want to gracefully do nothing => return OK or set a flag:
-        std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
-      }
-      else
-      {
-        // Attempt to open the single sim file
-        simInFile = TFile::Open(simInputFileName.c_str(), "READ");
-        if (!simInFile || simInFile->IsZombie())
+        if (verbose)
+            std::cout << "[INFO] Running in SIMULATION mode.\n";
+        
+        // Create a separate output TFile for sim
+        outSim = new TFile(SimOutfile.c_str(), "RECREATE");
+        if (!outSim || outSim->IsZombie())
         {
-          std::cerr << "[ERROR] Could not open simulation input file: "
-                    << simInputFileName << std::endl;
-          return Fun4AllReturnCodes::ABORTEVENT;
+            std::cerr << "[ERROR] Could not open simulation output file: "
+            << SimOutfile << std::endl;
+            return Fun4AllReturnCodes::ABORTEVENT;
         }
+        
+        // Optional verbose print: confirm the output file is ready
         if (verbose)
         {
-          std::cout << "[SIM] Reading from sim input file: "
-                    << simInputFileName << std::endl;
+            std::cout << "[SIM] Successfully created simulation output file: "
+            << SimOutfile << std::endl;
         }
-
-        // Retrieve TTree "slimtree"
-        slimTree = dynamic_cast<TTree*>(simInFile->Get("slimtree"));
-        if (!slimTree)
+        
+        // Build simulation QA histograms
+        createHistos_ForSimulation();
+        
+        // If user did not provide a simInputFileName => we skip or error
+        if (simInputFileName.empty())
         {
-          std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
-                    << simInputFileName << std::endl;
-          return Fun4AllReturnCodes::ABORTEVENT;
+            // If you want to gracefully do nothing => return OK or set a flag:
+            std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
         }
-
-        // Setup branch addresses
-        slimTree->SetBranchAddress("ncluster_CLUSTERINFO_CEMC", &ncluster_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_pid_CEMC", cluster_pid_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_iso_04_CEMC", cluster_iso_04_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Et_CEMC", cluster_Et_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Eta_CEMC", cluster_Eta_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Phi_CEMC", cluster_Phi_CEMC_SIM);
-
-        slimTree->SetBranchAddress("nparticles", &nparticles_SIM);
-        slimTree->SetBranchAddress("particle_pid", particle_pid_SIM);
-        slimTree->SetBranchAddress("particle_photonclass", particle_photonclass_SIM);
-        slimTree->SetBranchAddress("particle_Pt", particle_Pt_SIM);
-        slimTree->SetBranchAddress("particle_Eta", particle_Eta_SIM);
-        slimTree->SetBranchAddress("particle_Phi", particle_Phi_SIM);
-
-        if (verbose)
-          std::cout << "[SIM] TTree branch addresses set up.\n";
-      }
+        else
+        {
+            // Attempt to open the single sim file
+            simInFile = TFile::Open(simInputFileName.c_str(), "READ");
+            if (!simInFile || simInFile->IsZombie())
+            {
+                std::cerr << "[ERROR] Could not open simulation input file: "
+                << simInputFileName << std::endl;
+                return Fun4AllReturnCodes::ABORTEVENT;
+            }
+            
+            // Additional debug message:
+            if (verbose)
+            {
+                std::cout << "[SIM] Opened simulation input file: "
+                << simInputFileName << std::endl;
+            }
+            
+            // Retrieve TTree "slimtree"
+            slimTree = dynamic_cast<TTree*>(simInFile->Get("slimtree"));
+            if (!slimTree)
+            {
+                std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
+                << simInputFileName << std::endl;
+                return Fun4AllReturnCodes::ABORTEVENT;
+            }
+            
+            // Optional verbose print: number of entries in the TTree
+            if (verbose)
+            {
+                std::cout << "[SIM] 'slimtree' successfully retrieved. It has "
+                << slimTree->GetEntries() << " entries.\n";
+            }
+            
+            // Setup branch addresses
+            slimTree->SetBranchAddress("ncluster_CLUSTERINFO_CEMC", &ncluster_CEMC_SIM);
+            slimTree->SetBranchAddress("cluster_pid_CEMC",    cluster_pid_CEMC_SIM);
+            slimTree->SetBranchAddress("cluster_iso_04_CEMC", cluster_iso_04_CEMC_SIM);
+            slimTree->SetBranchAddress("cluster_Et_CEMC",     cluster_Et_CEMC_SIM);
+            slimTree->SetBranchAddress("cluster_Eta_CEMC",    cluster_Eta_CEMC_SIM);
+            slimTree->SetBranchAddress("cluster_Phi_CEMC",    cluster_Phi_CEMC_SIM);
+            
+            slimTree->SetBranchAddress("nparticles", &nparticles_SIM);
+            slimTree->SetBranchAddress("particle_pid",         particle_pid_SIM);
+            slimTree->SetBranchAddress("particle_photonclass", particle_photonclass_SIM);
+            slimTree->SetBranchAddress("particle_Pt",          particle_Pt_SIM);
+            slimTree->SetBranchAddress("particle_Eta",         particle_Eta_SIM);
+            slimTree->SetBranchAddress("particle_Phi",         particle_Phi_SIM);
+            
+            if (verbose)
+            {
+                std::cout << "[SIM] TTree branch addresses set up successfully.\n";
+            }
+        }
     }
 
     // If neither data nor sim was requested => error
@@ -2760,7 +2779,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             // Apply a cut on the absolute value of the z vertex
             if (std::abs(m_vz) >= 60) {
                 if (verbose) {
-                    std::cout << "Skipping event: |m_vz| = " << std::abs(m_vz) << " is outside the allowed range of |30 cm|." << std::endl;
+                    std::cout << "Skipping event: |m_vz| = " << std::abs(m_vz) << " is outside the allowed range of |60 cm|." << std::endl;
                 }
                 return Fun4AllReturnCodes::ABORTEVENT; // Skip the rest of the event processing
             }
@@ -3482,120 +3501,108 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 
 int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
-  //----------------------------------------------------------------------
   // [0] Optional debug print
-  // If 'verbose' is ON, log that we have entered this function
-  //----------------------------------------------------------------------
   if (verbose)
   {
     std::cout << "\n[DEBUG] Entering caloTreeGen::process_event_Sim()"
               << " => event_count=" << event_count
-              << ", topNode="      << topNode << std::endl;
+              << ", topNode=" << topNode << std::endl;
   }
 
-  //----------------------------------------------------------------------
-  // [1] Update event counter and check user limit
-  //----------------------------------------------------------------------
+  // [1] Update event counter
   event_count++;
+  std::cout << "\n========== Processing CALOTREEGEN SIM MODE -- Event "
+            << event_count << " ==========\n";
 
-  std::cout << "\n========== Processing CALOTREEGEN SIMN MODE -- Event " << event_count << " ==========\n";
-  //----------------------------------------------------------------------
-  // [2] Retrieve next entry from TTree "slimTree"
-  //     We keep a static 'iEntry' to remember our position
-  //----------------------------------------------------------------------
+  // [2] Retrieve next entry from TTree
   static Long64_t iEntry = 0;
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-    // If TTree pointer is null or no more entries => stop
     std::cerr << "[WARNING] 'slimTree' is null or no more entries to read.\n";
     return Fun4AllReturnCodes::ABORTRUN;
   }
-
-  // Actually load the data arrays for this event
   slimTree->GetEntry(iEntry++);
-  
-  //----------------------------------------------------------------------
-  // [2A] If verbose, let’s print info about the TTree structure once,
-  //      e.g., its branches and leaves
-  //----------------------------------------------------------------------
+
+  // Debug print
+  if (verbose)
+  {
+    std::cout << "[DEBUG] Just read iEntry=" << iEntry-1
+              << " => ncluster_CEMC_SIM=" << ncluster_CEMC_SIM
+              << ", nparticles_SIM=" << nparticles_SIM << std::endl;
+    if (ncluster_CEMC_SIM > 0)
+    {
+      std::cout << "    First cluster => Et=" << cluster_Et_CEMC_SIM[0]
+                << ", Eta=" << cluster_Eta_CEMC_SIM[0]
+                << ", Phi=" << cluster_Phi_CEMC_SIM[0] << std::endl;
+    }
+  }
+
+  // [2A] Print TTree structure once if verbose
   static bool printedTreeInfo = false;
   if (verbose && !printedTreeInfo)
   {
-    printedTreeInfo = true; // so we only do this once
-
+    printedTreeInfo = true;
     std::cout << "[VERBOSE] Printing available branches in 'slimTree':\n";
     TObjArray* branchList = slimTree->GetListOfBranches();
     if (branchList)
     {
       for (int ib = 0; ib < branchList->GetEntries(); ib++)
       {
-        TBranch* br = (TBranch*) branchList->At(ib);
-        if (!br) continue;
-        std::cout << "  Branch name: " << br->GetName()
-                  << ", Title: "      << br->GetTitle() << std::endl;
+        if (TBranch* br = (TBranch*) branchList->At(ib))
+        {
+          std::cout << "  Branch name: " << br->GetName()
+                    << ", Title: "      << br->GetTitle() << std::endl;
+        }
       }
     }
     else
     {
-      std::cout << "  [WARNING] No branches found in slimTree?\n";
+      std::cout << "[WARNING] No branches found in slimTree?\n";
     }
   }
 
-  //----------------------------------------------------------------------
-  // [3] Fill global isolation-based histograms: hIsoFromPi0Eta, hIsoNotPi0Eta
-  //----------------------------------------------------------------------
+  // [3] Example: fill global iso histograms
   for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
   {
     float isoVal = cluster_iso_04_CEMC_SIM[ic];
     float cEt    = cluster_Et_CEMC_SIM[ic];
-    int   pid    = cluster_pid_CEMC_SIM[ic]; // e.g. 22=photon,111=pi0,221=eta,...
+    int   pid    = cluster_pid_CEMC_SIM[ic]; // 22,111,221,...
 
-    // We require isoVal <= 6 to be "isolated" in this definition
     if (isoVal <= 6.f)
     {
-      // If cluster is from pi0 or eta => fill hIsoFromPi0Eta
-      if (pid == 111 || pid == 221)
+      if (pid == 111 || pid == 221) // from pi0 or eta
       {
         if (hIsoFromPi0Eta) hIsoFromPi0Eta->Fill(cEt);
       }
-      // else fill hIsoNotPi0Eta
       else
       {
-        if (hIsoNotPi0Eta) hIsoNotPi0Eta->Fill(cEt);
+        if (hIsoNotPi0Eta)  hIsoNotPi0Eta->Fill(cEt);
       }
     }
   }
 
-  //----------------------------------------------------------------------
-  // [4] We define "prompt cluster" => (isoVal<6, cEt>5).
-  //     We'll measure how many such clusters are truly prompt (photonclass=1).
-  //----------------------------------------------------------------------
-  // Create counters for each pT bin
-  std::map<std::pair<float, float>, int> nTaggedPrompt_byPt;
-  std::map<std::pair<float, float>, int> nCorrectlyPrompt_byPt;
+  // [4] Setup local pT-binned counters for prompt-candidate
+  std::map<std::pair<float,float>, int> nTaggedPrompt_byPt;
+  std::map<std::pair<float,float>, int> nCorrectlyPrompt_byPt;
   for (auto &bin : pT_bins)
   {
-    nTaggedPrompt_byPt[bin]       = 0;
-    nCorrectlyPrompt_byPt[bin]    = 0;
+    nTaggedPrompt_byPt[bin]    = 0;
+    nCorrectlyPrompt_byPt[bin] = 0;
   }
 
-  //----------------------------------------------------------------------
-  // [5] Additional counters: total clusters that are prompt, frag, decay, other
-  //----------------------------------------------------------------------
+  // [5] Additional counters for classification in this event
   int totalPrompt = 0;
   int totalFrag   = 0;
   int totalDecay  = 0;
   int totalOther  = 0;
 
-  //----------------------------------------------------------------------
-  // [6] Main loop over clusters => classification
-  //----------------------------------------------------------------------
+  // [6] Main loop over clusters
   for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
   {
-    float cEt     = cluster_Et_CEMC_SIM[ic];
-    float cEta    = cluster_Eta_CEMC_SIM[ic];
-    float cPhi    = cluster_Phi_CEMC_SIM[ic];
-    float isoVal  = cluster_iso_04_CEMC_SIM[ic];
+    float cEt    = cluster_Et_CEMC_SIM[ic];
+    float cEta   = cluster_Eta_CEMC_SIM[ic];
+    float cPhi   = cluster_Phi_CEMC_SIM[ic];
+    float isoVal = cluster_iso_04_CEMC_SIM[ic];
 
     // [6.1] Find which pT bin we belong to
     bool inRange = false;
@@ -3611,14 +3618,12 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
     if (!inRange) continue; // skip cluster if no pT bin match
 
-    // [6.2] Find best truth photon => minimal deltaR<0.05
+    // [6.2] Find best-match truth photon => deltaR<0.05
     int   bestMatchIndex = -1;
     float bestDR         = 9999.f;
     for (int ip = 0; ip < nparticles_SIM; ++ip)
     {
-      // must be pid=22 => real photon
-      if (particle_pid_SIM[ip] != 22) continue;
-
+      if (particle_pid_SIM[ip] != 22) continue; // real photon only
       float dR = deltaR(cEta, particle_Eta_SIM[ip], cPhi, particle_Phi_SIM[ip]);
       if (dR < 0.05 && dR < bestDR)
       {
@@ -3627,7 +3632,7 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
       }
     }
 
-    // [6.3] Derive truthClass => 1=prompt,2=frag,3=decay,4=other
+    // [6.3] Derive "truthClass" => 1=prompt,2=frag,3=decay,4=other
     int truthClass = 4;
     if (bestMatchIndex >= 0)
     {
@@ -3641,19 +3646,19 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
       }
     }
 
-    // [6.4] Increment counters for the entire event
+    // [6.4] Count local classification
     if      (truthClass == 1) totalPrompt++;
     else if (truthClass == 2) totalFrag++;
     else if (truthClass == 3) totalDecay++;
     else                      totalOther++;
 
-    // [6.5] Fill “classification vs. pT bin” hist, e.g. "hClusterTruthClass_pT_2.0to3.0"
+    // [6.5] Fill classification vs. pT hist
     if (hClusterTruthClass_pTbin.count(matchedPtBin))
     {
       hClusterTruthClass_pTbin[matchedPtBin]->Fill(truthClass);
     }
 
-    // [6.6] Check if cluster is "prompt candidate" => isoVal<6, cEt>5
+    // [6.6] Check if cluster is "prompt candidate"
     bool clusterIsPromptCandidate = (isoVal < 6.f && cEt > 5.f);
     if (clusterIsPromptCandidate)
     {
@@ -3663,11 +3668,27 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
         nCorrectlyPrompt_byPt[matchedPtBin]++;
       }
     }
+
+    // -------------------------------------------------------------------
+    // (NEW) Update confusion matrices:
+    //   => "truthClass" in [1..4]
+    //   => predicted = 1 if "prompt candidate," else 0
+    // -------------------------------------------------------------------
+    if (truthClass >= 1 && truthClass <= 4)
+    {
+      int predClass = (clusterIsPromptCandidate ? 1 : 0);
+
+      // [A] pT-independent confusionMatrix
+      confusionMatrix[truthClass][predClass]++;
+
+      // [B] pT-dependent confusion matrix for matchedPtBin
+      //     If it's not created, the default will be zero-initialized
+      //     when we use operator[] in a std::map with an array of arrays.
+      confusionMatrix_byPt[matchedPtBin][truthClass][predClass]++;
+    }
   } // end cluster loop
 
-  //----------------------------------------------------------------------
-  // [7] Now compute the “prompt purity” => (# truly prompt) / (# tagged)
-  //----------------------------------------------------------------------
+  // [7] Fill prompt purity histograms
   for (auto &bin : pT_bins)
   {
     int nTagged  = nTaggedPrompt_byPt[bin];
@@ -3675,7 +3696,6 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     if (nTagged > 0)
     {
       float ratio = float(nCorrect) / float(nTagged);
-      // e.g. "hPromptPurity_pT_2.0to3.0"
       if (hPromptPurity_pTbin.count(bin))
       {
         hPromptPurity_pTbin[bin]->Fill(ratio);
@@ -3683,10 +3703,7 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  //----------------------------------------------------------------------
-  // [8] Also fill distribution of *all* prompt photons in pT
-  //     => look for (pid=22, photonclass=1)
-  //----------------------------------------------------------------------
+  // [8] Fill distribution of *all* prompt photons in pT
   int nPromptPhotons = 0;
   for (int ip = 0; ip < nparticles_SIM; ++ip)
   {
@@ -3698,14 +3715,11 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  //----------------------------------------------------------------------
-  // [9] If 'verbose', print a summary for this event
-  //----------------------------------------------------------------------
+  // [9] Verbose summary for this event
   if (verbose)
   {
     int totalClusters   = ncluster_CEMC_SIM;
     int totalBackground = totalFrag + totalDecay + totalOther;
-
     std::cout << "[SIM] Event " << event_count
               << " (iEntry=" << iEntry << ") summary:\n"
               << "   => #clusters=" << totalClusters
@@ -3713,19 +3727,32 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
               << ", #frag="   << totalFrag
               << ", #decay="  << totalDecay
               << ", #other="  << totalOther
-              << "  (Total BG=" << totalBackground << ")\n"
+              << " (Total BG=" << totalBackground << ")\n"
               << "   => # prompt truth photons in event=" << nPromptPhotons
               << "\n   => Done with process_event_Sim.\n";
   }
 
-  //----------------------------------------------------------------------
-  // All done => success
-  //----------------------------------------------------------------------
+  // [10] Accumulate per-event totals into global counters
+  totalSimEventsProcessed++;
+  totalSimClusters      += ncluster_CEMC_SIM;
+  totalSimPrompt        += totalPrompt;
+  totalSimFrag          += totalFrag;
+  totalSimDecay         += totalDecay;
+  totalSimOther         += totalOther;
+  totalSimPromptPhotons += nPromptPhotons;
+
+  // (B) Summation of per-bin tagged vs. correctly prompt
+  for (auto &kv : nTaggedPrompt_byPt)
+  {
+    total_nTaggedPrompt_byPt[kv.first] += kv.second;
+  }
+  for (auto &kv : nCorrectlyPrompt_byPt)
+  {
+    total_nCorrectlyPrompt_byPt[kv.first] += kv.second;
+  }
+
   return Fun4AllReturnCodes::EVENT_OK;
 }
-
-
-
 
 int caloTreeGen::ResetEvent(PHCompositeNode *topNode)
 {
@@ -3815,13 +3842,6 @@ int caloTreeGen::resetEvent_Data(PHCompositeNode *topNode) {
 
 int caloTreeGen::resetEvent_Sim(PHCompositeNode *topNode)
 {
-    if (verbose)
-    {
-        std::cout << ANSI_COLOR_BLUE_BOLD
-                  << "[ResetEvent-Sim] Clearing simulation-related arrays..."
-                  << ANSI_COLOR_RESET << std::endl;
-    }
-
 
     if (verbose)
     {
@@ -4249,12 +4269,12 @@ int caloTreeGen::endSim(PHCompositeNode *topNode)
     }
   };
 
-  // [5] Write the “global” histograms that are not pT-binned
+  // [5] Write global histograms (unbinned)
   writeHistIfExists(hIsoFromPi0Eta,   "hIsoFromPi0Eta");
   writeHistIfExists(hIsoNotPi0Eta,    "hIsoNotPi0Eta");
   writeHistIfExists(hPhotonPtPrompt,  "hPhotonPtPrompt");
 
-  // [6] Write out the pT-binned histograms: classification & purity
+  // [6] Write out the pT-binned histograms
   for (auto &bin : pT_bins)
   {
     // classification
@@ -4286,10 +4306,150 @@ int caloTreeGen::endSim(PHCompositeNode *topNode)
   delete outSim;
   outSim = nullptr;
 
+  // [8] If verbose, print final summary
   if (verbose)
   {
+    std::cout << "\n" << ANSI_COLOR_BLUE_BOLD
+              << "[SIM End] Summary of simulation run:"
+              << ANSI_COLOR_RESET << "\n\n";
+
+    // (A) Print overall totals
+    std::cout
+      << "  => Total events processed:  " << totalSimEventsProcessed << "\n"
+      << "  => Summation of clusters:   " << totalSimClusters       << "\n\n"
+      << "  => Classification totals across ALL events:\n"
+      << "       #prompt=" << totalSimPrompt
+      << ", #frag="       << totalSimFrag
+      << ", #decay="      << totalSimDecay
+      << ", #other="      << totalSimOther << "\n\n"
+      << "  => Total prompt photons found (pid=22, photonclass=1): "
+      << totalSimPromptPhotons << "\n\n";
+
+    // (B) Print a pT-binned table: #tagged, #correct, purity
+    std::cout << "Detailed pT-bin summary:\n";
+    std::cout << "   -------------------------------------------------------------\n";
+    std::cout << "    pT Range (GeV) |  #Tagged     #Correct    Purity(%)         \n";
+    std::cout << "   -------------------------------------------------------------\n";
+
+    for (auto &bin : pT_bins)
+    {
+      float pTmin = bin.first;
+      float pTmax = bin.second;
+
+      long long nTagged  = total_nTaggedPrompt_byPt[bin];
+      long long nCorrect = total_nCorrectlyPrompt_byPt[bin];
+
+      double purity = 0.;
+      if (nTagged > 0)
+      {
+        purity = 100.0 * double(nCorrect) / double(nTagged);
+      }
+
+      // Print row
+      std::cout << "   "
+                << std::setw(6) << pTmin << " - " << std::setw(5) << pTmax
+                << "  |   "
+                << std::setw(8) << nTagged
+                << "   " << std::setw(9) << nCorrect
+                << "   " << std::fixed << std::setprecision(2)
+                << std::setw(8) << purity << "%"
+                << std::endl;
+    }
+    std::cout << "   -------------------------------------------------------------\n\n";
+
+    // --------------------------------------------------------------------
+    // (C) Print pT-Independent Confusion Matrix (4×2)
+    // --------------------------------------------------------------------
+    auto printConfusionMatrix = [&](const long long matrix[5][2],
+                                    const std::string &title)
+    {
+      // We compute row/column sums
+      long long rowSum[5] = {0}, colSum[2] = {0};
+      for (int t = 1; t <= 4; t++)
+      {
+        for (int p = 0; p < 2; p++)
+        {
+          rowSum[t]   += matrix[t][p];
+          colSum[p]   += matrix[t][p];
+        }
+      }
+      long long totalAll = colSum[0] + colSum[1];
+
+      std::cout << "------------------------------------------------------\n";
+      std::cout << title << "\n";
+      std::cout << "   Rows = TruthClass(1=Prompt,2=Frag,3=Decay,4=Other)\n"
+                << "   Cols = Pred(0=NotPromptCandidate,1=PromptCandidate)\n";
+      std::cout << "------------------------------------------------------\n";
+      std::cout << "                 Pred=0        Pred=1        RowSum\n";
+      std::cout << "------------------------------------------------------\n";
+
+      auto printOneRow = [&](int truth, const char* label)
+      {
+        long long val0 = matrix[truth][0];
+        long long val1 = matrix[truth][1];
+        std::cout << " " << std::setw(8) << label << "(" << truth << ") | "
+                  << std::setw(10) << val0 << "   "
+                  << std::setw(10) << val1 << "   "
+                  << std::setw(8) << rowSum[truth] << "\n";
+      };
+
+      printOneRow(1, "Prompt");
+      printOneRow(2, "Frag");
+      printOneRow(3, "Decay");
+      printOneRow(4, "Other");
+
+      std::cout << "------------------------------------------------------\n";
+      std::cout << "          ColSum= " << std::setw(10) << colSum[0] << "   "
+                << std::setw(10) << colSum[1]
+                << "   " << std::setw(8) << totalAll << "\n";
+      std::cout << "------------------------------------------------------\n\n";
+    };
+
+    // Print the global (pT-independent) confusion matrix
+    printConfusionMatrix(confusionMatrix,
+      "Global Confusion Matrix (All pT)");
+
+    // --------------------------------------------------------------------
+    // (D) Print a pT-dependent confusion matrix for each bin
+    // --------------------------------------------------------------------
+    std::cout << "Now showing a confusion matrix for each pT bin:\n";
+    for (auto &bin : pT_bins)
+    {
+      float pTmin = bin.first;
+      float pTmax = bin.second;
+
+      // confusionMatrix_byPt[bin] is a 5×2 array
+      const auto &cm = confusionMatrix_byPt[bin];
+
+      // We need to convert this `std::array<std::array<long long, 2>, 5>`
+      // to a raw [5][2] so we can pass it to printConfusionMatrix:
+      long long localMat[5][2];
+      memset(localMat, 0, sizeof(localMat));
+      for (int t = 1; t <= 4; t++)
+      {
+        for (int p = 0; p < 2; p++)
+        {
+          localMat[t][p] = cm[t][p];
+        }
+      }
+
+      // Title
+      std::ostringstream oss;
+      oss << "Confusion Matrix for pT bin (" << pTmin << " - " << pTmax << ")";
+
+      // Print
+      printConfusionMatrix(localMat, oss.str());
+    }
+
+    // Done with printing
     std::cout << "[INFO] endSim: Finished writing SIM histos & closed outSim.\n";
   }
+  else
+  {
+    // If not verbose, just print a simpler message
+    std::cout << "[INFO] endSim: Wrote SIM histos & closed outSim.\n";
+  }
+
   return Fun4AllReturnCodes::EVENT_OK;
 }
 
