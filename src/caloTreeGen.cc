@@ -248,7 +248,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         if (!outSim || outSim->IsZombie())
         {
             std::cerr << "[ERROR] Could not open simulation output file: "
-            << SimOutfile << std::endl;
+                      << SimOutfile << std::endl;
             return Fun4AllReturnCodes::ABORTEVENT;
         }
         
@@ -256,7 +256,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         if (verbose)
         {
             std::cout << "[SIM] Successfully created simulation output file: "
-            << SimOutfile << std::endl;
+                      << SimOutfile << std::endl;
         }
         
         // Build simulation QA histograms
@@ -265,7 +265,6 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         // If user did not provide a simInputFileName => we skip or error
         if (simInputFileName.empty())
         {
-            // If you want to gracefully do nothing => return OK or set a flag:
             std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
         }
         else
@@ -275,7 +274,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             if (!simInFile || simInFile->IsZombie())
             {
                 std::cerr << "[ERROR] Could not open simulation input file: "
-                << simInputFileName << std::endl;
+                          << simInputFileName << std::endl;
                 return Fun4AllReturnCodes::ABORTEVENT;
             }
             
@@ -283,7 +282,7 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             if (verbose)
             {
                 std::cout << "[SIM] Opened simulation input file: "
-                << simInputFileName << std::endl;
+                          << simInputFileName << std::endl;
             }
             
             // Retrieve TTree "slimtree"
@@ -291,15 +290,35 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             if (!slimTree)
             {
                 std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
-                << simInputFileName << std::endl;
+                          << simInputFileName << std::endl;
                 return Fun4AllReturnCodes::ABORTEVENT;
             }
             
-            // Optional verbose print: number of entries in the TTree
+            // Optional verbose print: number of entries AND branch listing
             if (verbose)
             {
-                std::cout << "[SIM] 'slimtree' successfully retrieved. It has "
-                << slimTree->GetEntries() << " entries.\n";
+                std::cout << "[SIM] 'slimtree' successfully retrieved.\n"
+                          << "     It has " << slimTree->GetEntries()
+                          << " entries.\n";
+
+                // Now list all branches found in 'slimTree'
+                std::cout << "[SIM] Branches in 'slimTree':\n";
+                TObjArray* branchList = slimTree->GetListOfBranches();
+                if (branchList)
+                {
+                    for (int i = 0; i < branchList->GetEntries(); i++)
+                    {
+                        TBranch* br = (TBranch*) branchList->At(i);
+                        if (!br) continue;
+                        std::cout << "   + Branch name: " << br->GetName()
+                                  << ", Title: "        << br->GetTitle()
+                                  << std::endl;
+                    }
+                }
+                else
+                {
+                    std::cout << "[WARNING] No branches found in 'slimTree'.\n";
+                }
             }
             
             // Setup branch addresses
@@ -323,7 +342,6 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
             }
         }
     }
-
     // If neither data nor sim was requested => error
     if (!wantData && !wantSim)
     {
