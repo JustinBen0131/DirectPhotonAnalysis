@@ -240,107 +240,147 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
     // ---------------------------
     if (wantSim)
     {
-        if (verbose)
-            std::cout << "[INFO] Running in SIMULATION mode.\n";
-        
-        // Create a separate output TFile for sim
-        outSim = new TFile(SimOutfile.c_str(), "RECREATE");
-        if (!outSim || outSim->IsZombie())
-        {
-            std::cerr << "[ERROR] Could not open simulation output file: "
-                      << SimOutfile << std::endl;
-            return Fun4AllReturnCodes::ABORTEVENT;
-        }
-        
-        // Optional verbose print: confirm the output file is ready
-        if (verbose)
-        {
-            std::cout << "[SIM] Successfully created simulation output file: "
-                      << SimOutfile << std::endl;
-        }
-        
-        // Build simulation QA histograms
-        createHistos_ForSimulation();
-        
-        // If user did not provide a simInputFileName => we skip or error
-        if (simInputFileName.empty())
-        {
-            std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
-        }
-        else
-        {
-            // Attempt to open the single sim file
-            simInFile = TFile::Open(simInputFileName.c_str(), "READ");
-            if (!simInFile || simInFile->IsZombie())
-            {
-                std::cerr << "[ERROR] Could not open simulation input file: "
-                          << simInputFileName << std::endl;
-                return Fun4AllReturnCodes::ABORTEVENT;
-            }
-            
-            // Additional debug message:
-            if (verbose)
-            {
-                std::cout << "[SIM] Opened simulation input file: "
-                          << simInputFileName << std::endl;
-            }
-            
-            // Retrieve TTree "slimtree"
-            slimTree = dynamic_cast<TTree*>(simInFile->Get("slimtree"));
-            if (!slimTree)
-            {
-                std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
-                          << simInputFileName << std::endl;
-                return Fun4AllReturnCodes::ABORTEVENT;
-            }
-            
-            // Optional verbose print: number of entries AND branch listing
-            if (verbose)
-            {
-                std::cout << "[SIM] 'slimtree' successfully retrieved.\n"
-                          << "     It has " << slimTree->GetEntries()
-                          << " entries.\n";
+      if (verbose)
+      {
+        std::cout << "[INFO] Running in SIMULATION mode.\n";
+      }
 
-                // Now list all branches found in 'slimTree'
-                std::cout << "[SIM] Branches in 'slimTree':\n";
-                TObjArray* branchList = slimTree->GetListOfBranches();
-                if (branchList)
-                {
-                    for (int i = 0; i < branchList->GetEntries(); i++)
-                    {
-                        TBranch* br = (TBranch*) branchList->At(i);
-                        if (!br) continue;
-                        std::cout << "   + Branch name: " << br->GetName()
-                                  << ", Title: "        << br->GetTitle()
-                                  << std::endl;
-                    }
-                }
-                else
-                {
-                    std::cout << "[WARNING] No branches found in 'slimTree'.\n";
-                }
+      // Create a separate output TFile for sim
+      outSim = new TFile(SimOutfile.c_str(), "RECREATE");
+      if (!outSim || outSim->IsZombie())
+      {
+        std::cerr << "[ERROR] Could not open simulation output file: "
+                  << SimOutfile << std::endl;
+        return Fun4AllReturnCodes::ABORTEVENT;
+      }
+
+      if (verbose)
+      {
+        std::cout << "[SIM] Successfully created simulation output file: "
+                  << SimOutfile << std::endl;
+      }
+
+      // Build simulation QA histograms
+      createHistos_ForSimulation();
+
+      // If user did not provide a simInputFileName => we skip or error
+      if (simInputFileName.empty())
+      {
+        std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
+      }
+      else
+      {
+        // Attempt to open the single sim file
+        simInFile = TFile::Open(simInputFileName.c_str(), "READ");
+        if (!simInFile || simInFile->IsZombie())
+        {
+          std::cerr << "[ERROR] Could not open simulation input file: "
+                    << simInputFileName << std::endl;
+          return Fun4AllReturnCodes::ABORTEVENT;
+        }
+
+        if (verbose)
+        {
+          std::cout << "[SIM] Opened simulation input file: "
+                    << simInputFileName << std::endl;
+        }
+
+        // Retrieve TTree "slimtree"
+        slimTree = dynamic_cast<TTree*>(simInFile->Get("slimtree"));
+        if (!slimTree)
+        {
+          std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
+                    << simInputFileName << std::endl;
+          return Fun4AllReturnCodes::ABORTEVENT;
+        }
+
+        // Optional verbose print: number of entries AND branch listing
+        if (verbose)
+        {
+          std::cout << "[SIM] 'slimtree' successfully retrieved.\n"
+                    << "     It has " << slimTree->GetEntries()
+                    << " entries.\n";
+
+          // Now list all branches found in 'slimTree'
+          std::cout << "[SIM] Branches in 'slimTree':\n";
+          TObjArray* branchList = slimTree->GetListOfBranches();
+          if (branchList)
+          {
+            for (int i = 0; i < branchList->GetEntries(); i++)
+            {
+              TBranch* br = (TBranch*) branchList->At(i);
+              if (!br) continue;
+              std::cout << "   + Branch name: " << br->GetName()
+                        << ", Title: "        << br->GetTitle()
+                        << std::endl;
             }
-            
-            // Setup branch addresses
-            slimTree->SetBranchAddress("ncluster_CLUSTERINFO_CEMC", &ncluster_CEMC_SIM);
-            slimTree->SetBranchAddress("cluster_pid_CEMC",    cluster_pid_CEMC_SIM);
-            slimTree->SetBranchAddress("cluster_iso_04_CEMC", cluster_iso_04_CEMC_SIM);
-            slimTree->SetBranchAddress("cluster_Et_CEMC",     cluster_Et_CEMC_SIM);
-            slimTree->SetBranchAddress("cluster_Eta_CEMC",    cluster_Eta_CEMC_SIM);
-            slimTree->SetBranchAddress("cluster_Phi_CEMC",    cluster_Phi_CEMC_SIM);
-            
-            slimTree->SetBranchAddress("nparticles", &nparticles_SIM);
-            slimTree->SetBranchAddress("particle_pid",         particle_pid_SIM);
-            slimTree->SetBranchAddress("particle_photonclass", particle_photonclass_SIM);
-            slimTree->SetBranchAddress("particle_Pt",          particle_Pt_SIM);
-            slimTree->SetBranchAddress("particle_Eta",         particle_Eta_SIM);
-            slimTree->SetBranchAddress("particle_Phi",         particle_Phi_SIM);
-            
+          }
+          else
+          {
+            std::cout << "[WARNING] No branches found in 'slimTree'.\n";
+          }
+        }
+
+        // ==================================================
+        //       SETUP BRANCHES: match the actual names
+        // ==================================================
+
+        // A small helper lambda to do "safe" SetBranchAddress:
+        auto safeSetBranch = [&](const char* bname, void* addr, const char* what)
+        {
+          if (slimTree->GetBranch(bname))
+          {
+            slimTree->SetBranchAddress(bname, addr);
             if (verbose)
             {
-                std::cout << "[SIM] TTree branch addresses set up successfully.\n";
+              std::cout << "[SIM] Attached branch '" << bname
+                        << "' to " << what << ".\n";
             }
+          }
+          else
+          {
+            std::cerr << "[WARNING] Branch '" << bname
+                      << "' not found in TTree.\n";
+          }
+        };
+
+        safeSetBranch("ncluster_CLUSTERINFO_CEMC",
+                      &ncluster_CEMC_SIM,
+                      "ncluster_CEMC_SIM");
+
+        safeSetBranch("cluster_pid_CLUSTERINFO_CEMC",
+                      cluster_pid_CEMC_SIM,
+                      "cluster_pid_CEMC_SIM");
+
+        safeSetBranch("cluster_iso_04_CLUSTERINFO_CEMC",
+                      cluster_iso_04_CEMC_SIM,
+                      "cluster_iso_04_CEMC_SIM");
+
+        safeSetBranch("cluster_Et_CLUSTERINFO_CEMC",
+                      cluster_Et_CEMC_SIM,
+                      "cluster_Et_CEMC_SIM");
+
+        safeSetBranch("cluster_Eta_CLUSTERINFO_CEMC",
+                      cluster_Eta_CEMC_SIM,
+                      "cluster_Eta_CEMC_SIM");
+
+        safeSetBranch("cluster_Phi_CLUSTERINFO_CEMC",
+                      cluster_Phi_CEMC_SIM,
+                      "cluster_Phi_CEMC_SIM");
+
+        // Now, for particles:
+        safeSetBranch("nparticles", &nparticles_SIM, "nparticles_SIM");
+        safeSetBranch("particle_pid",         particle_pid_SIM,         "particle_pid_SIM");
+        safeSetBranch("particle_photonclass", particle_photonclass_SIM, "particle_photonclass_SIM");
+        safeSetBranch("particle_Pt",          particle_Pt_SIM,          "particle_Pt_SIM");
+        safeSetBranch("particle_Eta",         particle_Eta_SIM,         "particle_Eta_SIM");
+        safeSetBranch("particle_Phi",         particle_Phi_SIM,         "particle_Phi_SIM");
+
+        if (verbose)
+        {
+          std::cout << "[SIM] TTree branch addresses set up successfully.\n";
         }
+      }
     }
     // If neither data nor sim was requested => error
     if (!wantData && !wantSim)
