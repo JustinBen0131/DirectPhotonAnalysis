@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################################################################################################################
-# Golden Run List Generation Script 
+# Golden Run List Generation Script
 #
 # Purpose:
 #   This script compiles a final list of "Golden Runs" for sPHENIX analysis. The selection criteria are:
@@ -54,7 +54,7 @@ YELLOW="\e[33m"
 ########################################
 
 # Prints an error message and exits. If 'dontGenerateFileLists' is set, it
-# additionally clarifies that no DST lists would have been created.
+# additionally clarifies that no DST lists would have been generated.
 error_exit() {
     echo -e "${BOLD}${YELLOW}[ERROR]:${RESET} $1"
     if $DONT_GENERATE_FILELISTS; then
@@ -254,6 +254,7 @@ get_actual_events_from_evt() {
     while IFS= read -r runnumber; do
         [[ -z "$runnumber" ]] && continue
         run_numbers+=("$runnumber")
+        # Once we hit batch_size, we query in a single shot.
         if [[ ${#run_numbers[@]} -ge $batch_size ]]; then
             run_list=$(IFS=,; echo "${run_numbers[*]}")
             run_numbers=()
@@ -297,6 +298,7 @@ apply_incremental_cuts_header() {
 # (Step 3) Reads 'Full_ppGoldenRunList.txt', queries the 'run' table to calculate
 # (ertimestamp - brtimestamp). Retains runs with >300s (5 minutes).
 # The result is placed in 'list_runnumber_runtime_v1.txt'.
+# -- ADDED PROGRESS PRINTS EVERY 100 RUNS PROCESSED.
 runtime_cut() {
     input_file="list/Full_ppGoldenRunList.txt"
     output_file_duration_v1="list/list_runnumber_runtime_v1.txt"
@@ -305,8 +307,14 @@ runtime_cut() {
     total_runs_duration_v1=0
     runs_dropped_runtime_v1=0
 
+    # Count total for nice progress prints
+    total_input_runs=$(wc -l < "$input_file")
+    processed=0
+
     while IFS= read -r runnumber; do
+        ((processed++))
         [[ -z "$runnumber" ]] && continue
+
         query="SELECT EXTRACT(EPOCH FROM (ertimestamp - brtimestamp))
                FROM run
                WHERE runnumber = ${runnumber};"
@@ -319,6 +327,11 @@ runtime_cut() {
         else
             (( runs_dropped_runtime_v1++ ))
         fi
+
+        # Print progress every 100 runs
+        if (( processed % 100 == 0 )); then
+            echo "  [Runtime Cut] Processed $processed / $total_input_runs runs so far..."
+        fi
     done < "$input_file"
 
     echo "After runtime cut (>5 mins): $total_runs_duration_v1 runs remain."
@@ -329,6 +342,7 @@ runtime_cut() {
 # (Step 4) Reads the runtime-filtered list, queries 'gl1_scalers' for index=10
 # (minimum bias), ensuring live/raw≥80%. Passing runs are written to
 # 'list_runnumber_livetime_v1.txt'; failing runs go to 'list_runnumber_bad_livetime_v1.txt'.
+# -- ADDED PROGRESS PRINTS EVERY 100 RUNS PROCESSED.
 livetime_cut() {
     input_file="list/list_runnumber_runtime_v1.txt"
     output_file_livetime_v1="list/list_runnumber_livetime_v1.txt"
@@ -339,8 +353,13 @@ livetime_cut() {
     total_runs_livetime_v1=0
     runs_dropped_livetime_v1=0
 
+    total_input_runs=$(wc -l < "$input_file")
+    processed=0
+
     while IFS= read -r runnumber; do
+        ((processed++))
         [[ -z "$runnumber" ]] && continue
+
         index_to_check=10
         query="SELECT raw, live
                FROM gl1_scalers
@@ -367,6 +386,10 @@ livetime_cut() {
             echo "$runnumber" >> "$bad_file_livetime_v1"
             (( runs_dropped_livetime_v1++ ))
         fi
+
+        if (( processed % 100 == 0 )); then
+            echo "  [Livetime Cut] Processed $processed / $total_input_runs runs so far..."
+        fi
     done < "$input_file"
 
     echo "After livetime cut (>80%): $total_runs_livetime_v1 runs remain."
@@ -377,6 +400,7 @@ livetime_cut() {
 # (Step 5) Reads from 'list_runnumber_livetime_v1.txt', producing a
 # "preMagnet" list. If 'removeRunsWithMissingMaps' is set,
 # any runs not found in the known bad tower maps are excluded.
+# -- ADDED PROGRESS PRINTS EVERY 100 RUNS PROCESSED.
 missing_bad_tower_maps_step() {
     input_file="list/list_runnumber_livetime_v1.txt"
     pre_magnet_file="FileLists/Full_ppGoldenRunList_Version1_preMagnet.txt"
@@ -387,7 +411,35 @@ missing_bad_tower_maps_step() {
                                -name "*p0*" | cut -d '-' -f2 | cut -dc -f1 | sort | uniq)
     echo "$available_bad_tower_runs" > list/available_bad_tower_runs.txt
 
-    grep -Fxvf list/available_bad_tower_runs.txt "$input_file" > "$bad_tower_runs_file"
+    total_input_runs=$(wc -l < "$input_file")
+    processed=0
+
+    # Step 1: create an empty file for runs that are MISSING maps
+    > "$bad_tower_runs_file"
+
+    # Step 2: We'll store "available_bad_tower_runs.txt" lines in an array for quick membership checks
+    mapfile -t available_map_array < list/available_bad_tower_runs.txt
+    declare -A avail_map
+    for runmap in "${available_map_array[@]}"; do
+        avail_map["$runmap"]=1
+    done
+
+    # Step 3: read input_file line by line to see if run is in avail_map
+    # if it's NOT, that means it is missing => put it in $bad_tower_runs_file
+    while IFS= read -r runnumber; do
+        ((processed++))
+        [[ -z "$runnumber" ]] && continue
+
+        if [[ -z "${avail_map[$runnumber]}" ]]; then
+            # run is not in the available bad tower array => missing
+            echo "$runnumber" >> "$bad_tower_runs_file"
+        fi
+
+        # Print progress every 100 runs
+        if (( processed % 100 == 0 )); then
+            echo "  [Bad Tower Step] Processed $processed / $total_input_runs runs so far..."
+        fi
+    done < "$input_file"
 
     total_runs_with_bad_tower=$(grep -Fxf list/available_bad_tower_runs.txt "$input_file" | wc -l)
     total_runs_missing_bad_tower=$(wc -l < "$bad_tower_runs_file")
@@ -426,7 +478,7 @@ missing_bad_tower_maps_step() {
 
 # (Step 6) If 'removeNoMagnet' is true, read from the preMagnet file
 # and exclude runs where magnet_on != 't'. Otherwise, the preMagnet file
-# is simply renamed to the final run list.
+# is simply renamed to the final run list. We'll also add a small progress print.
 magnet_check_step() {
     if [[ "$REMOVE_NO_MAGNET" != true ]]; then
         echo "No magnet check requested, skipping..."
@@ -451,8 +503,13 @@ magnet_check_step() {
     total_runs_magnet_ok=0
     runs_dropped_magnet=0
 
+    total_input_runs=$(wc -l < "$pre_magnet_file")
+    processed=0
+
     while IFS= read -r runnumber; do
+        ((processed++))
         [[ -z "$runnumber" ]] && continue
+
         query="SELECT magnet_on
                FROM magnet_info
                WHERE runnumber=${runnumber};"
@@ -464,6 +521,10 @@ magnet_check_step() {
         else
             echo "$runnumber" >> "$magnet_off_file"
             (( runs_dropped_magnet++ ))
+        fi
+
+        if (( processed % 100 == 0 )); then
+            echo "  [Magnet Check] Processed $processed / $total_input_runs runs so far..."
         fi
     done < "$pre_magnet_file"
 
