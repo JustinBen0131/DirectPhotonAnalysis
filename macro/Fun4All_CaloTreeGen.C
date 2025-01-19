@@ -139,23 +139,23 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     }
     std::cout << "[DEBUG] First filename read: " << firstFilename << std::endl;
     
-    // Extract run number from the first filename
-    std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
-    int runnumber = runseg.first;
-    int segnumber = runseg.second;
-    std::cout << "[DEBUG] Extracted run: " << runnumber
-    << " segment: " << segnumber << std::endl;
-    
-    if (runnumber <= 0)
-    {
-        std::cerr << "[ERROR] Invalid run number extracted from first file: "
-        << runnumber << ". Exiting..." << std::endl;
-        return;
-    }
-    rc->set_uint64Flag("TIMESTAMP", runnumber);
-    
     if (runData)
     {
+        // Extract run number from the first filename
+        std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
+        int runnumber = runseg.first;
+        int segnumber = runseg.second;
+        std::cout << "[DEBUG] Extracted run: " << runnumber
+        << " segment: " << segnumber << std::endl;
+        
+        if (runnumber <= 0)
+        {
+            std::cerr << "[ERROR] Invalid run number extracted from first file: "
+            << runnumber << ". Exiting..." << std::endl;
+            return;
+        }
+        rc->set_uint64Flag("TIMESTAMP", runnumber);
+        
         std::cout << "[DEBUG] Setting up CaloTowerStatus modules...\n";
         CaloTowerStatus *statusEMC = new CaloTowerStatus("CEMCSTATUS");
         statusEMC->set_detector_type(CaloTowerDefs::CEMC);
@@ -275,6 +275,11 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
      */
     eval->setWantSim(runSim);
     eval->setWantData(runData);
+    if (runSim)
+    {
+        std::cout << "[SIM] Using single sim file => " << firstFilename << std::endl;
+        eval->setSimInputFileName(firstFilename);
+    }
     se->registerSubsystem(eval);
     
     
@@ -305,34 +310,6 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         se->registerInputManager(in);
     }
     
-    
-    // 2) Simulation Pipeline (new functionality):
-    if (runSim)
-    {
-        // We'll open "caloAnaSimListFile.list" (in the same directory) for the sim input
-        const std::string simListFile = "../caloAnaSimListFile.list";
-        std::ifstream simfile(simListFile);
-        if (!simfile.is_open())
-        {
-            std::cerr << "[ERROR] Simulation list file not found or cannot be opened: "
-            << simListFile << std::endl;
-        }
-        else
-        {
-            std::cout << "[DEBUG] Creating Fun4AllDstInputManager (DSTsim) for sim...\n";
-            Fun4AllInputManager *inSim = new Fun4AllDstInputManager("DSTsim");
-            
-            std::string simFileName;
-            while (std::getline(simfile, simFileName))
-            {
-                if (simFileName.empty()) continue;
-                inSim->AddFile(simFileName.c_str());
-                std::cout << "[INFO] (Sim) Added simulation file: " << simFileName << std::endl;
-            }
-            simfile.close();
-            se->registerInputManager(inSim);
-        }
-    }
     if (!WANT_MANUAL_EVENT_LIMIT)
     {
       // -----------------------------------------------------------------
