@@ -126,7 +126,7 @@ run_local_sim() {
   source /opt/sphenix/core/bin/sphenix_setup.sh -n
   source /opt/sphenix/core/bin/setup_local.sh $MYINSTALL
 
-  local simList="../caloAnaSimListFile.list"
+  local simList="caloAnaSimListFile.list"
   if [ ! -f "$simList" ]; then
     echo "[ERROR] No sim list file found: $simList"
     exit 1
