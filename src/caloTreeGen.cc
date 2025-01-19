@@ -235,28 +235,34 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         // instead, we keep going so we can also do the sim part below.
     }
     
-    // -----------------------------------------------------
-    // 2) SIMULATION MODE
-    // -----------------------------------------------------
+    // ---------------------------
+    // 2) If user wants SIM
+    // ---------------------------
     if (wantSim)
     {
-        if (verbose)
-        {
-            std::cout << "[INFO] Running in SIMULATION mode." << std::endl;
-        }
+      if (verbose) std::cout << "[INFO] Running in SIMULATION mode.\n";
 
-        // Create a separate output file for simulation histograms
-        outSim = new TFile(SimOutfile.c_str(), "RECREATE");
-        if (!outSim || outSim->IsZombie())
-        {
-            std::cerr << "[ERROR] Could not open simulation output file: "
-                      << SimOutfile << std::endl;
-            return Fun4AllReturnCodes::ABORTEVENT;
-        }
-        // Build simulation-specific histograms
-        createHistos_ForSimulation();
-        
-        // **Open** the simulation input file "simInputFileName"
+      // Create a separate output TFile for sim
+      outSim = new TFile(SimOutfile.c_str(), "RECREATE");
+      if (!outSim || outSim->IsZombie())
+      {
+        std::cerr << "[ERROR] Could not open simulation output file: "
+                  << SimOutfile << std::endl;
+        return Fun4AllReturnCodes::ABORTEVENT;
+      }
+
+      // Build simulation QA histograms
+      createHistos_ForSimulation();
+
+      // If user did not provide a simInputFileName => we skip or error
+      if (simInputFileName.empty())
+      {
+        // If you want to gracefully do nothing => return OK or set a flag:
+        std::cerr << "[WARNING] simInputFileName is empty. Not opening any TFile.\n";
+      }
+      else
+      {
+        // Attempt to open the single sim file
         simInFile = TFile::Open(simInputFileName.c_str(), "READ");
         if (!simInFile || simInFile->IsZombie())
         {
@@ -265,40 +271,46 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
           return Fun4AllReturnCodes::ABORTEVENT;
         }
         if (verbose)
-          std::cout << "[SIM] Reading from sim input file: " << simInputFileName << std::endl;
+        {
+          std::cout << "[SIM] Reading from sim input file: "
+                    << simInputFileName << std::endl;
+        }
 
         // Retrieve TTree "slimtree"
         slimTree = dynamic_cast<TTree*>(simInFile->Get("slimtree"));
         if (!slimTree)
         {
-          std::cerr << "[ERROR] TTree 'slimtree' not found in " << simInputFileName << std::endl;
+          std::cerr << "[ERROR] TTree 'slimtree' not found in file: "
+                    << simInputFileName << std::endl;
           return Fun4AllReturnCodes::ABORTEVENT;
         }
-        // Set branch addresses (cluster-level)
+
+        // Setup branch addresses
         slimTree->SetBranchAddress("ncluster_CLUSTERINFO_CEMC", &ncluster_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_pid_CEMC",          cluster_pid_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_iso_04_CEMC",       cluster_iso_04_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Et_CEMC",           cluster_Et_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Eta_CEMC",          cluster_Eta_CEMC_SIM);
-        slimTree->SetBranchAddress("cluster_Phi_CEMC",          cluster_Phi_CEMC_SIM);
+        slimTree->SetBranchAddress("cluster_pid_CEMC", cluster_pid_CEMC_SIM);
+        slimTree->SetBranchAddress("cluster_iso_04_CEMC", cluster_iso_04_CEMC_SIM);
+        slimTree->SetBranchAddress("cluster_Et_CEMC", cluster_Et_CEMC_SIM);
+        slimTree->SetBranchAddress("cluster_Eta_CEMC", cluster_Eta_CEMC_SIM);
+        slimTree->SetBranchAddress("cluster_Phi_CEMC", cluster_Phi_CEMC_SIM);
 
-        // Set branch addresses (truth-level)
-        slimTree->SetBranchAddress("nparticles",         &nparticles_SIM);
-        slimTree->SetBranchAddress("particle_pid",       particle_pid_SIM);
+        slimTree->SetBranchAddress("nparticles", &nparticles_SIM);
+        slimTree->SetBranchAddress("particle_pid", particle_pid_SIM);
         slimTree->SetBranchAddress("particle_photonclass", particle_photonclass_SIM);
-        slimTree->SetBranchAddress("particle_Pt",        particle_Pt_SIM);
-        slimTree->SetBranchAddress("particle_Eta",       particle_Eta_SIM);
-        slimTree->SetBranchAddress("particle_Phi",       particle_Phi_SIM);
+        slimTree->SetBranchAddress("particle_Pt", particle_Pt_SIM);
+        slimTree->SetBranchAddress("particle_Eta", particle_Eta_SIM);
+        slimTree->SetBranchAddress("particle_Phi", particle_Phi_SIM);
 
-        std::cout << "[SIM] Done setting TTree branch addresses.\n";
+        if (verbose)
+          std::cout << "[SIM] TTree branch addresses set up.\n";
       }
+    }
 
-      // If neither data nor sim was requested => error
-      if (!wantData && !wantSim)
-      {
+    // If neither data nor sim was requested => error
+    if (!wantData && !wantSim)
+    {
         std::cerr << "[ERROR] Neither wantData nor wantSim is set.\n";
         return Fun4AllReturnCodes::ABORTEVENT;
-      }
+    }
 
     // If we get here, we have at least one of them set to true
     return Fun4AllReturnCodes::EVENT_OK;
