@@ -46,6 +46,8 @@ public:
     
     ~caloTreeGen() override;
 
+    void setSimInputFileName(const std::string &fname) { simInputFileName = fname; }
+    
     int Init(PHCompositeNode *topNode) override;
     
     int process_event(PHCompositeNode *topNode) override;
@@ -111,7 +113,6 @@ public:
     // Set user options
     void setWantSim(bool s)  { wantSim = s; }
     void setWantData(bool d) { wantData = d; }
-    void setSimInputFileName(const std::string &fname) { simInputFileName = fname; }
 
     
 private:
@@ -164,8 +165,8 @@ private:
     bool verbose = true;
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
-    std::vector<float> clus_chi_values = {2, 3, 4, 5};
-    std::vector<float> clus_Energy_values = {1.0, 1.5, 3.0, 5.0};
+    std::vector<float> clus_chi_values = {2, 3, 4};
+    std::vector<float> clus_Energy_values = {1.0, 1.5};
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}, {20, 30}
     };
