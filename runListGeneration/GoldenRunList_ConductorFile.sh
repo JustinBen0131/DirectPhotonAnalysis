@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################################################################################################################
-# Golden Run List Generation Script (Refined)
+# Golden Run List Generation Script 
 #
 # Purpose:
 #   This script compiles a final list of "Golden Runs" for sPHENIX analysis. The selection criteria are:
