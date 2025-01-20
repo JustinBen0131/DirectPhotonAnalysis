@@ -3559,6 +3559,9 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 
 int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
+  // Define our static iEntry *once* at the top:
+  static Long64_t iEntry = 0;
+
   // [0] Optional debug print
   if (verbose)
   {
@@ -3567,19 +3570,27 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
               << ", topNode=" << topNode << std::endl;
   }
 
-  // [1] Update event counter
-  event_count++;
-  std::cout << "\n========== Processing CALOTREEGEN SIM MODE -- Event "
-            << event_count << " ==========\n";
-
-  // [2] Retrieve next entry from TTree
-  static Long64_t iEntry = 0;
+  // -------------------------------------------------------
+  // [1] Check if we are out of entries => stop the run
+  // -------------------------------------------------------
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-    std::cerr << "[WARNING] 'slimTree' is null or no more entries to read.\n";
+    static bool printedEOF = false;
+    if (!printedEOF)
+    {
+      printedEOF = true;
+      std::cerr << "[INFO] TTree exhausted. No more entries => ABORTRUN.\n";
+    }
+    // ABORTCHAIN doesn't exist in your environment, so we use ABORTRUN
     return Fun4AllReturnCodes::ABORTRUN;
   }
+
+  // [2] We still have entries => read the next one
   slimTree->GetEntry(iEntry++);
+  event_count++;
+
+  std::cout << "\n========== Processing CALOTREEGEN SIM MODE -- Event "
+            << event_count << " ==========\n";
 
   // Debug print
   if (verbose)
