@@ -3559,34 +3559,30 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 
 int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
-  // Define our static iEntry *once* at the top:
   static Long64_t iEntry = 0;
 
-  // [0] Optional debug print
-  if (verbose)
-  {
-    std::cout << "\n[DEBUG] Entering caloTreeGen::process_event_Sim()"
-              << " => event_count=" << event_count
-              << ", topNode=" << topNode << std::endl;
-  }
-
-  // -------------------------------------------------------
-  // [1] Check if we are out of entries => stop the run
-  // -------------------------------------------------------
+  // Check if TTree is done
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-    static bool printedEOF = false;
-    if (!printedEOF)
-    {
-      printedEOF = true;
-      std::cerr << "[INFO] TTree exhausted. No more entries => ABORTRUN.\n";
-    }
-    // ABORTCHAIN doesn't exist in your environment, so we use ABORTRUN
-    return Fun4AllReturnCodes::ABORTRUN;
+     static bool printedEOF = false;
+     if (!printedEOF)
+     {
+        printedEOF = true;
+        std::cerr << "[INFO] TTree exhausted => calling Fun4AllServer::Stop()...\n";
+     }
+
+     // The direct way to *force* an end:
+     Fun4AllServer *se = Fun4AllServer::instance();
+     se->Stop();
+
+     // Return an OK code so we don’t treat this as an error
+     // (some older code might also do return Fun4AllReturnCodes::DONENOTHING)
+     return Fun4AllReturnCodes::EVENT_OK;
   }
 
-  // [2] We still have entries => read the next one
+  // Otherwise, we still have entries => read, fill histos, etc...
   slimTree->GetEntry(iEntry++);
+  iEntry++;
   event_count++;
 
   std::cout << "\n========== Processing CALOTREEGEN SIM MODE -- Event "
