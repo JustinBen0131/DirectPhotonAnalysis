@@ -72,7 +72,7 @@ struct TowerData {
 const std::string caloTreeGen::IN_MASS_WINDOW_LABEL = "_inMassWindow";
 const std::string caloTreeGen::OUTSIDE_MASS_WINDOW_LABEL = "_outsideMassWindow";
 
-
+static bool simEOF = false;  // track if TTree is exhausted
 //____________________________________________________________________________..
 caloTreeGen::caloTreeGen(const std::string &dataOutFile,
                          const std::string &simOutFile)
@@ -3556,51 +3556,57 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     return Fun4AllReturnCodes::EVENT_OK;
 }
 
-
 int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
   static Long64_t iEntry = 0;
 
+  // If we have already ended => just stop
+  if (simEOF)
+  {
+    if (verbose)
+    {
+      std::cout << "[DEBUG] process_event_Sim called again after simEOF => returning ABORTRUN.\n";
+    }
+    // Return ABORTRUN so Fun4All does not keep asking for events
+    return Fun4AllReturnCodes::ABORTRUN;
+  }
+
   // Check if TTree is done
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-     static bool printedEOF = false;
-     if (!printedEOF)
-     {
-        printedEOF = true;
-        std::cerr << "[INFO] TTree exhausted => calling Fun4AllServer::Stop()...\n";
-     }
+    // Print a message once
+    static bool printedEOF = false;
+    if (!printedEOF)
+    {
+      printedEOF = true;
+      std::cerr << "[SIM] *** TTree exhausted => calling endSim(...) immediately. ***\n";
+    }
 
-     // The direct way to *force* an end:
-     Fun4AllServer *se = Fun4AllServer::instance();
-     se->Stop();
+    // Mark that we have no more data
+    simEOF = true;
 
-     // Return an OK code so we don’t treat this as an error
-     // (some older code might also do return Fun4AllReturnCodes::DONENOTHING)
-     return Fun4AllReturnCodes::EVENT_OK;
+    // (1) Force immediate histogram writing
+    //     This calls your entire endSim(...) method
+    if (verbose)
+    {
+      std::cout << "[SIM] Now calling endSim(...) to write histograms.\n";
+    }
+    endSim(topNode);
+
+    // (2) Return ABORTRUN => Fun4All sees we’re done
+    return Fun4AllReturnCodes::ABORTRUN;
   }
 
-  // Otherwise, we still have entries => read, fill histos, etc...
+  // If TTree still has entries => read next
   slimTree->GetEntry(iEntry++);
-  iEntry++;
   event_count++;
 
-  std::cout << "\n========== Processing CALOTREEGEN SIM MODE -- Event "
-            << event_count << " ==========\n";
-
-  // Debug print
   if (verbose)
   {
-    std::cout << "[DEBUG] Just read iEntry=" << iEntry-1
-              << " => ncluster_CEMC_SIM=" << ncluster_CEMC_SIM
-              << ", nparticles_SIM=" << nparticles_SIM << std::endl;
-    if (ncluster_CEMC_SIM > 0)
-    {
-      std::cout << "    First cluster => Et=" << cluster_Et_CEMC_SIM[0]
-                << ", Eta=" << cluster_Eta_CEMC_SIM[0]
-                << ", Phi=" << cluster_Phi_CEMC_SIM[0] << std::endl;
-    }
+    std::cout << "\n========== process_event_Sim => Event " << event_count
+              << " (iEntry=" << iEntry-1 << ") ==========\n";
   }
+
 
   // [2A] Print TTree structure once if verbose
   static bool printedTreeInfo = false;
@@ -3828,25 +3834,27 @@ int caloTreeGen::ResetEvent(PHCompositeNode *topNode)
                   << ", wantSim=" << wantSim << ANSI_COLOR_RESET << std::endl;
     }
 
-    // If user wants data
+    // ------------------------------------------------------------------
+    // If SIM is done, let Fun4All know we want to ABORT the run
+    // so it will NOT call process_event_Sim() again
+    // ------------------------------------------------------------------
+    if (wantSim && simEOF)
+    {
+        if (verbose)
+        {
+            std::cout << "[DEBUG] ResetEvent => simEOF is true => returning ABORTRUN.\n";
+        }
+        return Fun4AllReturnCodes::ABORTRUN;
+    }
+
+    // If user wants data, do the usual data reset
     if (wantData)
     {
         resetEvent_Data(topNode);
     }
-    
-    // If user wants simulation
-    if (wantSim)
-    {
-        resetEvent_Sim(topNode);
-    }
 
-    // If both wantData & wantSim are set true,
-    // we clear both sets of vectors in parallel.
-
-    // Return
     return Fun4AllReturnCodes::EVENT_OK;
 }
-
 
 //____________________________________________________________________________..
 int caloTreeGen::resetEvent_Data(PHCompositeNode *topNode) {
@@ -3904,19 +3912,6 @@ int caloTreeGen::resetEvent_Data(PHCompositeNode *topNode) {
         std::cout << ANSI_COLOR_GREEN_BOLD << "Event reset complete." << ANSI_COLOR_RESET << std::endl;
     }
 }
-
-int caloTreeGen::resetEvent_Sim(PHCompositeNode *topNode)
-{
-
-    if (verbose)
-    {
-        std::cout << ANSI_COLOR_GREEN_BOLD
-                  << "[ResetEvent-Sim] Done clearing sim vectors."
-                  << ANSI_COLOR_RESET << std::endl;
-    }
-    return Fun4AllReturnCodes::EVENT_OK;
-}
-
 
 int caloTreeGen::End(PHCompositeNode *topNode)
 {
