@@ -228,6 +228,7 @@ private:
     int   cluster_pid_CEMC_SIM[kMaxClusters];
     float cluster_iso_04_CEMC_SIM[kMaxClusters];
     float cluster_Et_CEMC_SIM[kMaxClusters];
+    float cluster_E_CEMC_SIM[kMaxClusters];
     float cluster_Eta_CEMC_SIM[kMaxClusters];
     float cluster_Phi_CEMC_SIM[kMaxClusters];
 
