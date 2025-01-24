@@ -359,6 +359,10 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         safeSetBranch("cluster_Et_CLUSTERINFO_CEMC",
                       cluster_Et_CEMC_SIM,
                       "cluster_Et_CEMC_SIM");
+          
+        safeSetBranch("cluster_E_CLUSTERINFO_CEMC",
+                        cluster_E_CEMC_SIM,
+                        "cluster_E_CEMC_SIM");
 
         safeSetBranch("cluster_Eta_CLUSTERINFO_CEMC",
                       cluster_Eta_CEMC_SIM,
@@ -3560,44 +3564,37 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
 {
   static Long64_t iEntry = 0;
 
-  // If we have already ended => just stop
+  // -------------------------------------------------
+  // (A) Check if TTree is exhausted
+  // -------------------------------------------------
   if (simEOF)
   {
     if (verbose)
     {
       std::cout << "[DEBUG] process_event_Sim called again after simEOF => returning ABORTRUN.\n";
     }
-    // Return ABORTRUN so Fun4All does not keep asking for events
     return Fun4AllReturnCodes::ABORTRUN;
   }
-
-  // Check if TTree is done
   if (!slimTree || iEntry >= slimTree->GetEntries())
   {
-    // Print a message once
     static bool printedEOF = false;
     if (!printedEOF)
     {
       printedEOF = true;
       std::cerr << "[SIM] *** TTree exhausted => calling endSim(...) immediately. ***\n";
     }
-
-    // Mark that we have no more data
     simEOF = true;
-
-    // (1) Force immediate histogram writing
-    //     This calls your entire endSim(...) method
     if (verbose)
     {
       std::cout << "[SIM] Now calling endSim(...) to write histograms.\n";
     }
     endSim(topNode);
-
-    // (2) Return ABORTRUN => Fun4All sees we’re done
     return Fun4AllReturnCodes::ABORTRUN;
   }
 
-  // If TTree still has entries => read next
+  // -------------------------------------------------
+  // (B) Read next TTree entry
+  // -------------------------------------------------
   slimTree->GetEntry(iEntry++);
   event_count++;
 
@@ -3607,15 +3604,13 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
               << " (iEntry=" << iEntry-1 << ") ==========\n";
   }
 
-
-  // [2A] Print TTree structure once if verbose
+  // Print TTree structure once if verbose
   static bool printedTreeInfo = false;
   if (verbose && !printedTreeInfo)
   {
     printedTreeInfo = true;
     std::cout << "[VERBOSE] Printing available branches in 'slimTree':\n";
-    TObjArray* branchList = slimTree->GetListOfBranches();
-    if (branchList)
+    if (TObjArray* branchList = slimTree->GetListOfBranches())
     {
       for (int ib = 0; ib < branchList->GetEntries(); ib++)
       {
@@ -3632,12 +3627,14 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  // [3] Example: fill global iso histograms
+  // -------------------------------------------------
+  // (C) Fill global iso histograms
+  // -------------------------------------------------
   for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
   {
     float isoVal = cluster_iso_04_CEMC_SIM[ic];
     float cEt    = cluster_Et_CEMC_SIM[ic];
-    int   pid    = cluster_pid_CEMC_SIM[ic]; // 22,111,221,...
+    int   pid    = cluster_pid_CEMC_SIM[ic];
 
     if (isoVal <= 6.f)
     {
@@ -3652,7 +3649,9 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  // [4] Setup local pT-binned counters for prompt-candidate
+  // -------------------------------------------------
+  // (D) Prepare local counters & confusion matrix accumulators
+  // -------------------------------------------------
   std::map<std::pair<float,float>, int> nTaggedPrompt_byPt;
   std::map<std::pair<float,float>, int> nCorrectlyPrompt_byPt;
   for (auto &bin : pT_bins)
@@ -3661,13 +3660,77 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     nCorrectlyPrompt_byPt[bin] = 0;
   }
 
-  // [5] Additional counters for classification in this event
   int totalPrompt = 0;
   int totalFrag   = 0;
   int totalDecay  = 0;
   int totalOther  = 0;
 
-  // [6] Main loop over clusters
+  // -------------------------------------------------
+  // (E) Mark clusters that fail pi0/eta mass window
+  //     => possibly "prompt by mass"
+  // -------------------------------------------------
+  std::vector<bool> pairMassSaysPrompt(ncluster_CEMC_SIM, false);
+
+  // Meson mass windows
+  const float defaultPionMass       = 0.15f;
+  const float defaultPionMassWindow = 0.02f;
+  const float defaultEtaMass        = 0.59f;
+  const float defaultEtaMassWindow  = 0.05f;
+
+  // For each pair (i<j) with E>1 => check invariant mass
+  for (int i = 0; i < ncluster_CEMC_SIM; i++)
+  {
+    float Ei = cluster_E_CEMC_SIM[i];
+    if (Ei < 1.f) continue;  // we only do mass checks for clusters with E>1
+
+    for (int j = i+1; j < ncluster_CEMC_SIM; j++)
+    {
+      float Ej = cluster_E_CEMC_SIM[j];
+      if (Ej < 1.f) continue;  // skip if E<1 for j
+
+      // (1) Possibly check asymmetry, etc.
+      float denom = Ei + Ej;
+      if (denom < 1e-6f) continue;
+      float asym = std::fabs(Ei - Ej) / denom;
+      if (asym > 0.5f) continue;
+
+      // (2) Build 4-vectors => get invMass
+      TLorentzVector v1, v2;
+      {
+        float phi_i = cluster_Phi_CEMC_SIM[i];
+        float eta_i = cluster_Eta_CEMC_SIM[i];
+        float px1 = Ei * std::cos(phi_i);
+        float py1 = Ei * std::sin(phi_i);
+        float pz1 = Ei * std::sinh(eta_i);
+        v1.SetPxPyPzE(px1, py1, pz1, Ei);
+      }
+      {
+        float phi_j = cluster_Phi_CEMC_SIM[j];
+        float eta_j = cluster_Eta_CEMC_SIM[j];
+        float px2 = Ej * std::cos(phi_j);
+        float py2 = Ej * std::sin(phi_j);
+        float pz2 = Ej * std::sinh(eta_j);
+        v2.SetPxPyPzE(px2, py2, pz2, Ej);
+      }
+
+      TLorentzVector meson = v1 + v2;
+      float invMass = meson.M();
+
+      bool inPi0Window = (std::fabs(invMass - defaultPionMass) < defaultPionMassWindow);
+      bool inEtaWindow = (std::fabs(invMass - defaultEtaMass) < defaultEtaMassWindow);
+
+      // (3) If outside both => mark them as "not pi0/eta" => possibly prompt
+      if (!inPi0Window && !inEtaWindow)
+      {
+        pairMassSaysPrompt[i] = true;
+        pairMassSaysPrompt[j] = true;
+      }
+    }
+  }
+
+  // -------------------------------------------------
+  // (F) Main loop over clusters: combine mass logic + iso logic
+  // -------------------------------------------------
   for (int ic = 0; ic < ncluster_CEMC_SIM; ++ic)
   {
     float cEt    = cluster_Et_CEMC_SIM[ic];
@@ -3675,7 +3738,7 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     float cPhi   = cluster_Phi_CEMC_SIM[ic];
     float isoVal = cluster_iso_04_CEMC_SIM[ic];
 
-    // [6.1] Find which pT bin we belong to
+    // (1) Determine pT bin
     bool inRange = false;
     std::pair<float,float> matchedPtBin;
     for (auto &bin : pT_bins)
@@ -3687,14 +3750,14 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
         break;
       }
     }
-    if (!inRange) continue; // skip cluster if no pT bin match
+    if (!inRange) continue;
 
-    // [6.2] Find best-match truth photon => deltaR<0.05
-    int   bestMatchIndex = -1;
-    float bestDR         = 9999.f;
+    // (2) Match to nearest truth photon => dR<0.05 => figure out truthClass
+    int bestMatchIndex = -1;
+    float bestDR = 9999.f;
     for (int ip = 0; ip < nparticles_SIM; ++ip)
     {
-      if (particle_pid_SIM[ip] != 22) continue; // real photon only
+      if (particle_pid_SIM[ip] != 22) continue;
       float dR = deltaR(cEta, particle_Eta_SIM[ip], cPhi, particle_Phi_SIM[ip]);
       if (dR < 0.05 && dR < bestDR)
       {
@@ -3703,8 +3766,7 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
       }
     }
 
-    // [6.3] Derive "truthClass" => 1=prompt,2=frag,3=decay,4=other
-    int truthClass = 4;
+    int truthClass = 4; // 4=other
     if (bestMatchIndex >= 0)
     {
       int photClass = particle_photonclass_SIM[bestMatchIndex];
@@ -3713,24 +3775,27 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
         case 1: truthClass = 1; break; // prompt
         case 2: truthClass = 2; break; // frag
         case 3: truthClass = 3; break; // decay
-        default: truthClass = 4; break;
+        default: truthClass = 4; break; // other
       }
     }
 
-    // [6.4] Count local classification
+    // Tally classification
     if      (truthClass == 1) totalPrompt++;
     else if (truthClass == 2) totalFrag++;
     else if (truthClass == 3) totalDecay++;
     else                      totalOther++;
 
-    // [6.5] Fill classification vs. pT hist
     if (hClusterTruthClass_pTbin.count(matchedPtBin))
     {
       hClusterTruthClass_pTbin[matchedPtBin]->Fill(truthClass);
     }
 
-    // [6.6] Check if cluster is "prompt candidate"
-    bool clusterIsPromptCandidate = (isoVal < 6.f && cEt > 5.f);
+    // (3) Combine iso cut + mass logic => final predicted prompt
+    bool passIsoCut  = (isoVal < 6.f && cEt > 5.f);
+    bool passMassCut = pairMassSaysPrompt[ic];
+    bool clusterIsPromptCandidate = (passIsoCut || passMassCut);
+
+    // If predicted prompt => fill counters
     if (clusterIsPromptCandidate)
     {
       nTaggedPrompt_byPt[matchedPtBin]++;
@@ -3740,26 +3805,18 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
       }
     }
 
-    // -------------------------------------------------------------------
-    // (NEW) Update confusion matrices:
-    //   => "truthClass" in [1..4]
-    //   => predicted = 1 if "prompt candidate," else 0
-    // -------------------------------------------------------------------
+    // (4) Confusion matrix fill
     if (truthClass >= 1 && truthClass <= 4)
     {
       int predClass = (clusterIsPromptCandidate ? 1 : 0);
-
-      // [A] pT-independent confusionMatrix
       confusionMatrix[truthClass][predClass]++;
-
-      // [B] pT-dependent confusion matrix for matchedPtBin
-      //     If it's not created, the default will be zero-initialized
-      //     when we use operator[] in a std::map with an array of arrays.
       confusionMatrix_byPt[matchedPtBin][truthClass][predClass]++;
     }
-  } // end cluster loop
+  }
 
-  // [7] Fill prompt purity histograms
+  // -------------------------------------------------
+  // (G) Fill purity histograms, final sums
+  // -------------------------------------------------
   for (auto &bin : pT_bins)
   {
     int nTagged  = nTaggedPrompt_byPt[bin];
@@ -3774,56 +3831,56 @@ int caloTreeGen::process_event_Sim(PHCompositeNode *topNode)
     }
   }
 
-  // [8] Fill distribution of *all* prompt photons in pT
+  // Fill the distribution of *all* truly prompt photons in pT
   int nPromptPhotons = 0;
   for (int ip = 0; ip < nparticles_SIM; ++ip)
   {
-    if (particle_pid_SIM[ip] == 22 && particle_photonclass_SIM[ip] == 1)
-    {
-      float truthPt = particle_Pt_SIM[ip];
-      if (hPhotonPtPrompt) hPhotonPtPrompt->Fill(truthPt);
-      nPromptPhotons++;
-    }
+      if (particle_pid_SIM[ip] == 22 && particle_photonclass_SIM[ip] == 1)
+      {
+          float truthPt = particle_Pt_SIM[ip];
+          if (hPhotonPtPrompt) hPhotonPtPrompt->Fill(truthPt);
+          nPromptPhotons++;
+      }
+      // Verbose summary
+      if (verbose)
+      {
+          int totalClusters   = ncluster_CEMC_SIM;
+          int totalBackground = totalFrag + totalDecay + totalOther;
+          std::cout << "[SIM] Event " << event_count
+          << " (iEntry=" << iEntry << ") summary:\n"
+          << "   => #clusters=" << totalClusters
+          << " => #prompt=" << totalPrompt
+          << ", #frag="   << totalFrag
+          << ", #decay="  << totalDecay
+          << ", #other="  << totalOther
+          << " (Total BG=" << totalBackground << ")\n"
+          << "   => # prompt truth photons in event=" << nPromptPhotons
+          << "\n   => Done with process_event_Sim.\n";
+      }
+      
+      // Accumulate global counters
+      totalSimEventsProcessed++;
+      totalSimClusters      += ncluster_CEMC_SIM;
+      totalSimPrompt        += totalPrompt;
+      totalSimFrag          += totalFrag;
+      totalSimDecay         += totalDecay;
+      totalSimOther         += totalOther;
+      totalSimPromptPhotons += nPromptPhotons;
+      
+      // Summation of per-bin tagged vs. correctly prompt
+      for (auto &kv : nTaggedPrompt_byPt)
+      {
+          total_nTaggedPrompt_byPt[kv.first] += kv.second;
+      }
+      for (auto &kv : nCorrectlyPrompt_byPt)
+      {
+          total_nCorrectlyPrompt_byPt[kv.first] += kv.second;
+      }
   }
-
-  // [9] Verbose summary for this event
-  if (verbose)
-  {
-    int totalClusters   = ncluster_CEMC_SIM;
-    int totalBackground = totalFrag + totalDecay + totalOther;
-    std::cout << "[SIM] Event " << event_count
-              << " (iEntry=" << iEntry << ") summary:\n"
-              << "   => #clusters=" << totalClusters
-              << " => #prompt=" << totalPrompt
-              << ", #frag="   << totalFrag
-              << ", #decay="  << totalDecay
-              << ", #other="  << totalOther
-              << " (Total BG=" << totalBackground << ")\n"
-              << "   => # prompt truth photons in event=" << nPromptPhotons
-              << "\n   => Done with process_event_Sim.\n";
-  }
-
-  // [10] Accumulate per-event totals into global counters
-  totalSimEventsProcessed++;
-  totalSimClusters      += ncluster_CEMC_SIM;
-  totalSimPrompt        += totalPrompt;
-  totalSimFrag          += totalFrag;
-  totalSimDecay         += totalDecay;
-  totalSimOther         += totalOther;
-  totalSimPromptPhotons += nPromptPhotons;
-
-  // (B) Summation of per-bin tagged vs. correctly prompt
-  for (auto &kv : nTaggedPrompt_byPt)
-  {
-    total_nTaggedPrompt_byPt[kv.first] += kv.second;
-  }
-  for (auto &kv : nCorrectlyPrompt_byPt)
-  {
-    total_nCorrectlyPrompt_byPt[kv.first] += kv.second;
-  }
-
   return Fun4AllReturnCodes::EVENT_OK;
 }
+    
+
 
 int caloTreeGen::ResetEvent(PHCompositeNode *topNode)
 {
