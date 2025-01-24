@@ -64,11 +64,10 @@ namespace HIJETS
 #endif
 
 
-////////////////////////////////////////////////////////////////////////////////
-//  1) **HARDCODE** A Boolean and an Integer limit
-////////////////////////////////////////////////////////////////////////////////
-static const bool WANT_MANUAL_EVENT_LIMIT = true;  // or false if you want unlimited
-static const int MANUAL_EVENT_LIMIT       = 2000;  // e.g. 5k
+
+static const bool WANT_VERBOSE = true;
+static const bool WANT_MANUAL_EVENT_LIMIT = false;  // or false if you want unlimited
+static const int MANUAL_EVENT_LIMIT       = 8000000;  // e.g. 5k
 
 /**
  * @brief Macro to run either Data pipeline or Simulation pipeline for caloTreeGen
@@ -85,17 +84,23 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
                          bool runSim = false,
                          bool runData = false)
 {
-    std::cout << "\n[DEBUG] Entering Fun4All_CaloTreeGen function...\n";
-    std::cout << "    nEvents = " << nEvents << std::endl;
-    std::cout << "    listFile = " << listFile << std::endl;
-    std::cout << "    inName   = " << inName << std::endl;
-    std::cout << "    runSim   = " << (runSim ? "true" : "false") << std::endl;
-    std::cout << "    runData  = " << (runData ? "true" : "false") << std::endl;
     
-    std::cout << "[INFO] Starting Fun4All_CaloTreeGen..." << std::endl;
+    if (WANT_VERBOSE) {
+        std::cout << "\n[DEBUG] Entering Fun4All_CaloTreeGen function...\n";
+        std::cout << "    nEvents = " << nEvents << std::endl;
+        std::cout << "    listFile = " << listFile << std::endl;
+        std::cout << "    inName   = " << inName << std::endl;
+        std::cout << "    runSim   = " << (runSim ? "true" : "false") << std::endl;
+        std::cout << "    runData  = " << (runData ? "true" : "false") << std::endl;
+        
+        std::cout << "[INFO] Starting Fun4All_CaloTreeGen..." << std::endl;
+    }
+
     
     Fun4AllServer *se = Fun4AllServer::instance();
-    std::cout << "[DEBUG] Fun4AllServer instance acquired: " << se << std::endl;
+    if (WANT_VERBOSE) {
+        std::cout << "[DEBUG] Fun4AllServer instance acquired: " << se << std::endl;
+    }
     
     
     // If user wants MC truth jets
@@ -120,11 +125,15 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     
     // Basic run config
     recoConsts *rc = recoConsts::instance();
-    std::cout << "[DEBUG] Setting CDB_GLOBALTAG to 'ProdA_2024'..." << std::endl;
+    if (WANT_VERBOSE) {
+        std::cout << "[DEBUG] Setting CDB_GLOBALTAG to 'ProdA_2024'..." << std::endl;
+    }
     rc->set_StringFlag("CDB_GLOBALTAG", "ProdA_2024");
     
     // Read the first filename to extract the run number
-    std::cout << "[DEBUG] Attempting to open listFile: " << listFile << std::endl;
+    if (WANT_VERBOSE) {
+        std::cout << "[DEBUG] Attempting to open listFile: " << listFile << std::endl;
+    }
     std::ifstream infile(listFile);
     std::string firstFilename;
     if (!infile.is_open())
@@ -145,8 +154,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
         int runnumber = runseg.first;
         int segnumber = runseg.second;
-        std::cout << "[DEBUG] Extracted run: " << runnumber
-        << " segment: " << segnumber << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Extracted run: " << runnumber
+            << " segment: " << segnumber << std::endl;
+        }
         
         if (runnumber <= 0)
         {
@@ -156,13 +167,17 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         }
         rc->set_uint64Flag("TIMESTAMP", runnumber);
         
-        std::cout << "[DEBUG] Setting up CaloTowerStatus modules...\n";
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Setting up CaloTowerStatus modules...\n";
+        }
         CaloTowerStatus *statusEMC = new CaloTowerStatus("CEMCSTATUS");
         statusEMC->set_detector_type(CaloTowerDefs::CEMC);
         statusEMC->set_time_cut(1);
         statusEMC->set_inputNodePrefix("TOWERINFO_CALIB_");
         statusEMC->Verbosity(0);
-        std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
+        }
         se->registerSubsystem(statusEMC);
         
         CaloTowerStatus *statusHCalIn = new CaloTowerStatus("HCALINSTATUS");
@@ -170,7 +185,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         statusHCalIn->set_time_cut(2);
         statusHCalIn->set_inputNodePrefix("TOWERINFO_CALIB_");
         statusHCalIn->Verbosity(0);
-        std::cout << "[INFO] Registering towerjetreco subsystem (statusHCalIn)..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering towerjetreco subsystem (statusHCalIn)..." << std::endl;
+        }
         se->registerSubsystem(statusHCalIn);
         
         CaloTowerStatus *statusHCALOUT = new CaloTowerStatus("HCALOUTSTATUS");
@@ -178,7 +195,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         statusHCALOUT->set_time_cut(2);
         statusHCALOUT->set_inputNodePrefix("TOWERINFO_CALIB_");
         statusHCALOUT->Verbosity(0);
-        std::cout << "[INFO] Registering statusHCALOUT subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering statusHCALOUT subsystem..." << std::endl;
+        }
         se->registerSubsystem(statusHCALOUT);
         
         RetowerCEMC *rcemc = new RetowerCEMC();
@@ -186,10 +205,14 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         rcemc->set_towerinfo(true);
         rcemc->set_frac_cut(0.5); // fraction of retower that must be masked
         rcemc->set_towerNodePrefix(HIJETS::tower_prefix);
-        std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
+        }
         se->registerSubsystem(rcemc);
         
-        std::cout << "[DEBUG] Creating EmcRawClusterBuilderTemplate (ClusterBuilder)..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Creating EmcRawClusterBuilderTemplate (ClusterBuilder)..." << std::endl;
+        }
         RawClusterBuilderTemplate *ClusterBuilder = new RawClusterBuilderTemplate("EmcRawClusterBuilderTemplate");
         ClusterBuilder->Detector("CEMC");
         ClusterBuilder->set_threshold_energy(0.030); // 30 MeV threshold
@@ -200,7 +223,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
         se->registerSubsystem(ClusterBuilder);
         
-        std::cout << "[DEBUG] Creating towerjetreco (JetReco) with Tower inputs...\n";
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Creating towerjetreco (JetReco) with Tower inputs...\n";
+        }
         JetReco *towerjetreco = new JetReco();
         towerjetreco->add_input(new TowerJetInput(Jet::CEMC_TOWERINFO_RETOWER, HIJETS::tower_prefix));
         towerjetreco->add_input(new TowerJetInput(Jet::HCALIN_TOWERINFO, HIJETS::tower_prefix));
@@ -209,10 +234,15 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         towerjetreco->set_algo_node("ANTIKT");
         towerjetreco->set_input_node("TOWER");
         towerjetreco->Verbosity(0);
-        std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
+        }
         se->registerSubsystem(towerjetreco);
         
-        std::cout << "[DEBUG] Creating DetermineTowerBackground (dtb)..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Creating DetermineTowerBackground (dtb)..." << std::endl;
+        }
+        
         DetermineTowerBackground *dtb = new DetermineTowerBackground();
         dtb->SetBackgroundOutputName("TowerInfoBackground_Sub1");
         dtb->SetFlow(HIJETS::do_flow);
@@ -221,7 +251,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         dtb->set_towerinfo(true);
         dtb->Verbosity(0);
         dtb->set_towerNodePrefix(HIJETS::tower_prefix);
-        std::cout << "[INFO] Registering dtb subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering dtb subsystem..." << std::endl;
+        }
+
         se->registerSubsystem(dtb);
         
         CopyAndSubtractJets *casj = new CopyAndSubtractJets();
@@ -229,7 +262,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         casj->Verbosity(0);
         casj->set_towerinfo(true);
         casj->set_towerNodePrefix(HIJETS::tower_prefix);
-        std::cout << "[INFO] Registering CopyAndSubtractJets subsystem (casj)..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering CopyAndSubtractJets subsystem (casj)..." << std::endl;
+        }
+
         se->registerSubsystem(casj);
         
         DetermineTowerBackground *dtb2 = new DetermineTowerBackground();
@@ -240,7 +276,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         dtb2->Verbosity(0);
         dtb2->set_towerinfo(true);
         dtb2->set_towerNodePrefix(HIJETS::tower_prefix);
-        std::cout << "[INFO] Registering dtb2 subsystem..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering dtb2 subsystem..." << std::endl;
+        }
         se->registerSubsystem(dtb2);
         
         SubtractTowers *st = new SubtractTowers();
@@ -248,7 +286,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         st->Verbosity(0);
         st->set_towerinfo(true);
         st->set_towerNodePrefix(HIJETS::tower_prefix);
-        std::cout << "[INFO] Registering SubtractTowers subsystem (st)..." << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] Registering SubtractTowers subsystem (st)..." << std::endl;
+        }
+
         se->registerSubsystem(st);
         
         
@@ -256,19 +297,25 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 1);
         makeClusterEt->Verbosity(0);
         
-        std::cout << "[INFO] ClusterIso subsystem created with name 'CaloTreeGen'"
-        << " (only for data mode)..." << std::endl;
-        
+        if (WANT_VERBOSE) {
+            std::cout << "[INFO] ClusterIso subsystem created with name 'CaloTreeGen'"
+            << " (only for data mode)..." << std::endl;
+        }
         se->registerSubsystem(makeClusterEt);
     } //END IF RUNDATA
     
     
     // Finally, register caloTreeGen
-    std::cout << "[DEBUG] Creating caloTreeGen with Outfile name: " << inName << std::endl;
+    if (WANT_VERBOSE) {
+        std::cout << "[DEBUG] Creating caloTreeGen with Outfile name: " << inName << std::endl;
+    }
+
     caloTreeGen *eval = new caloTreeGen(inName);
-    std::cout << "[INFO] Registering caloTreeGen subsystem...\n";
     
-    eval->setVerbose(true);         // e.g. set false if you don't want the debug printing
+    if (WANT_VERBOSE) {
+        std::cout << "[INFO] Registering caloTreeGen subsystem...\n";
+    }
+    eval->setVerbose(WANT_VERBOSE);
     
     /*
      SET RUNNING OF DATA AND SIM from inputted condor submit arguments
@@ -277,7 +324,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     eval->setWantData(runData);
     if (runSim)
     {
-        std::cout << "[SIM] Using single sim file => " << firstFilename << std::endl;
+        if (WANT_VERBOSE) {
+            std::cout << "[SIM] Using single sim file => " << firstFilename << std::endl;
+        }
+
         eval->setSimInputFileName(firstFilename);
     }
     se->registerSubsystem(eval);
@@ -286,15 +336,24 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     // If wantData == true
     if (runData)
     {
-        std::cout << "[DEBUG] Creating TriggerRunInfoReco subsystem...\n";
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Creating TriggerRunInfoReco subsystem...\n";
+        }
+
         TriggerRunInfoReco *triggerruninforeco = new TriggerRunInfoReco();
         se->registerSubsystem(triggerruninforeco);
         
-        std::cout << "[DEBUG] Creating Fun4AllDstInputManager (DSTcalo)...\n";
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Creating Fun4AllDstInputManager (DSTcalo)...\n";
+        }
+
         Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTcalo");
         
-        // Reset the file stream to read all filenames from the beginning
-        std::cout << "[DEBUG] Rewinding input file list to line 0...\n";
+        if (WANT_VERBOSE) {
+            // Reset the file stream to read all filenames from the beginning
+            std::cout << "[DEBUG] Rewinding input file list to line 0...\n";
+        }
+
         infile.clear();
         infile.seekg(0, std::ios::beg);
         
@@ -304,7 +363,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         {
             if (filename.empty()) continue;
             in->AddFile(filename.c_str());
-            std::cout << "[INFO] Added input file: " << filename << std::endl;
+            if (WANT_VERBOSE) {
+                std::cout << "[INFO] Added input file: " << filename << std::endl;
+            }
+
         }
         infile.close();
         se->registerInputManager(in);
@@ -312,49 +374,80 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     
     if (!WANT_MANUAL_EVENT_LIMIT)
     {
-      // -----------------------------------------------------------------
-      // If WANT_MANUAL_EVENT_LIMIT is true => IGNORE manual capping
-      // If nEvents==0 => process all. If nEvents>0 => that many events
-      // -----------------------------------------------------------------
-      std::cout << "[DEBUG] WANT_MANUAL_EVENT_LIMIT=true => calling se->run("
-                << nEvents << ") directly.\n";
-      se->run(nEvents);
+      if (WANT_VERBOSE)
+      {
+        std::cout << "[DEBUG] calling se->run(" << nEvents << ")...\n";
+      }
+        if (runSim)
+        {
+          // If user said nEvents>0 => process that many
+          // else => keep calling run(1) until ABORTRUN
+          long long eventCount = 0;
+          if (nEvents > 0)
+          {
+            while (eventCount < nEvents)
+            {
+              int retval = se->run(1);
+              if (retval != 0) break;
+              eventCount++;
+            }
+          }
+          else
+          {
+            // nEvents=0 => process all TTree
+            while (true)
+            {
+              int retval = se->run(1);
+              if (retval != 0) break; // ABORTRUN => TTree done
+            }
+          }
+        }
+        else // runData
+        {
+          se->run(nEvents);
+        }
+        se->End();
     }
     else
     {
-      // -----------------------------------------------------------------
-      // If WANT_MANUAL_EVENT_LIMIT is true => use manual loop
-      // that stops at MANUAL_EVENT_LIMIT
-      // -----------------------------------------------------------------
-      std::cout << "[DEBUG] WANT_MANUAL_EVENT_LIMIT=false => "
-                << "manual loop for " << MANUAL_EVENT_LIMIT << " events.\n";
-
+      // The manual event loop approach:
       int eventCount = 0;
       while (true)
       {
-        // run exactly 1 event
         int retval = se->run(1);
         if (retval != 0)
         {
-          // no more events => stop
-          std::cout << "[INFO] run(1) returned " << retval
-                    << "; likely EOF => break.\n";
+          // e.g. ABORTRUN => break
+          if (WANT_VERBOSE)
+          {
+            std::cout << "[INFO] run(1) returned " << retval
+                      << " => stopping.\n";
+          }
           break;
         }
-
         eventCount++;
         if (eventCount >= MANUAL_EVENT_LIMIT)
         {
-          std::cout << "[INFO] Reached manual limit of " << eventCount
-                    << " events => stopping.\n";
+          if (WANT_VERBOSE) {
+            std::cout << "[INFO] Reached manual limit => stopping.\n";
+          }
           break;
         }
       }
-    } // end if(WANT_MANUAL_EVENT_LIMIT)
+        se->End();
+    }
 
-    // Now end the job
-    std::cout << "[DEBUG] event loop finished => calling se->End()...\n";
-    se->End();
-    std::cout << "[DEBUG] Done => exiting.\n";
+    // Once we exit that block, we do the final End()
+    if (WANT_VERBOSE)
+    {
+      std::cout << "[DEBUG] event loop finished => calling se->End()...\n";
+    }
+
+
+    // Now done => exit
+    if (WANT_VERBOSE)
+    {
+      std::cout << "[DEBUG] Done => exiting.\n";
+    }
     gSystem->Exit(0);
 }
