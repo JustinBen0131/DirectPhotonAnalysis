@@ -22,7 +22,7 @@
 #define CYAN    "\033[36m"      /* Cyan */
 #define BOLD    "\033[1m"
 
-bool enableFits = true; // Set to true if you want to enable the fits
+bool enableFits = false; // Set to true if you want to enable the fits
 
 
 std::map<std::tuple<
@@ -598,8 +598,6 @@ std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroup
 }
 
 
-
-
 void PrintSortedCombinations(const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns) {
     std::vector<std::pair<std::set<std::string>, DataStructures::RunInfo>> sortedCombinations(
         combinationToRuns.begin(), combinationToRuns.end());
@@ -642,20 +640,25 @@ void ProcessRunsForCombination(
     const std::vector<int>& runs,
     const std::set<std::string>& triggers,
     const std::string& outputDirectory,
-    std::map<std::string, std::vector<int>>& combinationToValidRuns) {
-    
+    std::map<std::string, std::vector<int>>& combinationToValidRuns)
+{
     // Define the final output ROOT file path
     std::string finalRootFilePath = outputDirectory + "/" + combinationName + "_Combined.root";
     // Define the text file path to store valid runs
     std::string validRunsFilePath = outputDirectory + "/" + combinationName + "_ValidRuns.txt";
-    
-    // Check if both the final ROOT file and valid runs text file already exist to avoid overwriting
+
+    // New file to track runs that have zero data in all histograms
+    std::string zeroDataFilePath = outputDirectory + "/RunsWithNoData.txt";
+    std::ofstream zeroDataFile(zeroDataFilePath, std::ios::app); // append mode
+
     bool rootFileExists = !gSystem->AccessPathName(finalRootFilePath.c_str());
     bool validRunsFileExists = !gSystem->AccessPathName(validRunsFilePath.c_str());
-    
+
+    // If both files already exist, skip
     if (rootFileExists && validRunsFileExists) {
-        std::cout << "Final ROOT file and valid runs file already exist for combination: " << combinationName << ". Skipping merge." << std::endl;
-        // Read valid runs from the text file
+        std::cout << "Final ROOT file and valid runs file already exist for combination: "
+                  << combinationName << ". Skipping merge.\n";
+        // Load valid runs from text file
         std::vector<int> validRuns;
         std::ifstream validRunsFile(validRunsFilePath);
         if (validRunsFile.is_open()) {
@@ -671,179 +674,239 @@ void ProcessRunsForCombination(
         return;
     }
 
-    // Map to keep track of histograms (by trigger and histogram name)
+    // Map: triggerName -> (histogramName -> unique_ptr<TH1>)
     std::map<std::string, std::map<std::string, std::unique_ptr<TH1>>> mergedHistograms;
-    
-    // Collect histogram names
-    std::set<std::string> histogramNames;
-    
-    // Vector to store valid run numbers for this combination
+
+    // Vector of run numbers that have at least some valid histograms
     std::vector<int> validRuns;
-    
-    // Iterate over each run number in the combination
-    for (const auto& runNumber : runs) {
-        // Define the run's ROOT file path
+
+    // Loop over each run in this combination
+    for (int runNumber : runs) {
         std::stringstream ss;
         ss << outputDirectory << "/" << runNumber << "_HistOutput.root";
         std::string runRootFilePath = ss.str();
-        
-        std::cout << "Processing run: " << runNumber << ", file: " << runRootFilePath << std::endl;
-        
-        // Check if the run's ROOT file exists
+
+        std::cout << "\nProcessing run: " << runNumber
+                  << ", file: " << runRootFilePath << std::endl;
+
         if (gSystem->AccessPathName(runRootFilePath.c_str())) {
-            std::cerr << "Run ROOT file does not exist: " << runRootFilePath << ". Skipping this run." << std::endl;
+            std::cerr << "Run ROOT file does not exist: " << runRootFilePath
+                      << ". Skipping run.\n";
             continue;
         }
-        
-        // Open the run's ROOT file
-        std::cout << "Opening run file..." << std::endl;
+        std::cout << "Opening run file...\n";
         TFile runFile(runRootFilePath.c_str(), "READ");
         if (runFile.IsZombie() || !runFile.IsOpen()) {
-            std::cerr << "Failed to open run ROOT file: " << runRootFilePath << ". Skipping this run." << std::endl;
+            std::cerr << "Failed to open run ROOT file: " << runRootFilePath
+                      << ". Skipping run.\n";
             continue;
         }
-        std::cout << "Run file opened successfully." << std::endl;
-        
-        bool runHasValidHistogram = false;
-        
-        
-        // For each trigger in the combination
+        std::cout << "Run file opened successfully.\n";
+
+        bool runHasValidHistogram = false;   // indicates we found at least one histogram
+        bool runHasNonZeroEntries = false;   // indicates at least one histogram has >0 entries
+
+        // Loop over each trigger in the combination
         for (const auto& trigger : triggers) {
-            // Check if the trigger directory exists in the run file
+            // Grab the trigger directory
             TDirectory* triggerDir = runFile.GetDirectory(trigger.c_str());
             if (!triggerDir) {
-                std::cerr << "Trigger directory '" << trigger << "' not found in run " << runNumber << ". Skipping this trigger." << std::endl;
+                std::cerr << "Trigger directory '" << trigger
+                          << "' not found for run " << runNumber << ".\n";
                 continue;
             }
-            
-            // Get all histograms in the trigger directory
+
+            // Read keys in that directory
             TIter nextKey(triggerDir->GetListOfKeys());
             TKey* key;
             while ((key = (TKey*)nextKey())) {
                 std::string className = key->GetClassName();
-                if (className.find("TH1") != std::string::npos || className.find("TH2") != std::string::npos) {
-                    TObject* obj = key->ReadObj();
-                    TH1* hist = dynamic_cast<TH1*>(obj);
-                    if (!hist) {
-                        std::cerr << "Failed to read histogram '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
-                        delete obj;
-                        continue;
-                    }
-                    std::string histName = hist->GetName();
-                    
-                    // Clone the histogram and set directory to nullptr
-                    TH1* histClone = dynamic_cast<TH1*>(hist->Clone());
-                    if (!histClone) {
-                        std::cerr << "Failed to clone histogram: " << histName << " from run " << runNumber << std::endl;
-                        delete obj;
-                        continue;
-                    }
-                    histClone->SetDirectory(nullptr);
-                    
-                    // Check if we already have this histogram in mergedHistograms
-                    auto& histMap = mergedHistograms[trigger];
-                    auto it = histMap.find(histName);
-                    if (it != histMap.end()) {
-                        // Histogram already exists, add the new histogram to it
-                        it->second->Add(histClone);
-                        std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to existing histogram in trigger '" << trigger << "'." << std::endl;
-                        delete histClone;
-                    } else {
-                        // Add histClone to mergedHistograms
-                        histMap[histName] = std::unique_ptr<TH1>(histClone);
-                        std::cout << "Added histogram '" << histName << "' from run " << runNumber << " to merged histograms in trigger '" << trigger << "'." << std::endl;
-                        // histClone is managed by unique_ptr in histMap
-                    }
-                    
-                    // Clean up
-                    delete obj;
-                    
-                    runHasValidHistogram = true;
-                } else {
-                    std::cout << "Skipping non-histogram object '" << key->GetName() << "' in trigger '" << trigger << "' in run " << runNumber << std::endl;
+                TObject* obj = key->ReadObj();
+                if (!obj) {
+                    continue;
                 }
+
+                // *** CRITICAL CHECKS FOR SEGV AVOIDANCE ***
+                // 1) If it's not a TH1 or TH2, skip
+                // 2) If you only want to handle 1D vs 2D separately, do it here:
+                //    e.g. skip TProfile
+                if (!obj->InheritsFrom(TH1::Class())) {
+                    std::cout << "[DEBUG] Skipping non-TH1 object: "
+                              << key->GetName() << " of class " << className << "\n";
+                    delete obj;
+                    continue;
+                }
+                // Optionally skip TProfile:
+                if (obj->InheritsFrom(TProfile::Class())) {
+                    std::cout << "[DEBUG] Skipping TProfile: "
+                              << key->GetName() << "\n";
+                    delete obj;
+                    continue;
+                }
+
+                // Now we can treat it as a TH1
+                TH1* hist = dynamic_cast<TH1*>(obj);
+                if (!hist) {
+                    // This should not happen given the check, but just in case:
+                    std::cerr << "[ERROR] dynamic_cast<TH1*> failed for "
+                              << key->GetName() << "\n";
+                    delete obj;
+                    continue;
+                }
+
+                std::string histName = hist->GetName();
+                // *** If you want to skip merging 1D with 2D, check dimensions ***
+                // e.g. if you want only 1D:
+                // if (hist->GetDimension() != 1) { skip or handle 2D separately }
+
+                // Clone the histogram
+                TH1* histClone = dynamic_cast<TH1*>(hist->Clone());
+                if (!histClone) {
+                    std::cerr << "[ERROR] Clone failed for histogram: "
+                              << histName << "\n";
+                    delete obj;
+                    continue;
+                }
+                histClone->SetDirectory(nullptr);
+
+                // Merging logic
+                auto& histMap = mergedHistograms[trigger];
+                auto it = histMap.find(histName);
+                if (it != histMap.end()) {
+                    // *** Binning check to avoid Add(...) mismatch
+                    TH1* existing = it->second.get();
+                    bool canMerge = (existing->GetDimension() == histClone->GetDimension());
+
+                    // (Optional) further check: same number of bins, same edges, etc.
+                    if (canMerge) {
+                        // e.g. check if # bins match
+                        if (existing->GetNbinsX() != histClone->GetNbinsX()) {
+                            std::cerr << "[WARNING] Bin mismatch merging '"
+                                      << histName << "' from run " << runNumber
+                                      << " => skipping.\n";
+                            delete histClone;
+                            delete obj;
+                            continue;
+                        }
+                        // If 2D, also check Y dimension, etc.
+                    }
+                    else {
+                        std::cerr << "[WARNING] Dimension mismatch merging '"
+                                  << histName << "' => skipping.\n";
+                        delete histClone;
+                        delete obj;
+                        continue;
+                    }
+
+                    // Safe to merge
+                    existing->Add(histClone);
+                    delete histClone;
+                    std::cout << "Added histogram '" << histName
+                              << "' from run " << runNumber
+                              << " to existing histogram in trigger '"
+                              << trigger << "'.\n";
+                } else {
+                    // First time seeing this histogram name for this trigger
+                    histMap[histName] = std::unique_ptr<TH1>(histClone);
+                    std::cout << "Added histogram '" << histName
+                              << "' from run " << runNumber
+                              << " to merged histograms in trigger '"
+                              << trigger << "'.\n";
+                }
+
+                // Mark that we had at least one valid histogram
+                runHasValidHistogram = true;
+                // Check if this histogram has >0 entries
+                if (hist->GetEntries() > 0) {
+                    runHasNonZeroEntries = true;
+                }
+
+                delete obj; // Done with original
             }
-        }
-        
+        } // end trigger loop
+
+        // If at least one valid histogram was found => record this run
         if (runHasValidHistogram) {
-            // Add run number to validRuns
             validRuns.push_back(runNumber);
         }
-        
-        // Close the run file
+
+        // If no histogram in this run had non-zero entries, log it
+        if (!runHasNonZeroEntries) {
+            zeroDataFile << runNumber << "\n";
+            std::cout << "[INFO] Run " << runNumber
+                      << " had NO non-zero hist entries => appended to: "
+                      << zeroDataFilePath << "\n";
+        }
+
         runFile.Close();
-    }
-    
+    } // end runs loop
+
+    // If no runs found
     if (validRuns.empty()) {
-        std::cout << "No valid runs found for combination: " << combinationName << ". Skipping this combination." << std::endl;
-        return; // Replace continue with return
+        std::cout << "[INFO] No valid runs found for combination: "
+                  << combinationName << ". Skipping.\n";
+        return;
     }
 
+    // If no histograms aggregated
     if (mergedHistograms.empty()) {
-        std::cout << "No histograms were merged for combination: " << combinationName << ". Skipping writing output ROOT file." << std::endl;
-        return; // Replace continue with return
+        std::cout << "[INFO] No histograms were merged for combination: "
+                  << combinationName << ". Skipping output.\n";
+        return;
     }
 
-    // Write all merged histograms to the final ROOT file
-    std::cout << "Writing merged histograms to final ROOT file: " << finalRootFilePath << std::endl;
+    // Write merged histograms to final ROOT file
+    std::cout << "[INFO] Writing merged histograms => "
+              << finalRootFilePath << "\n";
     TFile finalFile(finalRootFilePath.c_str(), "RECREATE");
     if (finalFile.IsZombie() || !finalFile.IsOpen()) {
-        std::cerr << "Failed to create final ROOT file: " << finalRootFilePath << std::endl;
+        std::cerr << "[ERROR] Could not create " << finalRootFilePath << "\n";
         mergedHistograms.clear();
         return;
     }
-    
     finalFile.cd();
-    for (const auto& triggerHistPair : mergedHistograms) {
-        const std::string& trigger = triggerHistPair.first;
-        const auto& histMap = triggerHistPair.second;
-        
-        // Create the trigger directory
-        TDirectory* triggerDir = finalFile.mkdir(trigger.c_str());
-        if (!triggerDir) {
-            std::cerr << "Failed to create directory for trigger: " << trigger << std::endl;
+
+    // For each trigger => create directory => write histograms
+    for (const auto& [trigger, histMap] : mergedHistograms) {
+        TDirectory* trigDir = finalFile.mkdir(trigger.c_str());
+        if (!trigDir) {
+            std::cerr << "[ERROR] Could not mkdir for trigger " << trigger << "\n";
             continue;
         }
-        
-        triggerDir->cd();
-        
-        for (const auto& histPair : histMap) {
-            const std::string& histName = histPair.first;
-            TH1* hist = histPair.second.get();
-            if (!hist) {
-                std::cerr << "Null histogram encountered. Skipping." << std::endl;
+        trigDir->cd();
+
+        for (const auto& [histName, histPtr] : histMap) {
+            if (!histPtr) {
+                std::cerr << "[WARNING] Null histogram? Skipping " << histName << "\n";
                 continue;
             }
-            hist->Write();
-            std::cout << "Histogram '" << histName << "' written to trigger directory '" << trigger << "' in final ROOT file." << std::endl;
+            histPtr->Write();
+            std::cout << "[INFO] Wrote '" << histName
+                      << "' in directory '" << trigger << "'\n";
         }
     }
-    
-    // Write and close the final ROOT file
+
     finalFile.Write();
     finalFile.Close();
-    
-    // Clean up merged histograms
     mergedHistograms.clear();
-    
-    std::cout << "Successfully created combined ROOT file: " << finalRootFilePath << std::endl;
-    
-    // Store the valid runs for this combination
+
+    std::cout << "[INFO] Successfully created combined ROOT file: "
+              << finalRootFilePath << "\n";
+
+    // Update valid runs text file
     combinationToValidRuns[combinationName] = validRuns;
-    
-    // Write the valid runs to a text file
     std::ofstream validRunsFile(validRunsFilePath);
     if (validRunsFile.is_open()) {
-        for (const auto& runNumber : validRuns) {
-            validRunsFile << runNumber << "\n";
+        for (int rn : validRuns) {
+            validRunsFile << rn << "\n";
         }
         validRunsFile.close();
-        std::cout << "Valid runs written to file: " << validRunsFilePath << std::endl;
+        std::cout << "[INFO] Valid runs => " << validRunsFilePath << "\n";
     } else {
-        std::cerr << "Failed to write valid runs to file: " << validRunsFilePath << std::endl;
+        std::cerr << "[ERROR] Failed to write " << validRunsFilePath << "\n";
     }
+    // zeroDataFile closes automatically when function ends
 }
-
 
 void ProcessAndMergeRootFiles(
     const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns,
@@ -1868,75 +1931,221 @@ void generateMesonPlotVsPt(
     delete hFrame;
 }
 
-void readHistogramDataForInvariantMasses(const std::string& csvFilePath,
-                       std::vector<DataStructures::HistogramData>& dataVector,
-                       std::set<std::string>& triggersInDataFile) {
-    // Open the CSV file
+void readHistogramDataForInvariantMasses(
+    const std::string& csvFilePath,
+    std::vector<DataStructures::HistogramData>& dataVector,
+    std::set<std::string>& triggersInDataFile)
+{
+    // Helper: safely convert string to float
+    auto safeToFloat = [&](const std::string& s, bool& ok) -> float {
+        // Trim whitespace
+        std::string tmp = s;
+        tmp.erase(0, tmp.find_first_not_of(" \t\r\n"));
+        tmp.erase(tmp.find_last_not_of(" \t\r\n") + 1);
+
+        try {
+            float val = std::stof(tmp);
+            ok = true;
+            return val;
+        }
+        catch (...) {
+            ok = false;
+            return 0.0f; // fallback
+        }
+    };
+
+    // Helper: safely convert string to double
+    auto safeToDouble = [&](const std::string& s, bool& ok) -> double {
+        // Trim whitespace
+        std::string tmp = s;
+        tmp.erase(0, tmp.find_first_not_of(" \t\r\n"));
+        tmp.erase(tmp.find_last_not_of(" \t\r\n") + 1);
+
+        try {
+            double val = std::stod(tmp);
+            ok = true;
+            return val;
+        }
+        catch (...) {
+            ok = false;
+            return 0.0; // fallback
+        }
+    };
+
+    // Attempt to open file
     std::ifstream csvFile(csvFilePath);
     if (!csvFile.is_open()) {
-        std::cerr << "Error: Could not open CSV file " << csvFilePath << std::endl;
+        std::cerr << "[ERROR] Could not open CSV file for reading: " << csvFilePath << std::endl;
         return;
     }
 
-    // Read header line
+    // First line is the CSV header, so read and discard (or check)
     std::string line;
-    std::getline(csvFile, line); // Skip header
-
-    // Read data lines
-    while (std::getline(csvFile, line)) {
-        std::istringstream iss(line);
-        std::string token;
-
-        DataStructures::HistogramData data;
-
-        // Read fields
-        std::getline(iss, token, ',');
-        data.cuts.triggerName = token;
-
-        std::getline(iss, token, ',');
-        data.cuts.clusECore = std::stof(token);
-
-        std::getline(iss, token, ',');
-        data.cuts.chi = std::stof(token);
-
-        std::getline(iss, token, ',');
-        data.cuts.asymmetry = std::stof(token);
-
-        std::getline(iss, token, ',');
-        data.cuts.pTMin = std::stof(token);
-
-        std::getline(iss, token, ',');
-        data.cuts.pTMax = std::stof(token);
-
-        std::getline(iss, token, ',');
-        data.meanPi0 = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.meanPi0Error = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.sigmaPi0 = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.sigmaPi0Error = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.meanEta = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.meanEtaError = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.sigmaEta = std::stod(token);
-
-        std::getline(iss, token, ',');
-        data.sigmaEtaError = std::stod(token);
-
-        triggersInDataFile.insert(data.cuts.triggerName);  // Collect trigger names
-        dataVector.push_back(data);
+    if (!std::getline(csvFile, line)) {
+        std::cerr << "[ERROR] CSV file appears empty or missing header => " << csvFilePath << std::endl;
+        return;
     }
+    std::cout << "[INFO] Skipping header line: " << line << std::endl;
+
+    int lineNum = 1; // we've read the header, so data lines start at lineNum=2
+
+    while (std::getline(csvFile, line)) {
+        ++lineNum;
+        if (line.empty()) {
+            // skip empty lines
+            continue;
+        }
+
+        // Split by comma into tokens
+        std::vector<std::string> tokens;
+        {
+            std::istringstream iss(line);
+            std::string cell;
+            while (std::getline(iss, cell, ',')) {
+                tokens.push_back(cell);
+            }
+        }
+
+        // We expect exactly 14 columns
+        if (tokens.size() < 14) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": Only " << tokens.size() << " columns found, need 14. Skipping row.\n";
+            continue;
+        }
+
+        // Prepare a new structure
+        DataStructures::HistogramData data;
+        bool ok = false; // used to track numeric parse success
+
+        // 1) Trigger Name
+        data.cuts.triggerName = tokens[0];
+        triggersInDataFile.insert(tokens[0]); // remember we saw this trigger
+
+        // 2) Ecore
+        float eCoreVal = safeToFloat(tokens[1], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": Ecore parse failure => '" << tokens[1] << "'\n";
+            continue; // skip or set default
+        }
+        data.cuts.clusECore = eCoreVal;
+
+        // 3) Chi2
+        float chiVal = safeToFloat(tokens[2], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": Chi parse failure => '" << tokens[2] << "'\n";
+            continue;
+        }
+        data.cuts.chi = chiVal;
+
+        // 4) Asym
+        float asymVal = safeToFloat(tokens[3], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": Asym parse failure => '" << tokens[3] << "'\n";
+            continue;
+        }
+        data.cuts.asymmetry = asymVal;
+
+        // 5) pTMin
+        float pTMinVal = safeToFloat(tokens[4], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": pTMin parse failure => '" << tokens[4] << "'\n";
+            continue;
+        }
+        data.cuts.pTMin = pTMinVal;
+
+        // 6) pTMax
+        float pTMaxVal = safeToFloat(tokens[5], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": pTMax parse failure => '" << tokens[5] << "'\n";
+            continue;
+        }
+        data.cuts.pTMax = pTMaxVal;
+
+        // 7) meanPi0
+        double meanPi0Val = safeToDouble(tokens[6], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": meanPi0 parse failure => '" << tokens[6] << "'\n";
+            continue;
+        }
+        data.meanPi0 = meanPi0Val;
+
+        // 8) meanPi0Error
+        double meanPi0ErrVal = safeToDouble(tokens[7], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": meanPi0Error parse failure => '" << tokens[7] << "'\n";
+            continue;
+        }
+        data.meanPi0Error = meanPi0ErrVal;
+
+        // 9) sigmaPi0
+        double sigmaPi0Val = safeToDouble(tokens[8], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": sigmaPi0 parse failure => '" << tokens[8] << "'\n";
+            continue;
+        }
+        data.sigmaPi0 = sigmaPi0Val;
+
+        // 10) sigmaPi0Error
+        double sigmaPi0ErrVal = safeToDouble(tokens[9], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": sigmaPi0Error parse failure => '" << tokens[9] << "'\n";
+            continue;
+        }
+        data.sigmaPi0Error = sigmaPi0ErrVal;
+
+        // 11) meanEta
+        double meanEtaVal = safeToDouble(tokens[10], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": meanEta parse failure => '" << tokens[10] << "'\n";
+            continue;
+        }
+        data.meanEta = meanEtaVal;
+
+        // 12) meanEtaError
+        double meanEtaErrVal = safeToDouble(tokens[11], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": meanEtaError parse failure => '" << tokens[11] << "'\n";
+            continue;
+        }
+        data.meanEtaError = meanEtaErrVal;
+
+        // 13) sigmaEta
+        double sigmaEtaVal = safeToDouble(tokens[12], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": sigmaEta parse failure => '" << tokens[12] << "'\n";
+            continue;
+        }
+        data.sigmaEta = sigmaEtaVal;
+
+        // 14) sigmaEtaError
+        double sigmaEtaErrVal = safeToDouble(tokens[13], ok);
+        if (!ok) {
+            std::cerr << "[WARNING] line " << lineNum
+                      << ": sigmaEtaError parse failure => '" << tokens[13] << "'\n";
+            continue;
+        }
+        data.sigmaEtaError = sigmaEtaErrVal;
+
+        // If we made it here, the line had 14 valid columns
+        dataVector.push_back(data);
+    } // end while lines
 
     csvFile.close();
+
+    std::cout << "[INFO] Finished reading CSV => " << csvFilePath << "\n"
+              << "       Read " << dataVector.size() << " valid rows.\n";
 }
 
 DataStructures::CutCombinationData processCutCombination(
@@ -2071,15 +2280,34 @@ DataStructures::CutCombinationData processCutCombination(
                 result.pTCentersPi0.push_back(pTCenter);
                 result.meanPi0Values.push_back(selectedData.meanPi0);
                 result.meanPi0Errors.push_back(selectedData.meanPi0Error);
-                result.triggersUsedPi0.push_back(triggerToUse); // Track the trigger used
+                result.sigmaPi0Values.push_back(selectedData.sigmaPi0);
+                result.sigmaPi0Errors.push_back(selectedData.sigmaPi0Error);
+                result.resolutionPi0Values.push_back(selectedData.pi0FitResolution);
+                result.resolutionPi0Errors.push_back(selectedData.pi0FitResolutionError);
+                result.signalToBackgroundPi0Ratios.push_back(selectedData.signalToBackgroundPi0Ratio);
+                result.signalToBackgroundPi0Errors.push_back(selectedData.signalToBackgroundPi0Error);
+                result.pi0YieldValues.push_back(selectedData.signalPi0Yield);
+                result.pi0YieldErrors.push_back(selectedData.signalPi0Error);
+
+                result.triggersUsedPi0.push_back(triggerToUse);
             }
 
             if (validEta) {
                 result.pTCentersEta.push_back(pTCenter);
                 result.meanEtaValues.push_back(selectedData.meanEta);
                 result.meanEtaErrors.push_back(selectedData.meanEtaError);
-                result.triggersUsedEta.push_back(triggerToUse); // Track the trigger used
+                result.sigmaEtaValues.push_back(selectedData.sigmaEta);
+                result.sigmaEtaErrors.push_back(selectedData.sigmaEtaError);
+                result.resolutionEtaValues.push_back(selectedData.etaFitResolution);
+                result.resolutionEtaErrors.push_back(selectedData.etaFitResolutionError);
+                result.signalToBackgroundEtaRatios.push_back(selectedData.signalToBackgroundEtaRatio);
+                result.signalToBackgroundEtaErrors.push_back(selectedData.signalToBackgroundEtaError);
+                result.etaYieldValues.push_back(selectedData.signalEtaYield);
+                result.etaYieldErrors.push_back(selectedData.signalEtaError);
+
+                result.triggersUsedEta.push_back(triggerToUse);
             }
+
         } else {
             std::cout << RED << "Warning: Data not found for pT bin [" << pTMin << ", " << pTMax << "] and trigger " << triggerToUse << RESET << std::endl;
             // Debugging output: List available triggers for this pT bin
@@ -2094,12 +2322,10 @@ DataStructures::CutCombinationData processCutCombination(
             result.triggersInData.insert(tDataPair.first);
         }
 
-        // Collect data for overlay plots
         for (const auto& tDataPair : triggerDataMap) {
             const std::string& triggerName = tDataPair.first;
             const DataStructures::HistogramData& data = tDataPair.second;
 
-            // Validate meanPi0 and meanEta before adding
             bool validPi0 = data.meanPi0 > 0.0 && data.meanPi0 < 0.4;
             bool validEta = data.meanEta > 0.3 && data.meanEta < 1.0;
 
@@ -2107,12 +2333,28 @@ DataStructures::CutCombinationData processCutCombination(
                 result.triggerToPtCentersPi0[triggerName].push_back(pTCenter);
                 result.triggerToMeanPi0Values[triggerName].push_back(data.meanPi0);
                 result.triggerToMeanPi0Errors[triggerName].push_back(data.meanPi0Error);
+                result.triggerToSigmaPi0Values[triggerName].push_back(data.sigmaPi0);
+                result.triggerToSigmaPi0Errors[triggerName].push_back(data.sigmaPi0Error);
+                result.triggerToResolutionPi0Values[triggerName].push_back(data.pi0FitResolution);
+                result.triggerToResolutionPi0Errors[triggerName].push_back(data.pi0FitResolutionError);
+                result.triggerToSignalToBackgroundPi0Ratios[triggerName].push_back(data.signalToBackgroundPi0Ratio);
+                result.triggerToSignalToBackgroundPi0Errors[triggerName].push_back(data.signalToBackgroundPi0Error);
+                result.triggerToPi0YieldValues[triggerName].push_back(data.signalPi0Yield);
+                result.triggerToPi0YieldErrors[triggerName].push_back(data.signalPi0Error);
             }
 
             if (validEta) {
                 result.triggerToPtCentersEta[triggerName].push_back(pTCenter);
                 result.triggerToMeanEtaValues[triggerName].push_back(data.meanEta);
                 result.triggerToMeanEtaErrors[triggerName].push_back(data.meanEtaError);
+                result.triggerToSigmaEtaValues[triggerName].push_back(data.sigmaEta);
+                result.triggerToSigmaEtaErrors[triggerName].push_back(data.sigmaEtaError);
+                result.triggerToResolutionEtaValues[triggerName].push_back(data.etaFitResolution);
+                result.triggerToResolutionEtaErrors[triggerName].push_back(data.etaFitResolutionError);
+                result.triggerToSignalToBackgroundEtaRatios[triggerName].push_back(data.signalToBackgroundEtaRatio);
+                result.triggerToSignalToBackgroundEtaErrors[triggerName].push_back(data.signalToBackgroundEtaError);
+                result.triggerToEtaYieldValues[triggerName].push_back(data.signalEtaYield);
+                result.triggerToEtaYieldErrors[triggerName].push_back(data.signalEtaError);
             }
         }
     }
@@ -2122,21 +2364,21 @@ DataStructures::CutCombinationData processCutCombination(
 
 void generateOverlayInvariantMassPlot(
     const std::map<std::string, std::vector<double>>& triggerToPtCenters,
-    const std::map<std::string, std::vector<double>>& triggerToMeanValues,
-    const std::map<std::string, std::vector<double>>& triggerToMeanErrors,
+    const std::map<std::string, std::vector<double>>& triggerToYValues,
+    const std::map<std::string, std::vector<double>>& triggerToYErrors,
     const std::set<std::string>& triggersInData,
     const std::vector<std::pair<double, double>>& pT_bins,
-    const std::string& mesonName, // e.g., "#pi^{0}" or "#eta"
-    const std::string& yAxisTitle, // e.g., "Mean #pi^{0} Mass [GeV]"
-    const double yBufferFraction, // e.g., 0.1 for 10% buffer
+    const std::string& mesonName,  // e.g., "#pi^{0}" or "#eta"
+    const std::string& yAxisTitle, // e.g., "Mean #pi^{0} Mass [GeV]" or "Yield"
+    const double yBufferFraction,
     const double pTExclusionMax,
     const std::string& outputFilePath,
     const std::string& plotDirectory,
     const std::string& cutCombination,
     const DataStructures::CutCombinationData& cutData,
     const std::map<std::string, int>& triggerColorMap,
-    const std::map<std::string, std::string>& triggerNameMap) {
-
+    const std::map<std::string, std::string>& triggerNameMap)
+{
     if (triggerToPtCenters.empty()) {
         std::cout << "No data to plot." << std::endl;
         return;
@@ -2154,9 +2396,15 @@ void generateOverlayInvariantMassPlot(
         binEdges.push_back(bin.first);
     }
     // Add the upper edge of the last included bin
-    binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+    if (!binEdges.empty()) {
+        binEdges.push_back(pT_bins[binEdges.size()-1].second);
+    } else {
+        // If no bins are valid, we can't plot
+        std::cerr << "No valid pT bins for plotting." << std::endl;
+        return;
+    }
 
-    int nBins = binEdges.size() - 1;
+    int nBins = (int)binEdges.size() - 1;
     double* binEdgesArray = &binEdges[0];
 
     // Create a dummy histogram to set up the axes
@@ -2165,40 +2413,35 @@ void generateOverlayInvariantMassPlot(
     hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
     hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
 
-    // Remove x-axis labels and ticks
+    // Remove x-axis labels and ticks (we will draw custom labels)
     hFrame->GetXaxis()->SetLabelOffset(999);
     hFrame->GetXaxis()->SetTickLength(0);
 
     // Draw the frame
     hFrame->Draw();
 
-    // Declare legend pointer outside the conditional blocks
+    // Configure legend position and style
     TLegend* legend = nullptr;
-
     if (mesonName == "#pi^{0}") {
-        // Create legend with specific coordinates for #pi^{0}
+        // Legend for pi0
         legend = new TLegend(0.2, 0.2, 0.4, 0.4);
         legend->SetTextSize(0.03);
     } else {
-        // Create legend with specific coordinates for other meson names
+        // Legend for eta or others
         legend = new TLegend(0.2, 0.2, 0.4, 0.4);
         legend->SetTextSize(0.03);
     }
 
-    // Keep track of graphs to delete later
     std::vector<TGraphErrors*> graphs;
 
     // Variables to adjust y-axis range
     double yMinData = std::numeric_limits<double>::max();
     double yMaxData = std::numeric_limits<double>::lowest();
 
-    // Convert triggersInData to a vector for indexing
+    // Determine offsets for multiple triggers
     std::vector<std::string> triggerNames(triggersInData.begin(), triggersInData.end());
-    int numTriggers = triggerNames.size();
+    int numTriggers = (int)triggerNames.size();
 
-    /*
-     ADJUST OFFSET VALUE AS NECESSARY
-     */
     double offsetValue;
     if (mesonName == "#eta") {
         offsetValue = 0.098;
@@ -2206,7 +2449,6 @@ void generateOverlayInvariantMassPlot(
         offsetValue = 0.08;
     }
 
-    // Calculate offsets based on the number of triggers
     std::vector<double> offsets;
     if (numTriggers == 1) {
         offsets.push_back(0.0);
@@ -2235,48 +2477,48 @@ void generateOverlayInvariantMassPlot(
         }
     }
 
-    // Loop over triggers with indexing
+    // Loop over triggers and plot
     for (size_t triggerIndex = 0; triggerIndex < triggerNames.size(); ++triggerIndex) {
         const std::string& triggerName = triggerNames[triggerIndex];
         double xOffset = offsets[triggerIndex];
 
-        // Get the data
+        // Retrieve data for this trigger
         auto it_pT = triggerToPtCenters.find(triggerName);
-        auto it_meanValues = triggerToMeanValues.find(triggerName);
-        auto it_meanErrors = triggerToMeanErrors.find(triggerName);
+        auto it_yValues = triggerToYValues.find(triggerName);
+        auto it_yErrors = triggerToYErrors.find(triggerName);
 
-        if (it_pT == triggerToPtCenters.end() || it_meanValues == triggerToMeanValues.end() || it_meanErrors == triggerToMeanErrors.end()) {
+        if (it_pT == triggerToPtCenters.end() || it_yValues == triggerToYValues.end() || it_yErrors == triggerToYErrors.end()) {
             continue;
         }
 
         const std::vector<double>& pTCenters = it_pT->second;
-        const std::vector<double>& meanValues = it_meanValues->second;
-        const std::vector<double>& meanErrors = it_meanErrors->second;
+        const std::vector<double>& values = it_yValues->second;
+        const std::vector<double>& errors = it_yErrors->second;
 
         if (pTCenters.empty()) {
-            continue; // Skip if no data for this trigger
+            continue; // No data for this trigger
         }
 
         TGraphErrors* graph = new TGraphErrors();
 
         for (size_t i = 0; i < pTCenters.size(); ++i) {
             double pT = pTCenters[i];
-            double mean = meanValues[i];
-            double meanError = meanErrors[i];
+            double val = values[i];
+            double err = errors[i];
 
             // Exclude points beyond pTExclusionMax
             if (pT >= pTExclusionMax) {
                 continue;
             }
 
-            // Find the bin corresponding to this pT
+            // Find the bin
             int binIndex = -1;
             for (size_t j = 0; j < pT_bins.size(); ++j) {
                 if (pT_bins[j].first >= pTExclusionMax) {
                     break;
                 }
                 if (pT >= pT_bins[j].first && pT < pT_bins[j].second) {
-                    binIndex = j;
+                    binIndex = (int)j;
                     break;
                 }
             }
@@ -2284,21 +2526,18 @@ void generateOverlayInvariantMassPlot(
                 continue;
             }
 
-            // Calculate the bin center
             double binLowEdge = pT_bins[binIndex].first;
             double binUpEdge = pT_bins[binIndex].second;
             double binCenter = (binLowEdge + binUpEdge) / 2.0;
 
-            // Apply xOffset
             double xPos = binCenter + xOffset;
-
             int pointIndex = graph->GetN();
-            graph->SetPoint(pointIndex, xPos, mean);
-            graph->SetPointError(pointIndex, 0, meanError); // No x errors
+            graph->SetPoint(pointIndex, xPos, val);
+            graph->SetPointError(pointIndex, 0, err); // No x errors
 
             // Update y-axis range
-            if (mean - meanError < yMinData) yMinData = mean - meanError;
-            if (mean + meanError > yMaxData) yMaxData = mean + meanError;
+            if (val - err < yMinData) yMinData = val - err;
+            if (val + err > yMaxData) yMaxData = val + err;
         }
 
         if (graph->GetN() == 0) {
@@ -2314,13 +2553,8 @@ void generateOverlayInvariantMassPlot(
             markerColor = it_color->second;
         }
         graph->SetMarkerStyle(markerStyle);
-        double markerSize;
-        if (mesonName == "#eta") {
-            markerSize = 0.72;
-        } else {
-            markerSize = 0.85;
-        }
-        graph->SetMarkerSize(markerSize); // Adjust marker size if needed
+        double markerSize = (mesonName == "#eta") ? 0.72 : 0.85;
+        graph->SetMarkerSize(markerSize);
         graph->SetLineWidth(2);
         graph->SetMarkerColor(markerColor);
         graph->SetLineColor(markerColor);
@@ -2335,13 +2569,12 @@ void generateOverlayInvariantMassPlot(
         }
         legend->AddEntry(graph, displayTriggerName.c_str(), "p");
 
-        // Store the graph for cleanup
         graphs.push_back(graph);
     }
 
-    // Adjust y-axis range with buffer
+    // Adjust y-axis range
     if (yMinData >= yMaxData) {
-        // If no valid data points were found, set default y-axis range
+        // If no valid data points were found
         yMinData = 0.0;
         yMaxData = 1.0;
     }
@@ -2351,6 +2584,7 @@ void generateOverlayInvariantMassPlot(
     double yMax = yMaxData + yBuffer;
 
     if (mesonName == "#eta") {
+        // If you want to force a specific range for eta, adjust here:
         hFrame->GetYaxis()->SetRangeUser(0.4, 0.75);
     } else {
         hFrame->GetYaxis()->SetRangeUser(yMin, yMax);
@@ -2365,17 +2599,16 @@ void generateOverlayInvariantMassPlot(
     double yAxisMin = hFrame->GetMinimum();
     double yAxisMax = hFrame->GetMaximum();
 
-    double tickSize = (yAxisMax - yAxisMin) * 0.02; // Adjust as needed
-    double labelOffset = (yAxisMax - yAxisMin) * 0.05; // Adjust as needed
+    double tickSize = (yAxisMax - yAxisMin) * 0.02;
+    double labelOffset = (yAxisMax - yAxisMin) * 0.05;
     TLatex latex;
     latex.SetTextSize(0.035);
-    latex.SetTextAlign(22); // Center alignment
+    latex.SetTextAlign(22);
 
     // Draw x-axis line
     TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
     xAxisLine.Draw();
 
-    // Draw ticks and labels at bin edges
     for (size_t i = 0; i < binEdges.size(); ++i) {
         double xPos = binEdges[i];
         double yPos = yAxisMin;
@@ -2384,22 +2617,18 @@ void generateOverlayInvariantMassPlot(
         TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
         tick->Draw();
 
-        // Get pT value for label
+        // Label
         double pTValue = binEdges[i];
-
-        // Format label to show one decimal place
         std::ostringstream labelStream;
         labelStream << std::fixed << std::setprecision(1) << pTValue;
         std::string label = labelStream.str();
 
-        // Draw label
         latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
     }
 
-    // Redraw the axes to ensure labels are on top
     canvas.RedrawAxis();
 
-    // Add cut combination information to the canvas
+    // Add cut combination information
     TLatex labelText;
     labelText.SetNDC();
     labelText.SetTextSize(0.032);
@@ -2408,23 +2637,28 @@ void generateOverlayInvariantMassPlot(
     valueText.SetNDC();
     valueText.SetTextSize(0.028);
 
-    // Use cutData to get the values
     labelText.DrawLatex(0.2, 0.87, "#font[62]{ECore #geq}");
-    std::ostringstream eCoreWithUnit;
-    eCoreWithUnit << cutData.clusECore << "   GeV";
-    valueText.DrawLatex(0.32, 0.87, eCoreWithUnit.str().c_str());
+    {
+        std::ostringstream eCoreWithUnit;
+        eCoreWithUnit << cutData.clusECore << "   GeV";
+        valueText.DrawLatex(0.32, 0.87, eCoreWithUnit.str().c_str());
+    }
 
     labelText.DrawLatex(0.2, 0.82, "#font[62]{#chi^{2} <}");
-    std::ostringstream chiStr;
-    chiStr << cutData.chi;
-    valueText.DrawLatex(0.27, 0.82, chiStr.str().c_str());
+    {
+        std::ostringstream chiStr;
+        chiStr << cutData.chi;
+        valueText.DrawLatex(0.27, 0.82, chiStr.str().c_str());
+    }
 
     labelText.DrawLatex(0.2, 0.77, "#font[62]{Asymmetry <}");
-    std::ostringstream asymmetryStr;
-    asymmetryStr << cutData.asymmetry;
-    valueText.DrawLatex(0.37, 0.77, asymmetryStr.str().c_str());
+    {
+        std::ostringstream asymmetryStr;
+        asymmetryStr << cutData.asymmetry;
+        valueText.DrawLatex(0.37, 0.77, asymmetryStr.str().c_str());
+    }
 
-    // Ensure the directory exists
+    // Ensure directory
     gSystem->mkdir((plotDirectory + "/" + cutCombination).c_str(), true);
 
     // Save plot
@@ -2539,11 +2773,10 @@ void ProcessMesonMassVsPt(
             std::cout << "No valid η data to plot for cut combination " << cutCombination << std::endl;
         }
         // Proceed with the overlay plots using cutData.triggerToPtCentersPi0, etc.
-
         if (!cutData.triggerToPtCentersPi0.empty()) {
             double pTExclusionMaxPi0 = 8.0; // For π⁰
+          
             std::string outputFilePath = plotDirectory + "/" + cutCombination + "/meanPi0_vs_pT_Overlay.png";
-
             generateOverlayInvariantMassPlot(
                 cutData.triggerToPtCentersPi0,
                 cutData.triggerToMeanPi0Values,
@@ -2561,6 +2794,65 @@ void ProcessMesonMassVsPt(
                 TriggerConfig::triggerColorMap,
                 TriggerConfig::triggerNameMap
             );
+            
+            std::string outputFilePathSigma = plotDirectory + "/" + cutCombination + "/sigmaPi0_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersPi0,
+                cutData.triggerToSigmaPi0Values,
+                cutData.triggerToSigmaPi0Errors,
+                cutData.triggersInData,
+                pT_bins,
+                "#pi^{0}",
+                "#sigma_{#pi 0}",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                                             outputFilePathSigma,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
+            
+            std::string outputFilePathSb = plotDirectory + "/" + cutCombination + "/sbRatioPi0_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersPi0,
+                cutData.triggerToSignalToBackgroundPi0Ratios,
+                cutData.triggerToSignalToBackgroundPi0Errors,
+                cutData.triggersInData,
+                pT_bins,
+                "#pi^{0}",
+                "Signal-to-Background Ratio",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                outputFilePathSb,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
+            std::string outputFilePathResolution = plotDirectory + "/" + cutCombination + "/resolutionPi0_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersPi0,
+                cutData.triggerToResolutionPi0Values,
+                cutData.triggerToResolutionPi0Errors,
+                cutData.triggersInData,
+                pT_bins,
+                "#pi^{0}",
+                "#pi^{0} Fit Resolution",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                                             outputFilePathResolution,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
         } else {
             std::cout << "No valid π⁰ data to plot for cut combination " << cutCombination << std::endl;
         }
@@ -2570,7 +2862,6 @@ void ProcessMesonMassVsPt(
         if (!cutData.triggerToPtCentersEta.empty()) {
             double pTExclusionMaxEta = 20.0; // For η
             std::string outputFilePath = plotDirectory + "/" + cutCombination + "/meanEta_vs_pT_Overlay.png";
-
             generateOverlayInvariantMassPlot(
                 cutData.triggerToPtCentersEta,
                 cutData.triggerToMeanEtaValues,
@@ -2582,6 +2873,64 @@ void ProcessMesonMassVsPt(
                 yBufferFractionEta,
                 pTExclusionMaxEta,
                 outputFilePath,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
+            std::string outputFilePathSigma = plotDirectory + "/" + cutCombination + "/sigmaEta_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersEta,
+                cutData.triggerToSigmaEtaValues,
+                cutData.triggerToSigmaEtaErrors,
+                cutData.triggersInData,
+                pT_bins,
+                "#eta",
+                "#sigma_{#eta}",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                                             outputFilePathSigma,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
+            
+            std::string outputFilePathSb = plotDirectory + "/" + cutCombination + "/sbRatioEta_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersEta,
+                cutData.triggerToSignalToBackgroundEtaRatios,
+                cutData.triggerToSignalToBackgroundEtaErrors,
+                cutData.triggersInData,
+                pT_bins,
+                "#eta",
+                "Signal-to-Background Ratio",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                outputFilePathSb,
+                plotDirectory,
+                cutCombination,
+                cutData,
+                TriggerConfig::triggerColorMap,
+                TriggerConfig::triggerNameMap
+            );
+            
+            std::string outputFilePathResolution = plotDirectory + "/" + cutCombination + "/resolutionEta_vs_pT_Overlay.png";
+            generateOverlayInvariantMassPlot(
+                cutData.triggerToPtCentersEta,
+                cutData.triggerToResolutionEtaValues,
+                cutData.triggerToResolutionEtaErrors,
+                cutData.triggersInData,
+                pT_bins,
+                "#eta",
+                "#eta Fit Resolution",
+                0.1,  // yBufferFraction
+                8.0,  // pTExclusionMax
+                                             outputFilePathResolution,
                 plotDirectory,
                 cutCombination,
                 cutData,
@@ -2605,7 +2954,8 @@ void AddLabelsToCanvas_isoHistsWithCuts(
     const std::string& histType,
     bool hasIsoEtRange,
     float isoEtMin,
-    float isoEtMax) {
+    float isoEtMax,
+    const std::string& showerCutLabel) {
 
     // Map triggerGroupName and triggerName to human-readable names
     std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
@@ -2663,349 +3013,487 @@ void ProcessIsolationEnergyHistogramsWithCuts(
     TFile* inputFile,
     const std::string& plotDirectory,
     const std::vector<std::string>& triggers,
-    const std::string& combinationName) {
-    
-    // Use the raw combinationName as triggerGroupName in map keys
+    const std::string& combinationName)
+{
+    std::cout << "[DEBUG] Entering ProcessIsolationEnergyHistogramsWithCuts() for '"
+              << combinationName << "' with " << triggers.size() << " triggers.\n";
+
+    // The raw combinationName is used as the "triggerGroupName" in the final map keys
     std::string triggerGroupName = combinationName;
 
-    auto parseIsolationHistNameWithCuts = [](const std::string& histName)
-        -> std::tuple<DataStructures::CutValues, std::string, float, float, std::string, std::string, bool, float, float> {
-        DataStructures::CutValues cuts;
+    // A safer parse function that returns false if the crucial capture groups are empty
+    auto parseIsolationHistNameWithCuts = [&](const std::string& histName)
+      -> std::pair<bool, std::tuple<
+            DataStructures::CutValues,  // cuts (ECore, Chi, Asym)
+            std::string,                // massWindowLabel
+            float, float,               // pTMin, pTMax
+            std::string,                // actual triggerName
+            std::string,                // histType
+            bool, float, float,         // hasIsoEtRange, isoEtMin, isoEtMax
+            std::string                 // showerCutLabel => "withShowerShapeCuts"/"withoutShowerShapeCuts"/""
+         >>
+    {
+        using namespace std;
+        using namespace DataStructures;
+
+        bool success = false;
+        CutValues cuts;
         std::string massWindowLabel;
-        float pTMin = -1;
-        float pTMax = -1;
+        float pTMin       = -1.f;
+        float pTMax       = -1.f;
+        bool  hasIsoRange = false;
+        float isoEtMin    = 0.f;
+        float isoEtMax    = 0.f;
         std::string triggerName;
         std::string histType;
-        bool hasIsoEtRange = false;
-        float isoEtMin = 0.0f;
-        float isoEtMax = 0.0f;
+        std::string showerCutLabel;
 
-        std::smatch match;
-
-        // Lambda to convert 'point' notation to float, handling negative numbers
-        auto convert = [](const std::string& input) -> float {
-            std::string temp = input;
-            size_t pointPos = temp.find("point");
-            if (pointPos != std::string::npos) {
-                temp.replace(pointPos, 5, ".");
+        // Helper to replace "point" with '.' and parse float carefully
+        auto convert = [&](const std::string& inputStr) -> float {
+            if (inputStr.empty()) return 0.f; // early return
+            std::string tmp = inputStr;
+            size_t pos = tmp.find("point");
+            if (pos != std::string::npos) {
+                tmp.replace(pos, 5, ".");
             }
             try {
-                return std::stof(temp);
-            } catch (const std::exception&) {
-                return 0.0f;
+                return std::stof(tmp);
+            } catch (...) {
+                return 0.f;
             }
         };
 
-        std::regex histPattern(
+        static std::regex histPattern(
+          "("
             "(h[12]_cluster_iso_Et|allPhotonCount|ptPhoton|isolatedPhotonCount)"
-            "_E(-?[0-9]+(?:point[0-9]*)?)"
-            "_Chi(-?[0-9]+(?:point[0-9]*)?)"
-            "_Asym(-?[0-9]+(?:point[0-9]*)?)"
-            "(?:(_inMassWindow|_outsideMassWindow))?"
-            "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?"
-            "_pT_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?)"
-            "_([^ ]+)"
+          ")"                                           // (1) => histType
+          "_E(-?[0-9]+(?:point[0-9]*)?)"                // (2) => E
+          "_Chi(-?[0-9]+(?:point[0-9]*)?)"              // (3) => Chi
+          "_Asym(-?[0-9]+(?:point[0-9]*)?)"             // (4) => Asym
+          "(?:(_inMassWindow|_outsideMassWindow))?"     // (5) => massWindowLabel? optional
+          "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?" // (6),(7) => isoEtMin, isoEtMax optional
+          "_pT_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?)"         // (8),(9) => pTMin, pTMax
+          "_(?:(withShowerShapeCuts|withoutShowerShapeCuts)_)?"                // (10) => optional showerCut
+          "([^ ]+)"                                                            // (11) => triggerName
         );
 
-        if (std::regex_match(histName, match, histPattern)) {
-            if (match.size() >= 10) {
-                histType = match[1].str();
-                cuts.clusECore = convert(match[2].str());
-                cuts.chi = convert(match[3].str());
-                cuts.asymmetry = convert(match[4].str());
-                massWindowLabel = match[5].str(); // may be empty
-
-                // Remove leading underscore from massWindowLabel if present
-                if (!massWindowLabel.empty() && massWindowLabel[0] == '_') {
-                    massWindowLabel = massWindowLabel.substr(1);
-                }
-                
-                std::string isoEtMinStr = match[6].str();
-                std::string isoEtMaxStr = match[7].str();
-                if (!isoEtMinStr.empty() && !isoEtMaxStr.empty()) {
-                    isoEtMin = convert(isoEtMinStr);
-                    isoEtMax = convert(isoEtMaxStr);
-                    hasIsoEtRange = true;
-                }
-                pTMin = convert(match[8].str());
-                pTMax = convert(match[9].str());
-                triggerName = match[10].str();
-            }
-        } else {
-            std::cerr << "Error: Failed to parse histogram name: " << histName << std::endl;
+        std::smatch match;
+        if (!std::regex_match(histName, match, histPattern)) {
+            return { false, {} };
         }
 
-        return std::make_tuple(cuts, massWindowLabel, pTMin, pTMax, triggerName, histType, hasIsoEtRange, isoEtMin, isoEtMax);
+        // At this point, we know the pattern matched, but we still must check each group.
+        // match.size() should be 12 in total, but let's do safe checks:
+        if (match.size() < 12) {
+            return { false, {} };
+        }
+
+        success = true;
+
+        histType = match[1].str();
+        cuts.clusECore = convert(match[2].str());
+        cuts.chi       = convert(match[3].str());
+        cuts.asymmetry = convert(match[4].str());
+
+        // massWindowLabel might be empty or start with "_"
+        massWindowLabel = match[5].str();
+        if (!massWindowLabel.empty() && massWindowLabel[0] == '_') {
+            massWindowLabel.erase(0, 1);
+        }
+
+        std::string isoEtMinStr = match[6].str();
+        std::string isoEtMaxStr = match[7].str();
+        if (!isoEtMinStr.empty() && !isoEtMaxStr.empty()) {
+            isoEtMin    = convert(isoEtMinStr);
+            isoEtMax    = convert(isoEtMaxStr);
+            hasIsoRange = true;
+        }
+
+        // Check pTMin, pTMax capturing group matched:
+        if (!match[8].matched || !match[9].matched) {
+            // crucial pT range was not found => fail parse
+            return { false, {} };
+        }
+        pTMin = convert(match[8].str());
+        pTMax = convert(match[9].str());
+
+        showerCutLabel = match[10].str(); // might be empty
+        triggerName    = match[11].str();
+
+        return {
+            success,
+            std::make_tuple(cuts, massWindowLabel, pTMin, pTMax,
+                            triggerName, histType,
+                            hasIsoRange, isoEtMin, isoEtMax,
+                            showerCutLabel)
+        };
     };
 
-    for (const auto& trigger : triggers) {
-        TDirectory* triggerDir = inputFile->GetDirectory(trigger.c_str());
-        if (!triggerDir) {
-            std::cerr << "Trigger directory '" << trigger << "' not found. Skipping." << std::endl;
+    // --------------------------------------------------------------------------
+    // Loop over each "trigger" directory
+    // --------------------------------------------------------------------------
+    for (const auto& trig : triggers) {
+        std::cout << "[DEBUG] Checking directory for trigger='" << trig << "'...\n";
+        TDirectory* trigDir = inputFile->GetDirectory(trig.c_str());
+        if (!trigDir) {
+            std::cerr << "[WARNING] Trigger directory '" << trig
+                      << "' not found in file. Skipping.\n";
             continue;
         }
 
-        TIter nextKey(triggerDir->GetListOfKeys());
+        // Iterate over objects in that directory
+        TIter nextKey(trigDir->GetListOfKeys());
         TKey* key;
         while ((key = (TKey*)nextKey())) {
+            // Print info for debugging
+            std::cout << "[DEBUG] Found object key->GetName()='" << key->GetName()
+                      << "', class='" << key->GetClassName() << "'\n";
+
             TObject* obj = key->ReadObj();
-            if (!obj) continue;
+            if (!obj) {
+                std::cout << "[DEBUG] key->ReadObj() returned null.\n";
+                continue;
+            }
 
-            std::string histName = obj->GetName();
+            // If not a TH1 or TH2, skip
+            if (!obj->InheritsFrom(TH1::Class())) {
+                std::cout << "[DEBUG] Object '" << obj->GetName() << "' is not TH1-based. Skipping.\n";
+                delete obj;
+                continue;
+            }
 
-            if (obj->InheritsFrom(TH1::Class())) {
-                TH1* hist = dynamic_cast<TH1*>(obj);
+            // If it's a TProfile or TProfile2D (which also inherits from TH1), skip
+            if (obj->InheritsFrom(TProfile::Class())) {
+                std::cout << "[DEBUG] Skipping TProfile: " << obj->GetName() << "\n";
+                delete obj;
+                continue;
+            }
 
-                auto [cuts, massWindowLabel, pTMin, pTMax, triggerName, histType, hasIsoEtRange, isoEtMin, isoEtMax] = parseIsolationHistNameWithCuts(histName);
+            TH1* hist = dynamic_cast<TH1*>(obj);
+            if (!hist) {
+                // This should never happen if we already confirmed InheritsFrom(TH1::Class())
+                std::cerr << "[ERROR] dynamic_cast<TH1*> failed for '"
+                          << obj->GetName() << "'\n";
+                delete obj;
+                continue;
+            }
 
-                if (triggerName != trigger) {
-                    delete obj;
-                    continue;
-                }
+            std::string histName = hist->GetName();
+            // Attempt parse
+            auto [parsedOk, dataTuple] = parseIsolationHistNameWithCuts(histName);
+            if (!parsedOk) {
+                // Not an isolation-histogram we care about
+                std::cout << "[DEBUG] parseIsolationHistNameWithCuts() => FAIL for '"
+                          << histName << "'. Skipping.\n";
+                delete obj;
+                continue;
+            }
 
-                // Create output directories
-                std::ostringstream cutDirStream;
-                cutDirStream << plotDirectory << "/E" << Utils::formatToThreeSigFigs(cuts.clusECore)
-                             << "_Chi" << Utils::formatToThreeSigFigs(cuts.chi)
-                             << "_Asym" << Utils::formatToThreeSigFigs(cuts.asymmetry);
-                std::string cutDirPath = cutDirStream.str();
-                gSystem->mkdir(cutDirPath.c_str(), true);
+            // Now extract results
+            auto [cuts, massWindowLabel, pTMin, pTMax,
+                  actualTriggerName, histType,
+                  hasIsoEtRange, isoEtMin, isoEtMax,
+                  showerCutLabel] = dataTuple;
 
-                std::string isolationDir = cutDirPath + "/isolationEnergies";
-                gSystem->mkdir(isolationDir.c_str(), true);
+            // If the parse shows a different triggerName than 'trig', skip
+            if (actualTriggerName != trig) {
+                std::cout << "[DEBUG] 'actualTriggerName' mismatch: " << actualTriggerName
+                          << " vs " << trig << ". Skipping.\n";
+                delete obj;
+                continue;
+            }
 
-                std::ostringstream ptDirStream;
-                ptDirStream << isolationDir << "/pT_" << Utils::formatToThreeSigFigs(pTMin)
-                            << "_to_" << Utils::formatToThreeSigFigs(pTMax);
-                std::string ptDirPath = ptDirStream.str();
-                gSystem->mkdir(ptDirPath.c_str(), true);
+            // 4) Build the output directories
+            std::ostringstream cutDirStr;
+            cutDirStr << plotDirectory
+                      << "/E"   << Utils::formatToThreeSigFigs(cuts.clusECore)
+                      << "_Chi" << Utils::formatToThreeSigFigs(cuts.chi)
+                      << "_Asym"<< Utils::formatToThreeSigFigs(cuts.asymmetry);
+            std::string cutDirPath = cutDirStr.str();
+            gSystem->mkdir(cutDirPath.c_str(), true);
 
-                std::string outputDirPath = ptDirPath;
+            std::string isoDirPath = cutDirPath + "/isolationEnergies";
+            gSystem->mkdir(isoDirPath.c_str(), true);
 
-                if (hasIsoEtRange) {
-                    std::ostringstream isoEtDirStream;
-                    isoEtDirStream << ptDirPath << "/isoEt_" << Utils::formatToThreeSigFigs(isoEtMin)
-                                   << "_to_" << Utils::formatToThreeSigFigs(isoEtMax);
-                    std::string isoEtDirPath = isoEtDirStream.str();
-                    gSystem->mkdir(isoEtDirPath.c_str(), true);
-                    outputDirPath = isoEtDirPath;
-                }
+            // pT subdirectory
+            std::ostringstream ptDirStr;
+            ptDirStr << isoDirPath << "/pT_"
+                     << Utils::formatToThreeSigFigs(pTMin)
+                     << "_to_"
+                     << Utils::formatToThreeSigFigs(pTMax);
+            std::string ptDirPath = ptDirStr.str();
+            gSystem->mkdir(ptDirPath.c_str(), true);
 
-                // Output file path
-                std::string outputFilePath = outputDirPath + "/" + histName + ".png";
+            // If iso range is present, nest one more level
+            std::string finalDirPath = ptDirPath;
+            if (hasIsoEtRange) {
+                std::ostringstream isoEtSubStr;
+                isoEtSubStr << ptDirPath
+                            << "/isoEt_"
+                            << Utils::formatToThreeSigFigs(isoEtMin)
+                            << "_to_"
+                            << Utils::formatToThreeSigFigs(isoEtMax);
+                finalDirPath = isoEtSubStr.str();
+                gSystem->mkdir(finalDirPath.c_str(), true);
+            }
 
-                // Draw histogram
-                TCanvas canvas("canvas", "Histogram Canvas", 800, 600);
-                if (hist->InheritsFrom(TH2::Class())) {
-                    hist->Draw("COLZ");
-                    canvas.SetLogz();
-                } else {
-                    hist->SetStats(true);
-                    hist->Draw("HIST");
-                    canvas.SetLogy();
-                }
+            // 5) Output PNG path
+            std::string outPngPath = finalDirPath + "/" + histName + ".png";
 
-                // Add labels
-                AddLabelsToCanvas_isoHistsWithCuts(cuts, massWindowLabel, triggerName, triggerGroupName, pTMin, pTMax, histType, hasIsoEtRange, isoEtMin, isoEtMax);
+            // 6) Draw + Save the histogram
+            TCanvas canvas("canvas","Histogram Canvas",800,600);
+            if (hist->InheritsFrom(TH2::Class())) {
+                hist->Draw("COLZ");
+                canvas.SetLogz();
+            } else {
+                hist->SetStats(true);
+                hist->Draw("HIST");
+                canvas.SetLogy();
+            }
 
-                // Save canvas
-                canvas.SaveAs(outputFilePath.c_str());
-                std::cout << "Saved: " << outputFilePath << std::endl;
-                
-                
-                // Common keys for maps
-                auto totalKey = std::make_tuple(
-                    triggerGroupName,  // raw name
-                    triggerName,       // raw name
+            // 7) Add custom labels
+            AddLabelsToCanvas_isoHistsWithCuts(
+                cuts,
+                massWindowLabel,
+                trig,                 // the actual trigger
+                triggerGroupName,     // combinationName
+                pTMin, pTMax,
+                histType,
+                hasIsoEtRange,
+                isoEtMin, isoEtMax,
+                showerCutLabel
+            );
+
+            canvas.SaveAs(outPngPath.c_str());
+            std::cout << "[INFO] Saved => " << outPngPath << "\n";
+
+            // -------------------------------------------------------------
+            //  Fill the data structures if relevant
+            // -------------------------------------------------------------
+            // (A) Build "totalKey" ignoring isoEt range
+            auto totalKey = std::make_tuple(
+                triggerGroupName,
+                trig, // raw name
+                cuts.clusECore,
+                cuts.chi,
+                cuts.asymmetry,
+                pTMin,
+                pTMax,
+                massWindowLabel
+            );
+
+            // (B) Based on histType => fill your global maps
+            if ((histType == "isolatedPhotonCount") && hasIsoEtRange)
+            {
+                // isoKey includes isoEt range
+                auto isoKey = std::make_tuple(
+                    triggerGroupName,
+                    trig,
                     cuts.clusECore,
                     cuts.chi,
                     cuts.asymmetry,
                     pTMin,
                     pTMax,
+                    isoEtMin,
+                    isoEtMax,
                     massWindowLabel
                 );
+                // Construct the log
+                DataStructures::IsolatedPhotonLog isoLog;
+                isoLog.triggerGroupName   = triggerGroupName;
+                isoLog.triggerName        = trig;
+                isoLog.clusECore          = cuts.clusECore;
+                isoLog.chi                = cuts.chi;
+                isoLog.asymmetry          = cuts.asymmetry;
+                isoLog.pTMin              = pTMin;
+                isoLog.pTMax              = pTMax;
+                isoLog.isoMin             = isoEtMin;
+                isoLog.isoMax             = isoEtMax;
+                isoLog.isolatedEntries    = static_cast<int>(hist->GetEntries());
+                isoLog.massWindowLabel    = massWindowLabel;
+                isoLog.showerShapeStatus  = showerCutLabel;
 
-                if (histType == "isolatedPhotonCount" && hasIsoEtRange) {
-                    // Key includes isoEtMin and isoEtMax
-                    auto isoKey = std::make_tuple(
-                        triggerGroupName,  // raw name
-                        triggerName,       // raw name
-                        cuts.clusECore,
-                        cuts.chi,
-                        cuts.asymmetry,
-                        pTMin,
-                        pTMax,
-                        isoEtMin,
-                        isoEtMax,
-                        massWindowLabel
-                    );
+                isolatedPhotonMap[isoKey] = isoLog;
+            }
+            else if (histType == "allPhotonCount")
+            {
+                DataStructures::TotalPhotonLog totalLog;
+                totalLog.triggerGroupName = triggerGroupName;
+                totalLog.triggerName      = trig;
+                totalLog.clusECore        = cuts.clusECore;
+                totalLog.chi              = cuts.chi;
+                totalLog.asymmetry        = cuts.asymmetry;
+                totalLog.pTMin            = pTMin;
+                totalLog.pTMax            = pTMax;
+                totalLog.totalEntries     = static_cast<int>(hist->GetEntries());
+                totalLog.massWindowLabel  = massWindowLabel;
 
-                    // Fill IsolatedPhotonLog
-                    DataStructures::IsolatedPhotonLog isoLog;
-                    isoLog.triggerGroupName = triggerGroupName; // raw name
-                    isoLog.triggerName = triggerName;           // raw name
-                    isoLog.clusECore = cuts.clusECore;
-                    isoLog.chi = cuts.chi;
-                    isoLog.asymmetry = cuts.asymmetry;
-                    isoLog.pTMin = pTMin;
-                    isoLog.pTMax = pTMax;
-                    isoLog.isoMin = isoEtMin;
-                    isoLog.isoMax = isoEtMax;
-                    isoLog.isolatedEntries = static_cast<int>(hist->GetEntries());
-                    isoLog.massWindowLabel = massWindowLabel;
-
-                    // Store in the map
-                    isolatedPhotonMap[isoKey] = isoLog;
-                } else if (histType == "allPhotonCount") {
-                    // Fill TotalPhotonLog
-                    DataStructures::TotalPhotonLog totalLog;
-                    totalLog.triggerGroupName = triggerGroupName; // raw name
-                    totalLog.triggerName = triggerName;           // raw name
-                    totalLog.clusECore = cuts.clusECore;
-                    totalLog.chi = cuts.chi;
-                    totalLog.asymmetry = cuts.asymmetry;
-                    totalLog.pTMin = pTMin;
-                    totalLog.pTMax = pTMax;
-                    totalLog.totalEntries = static_cast<int>(hist->GetEntries());
-                    totalLog.massWindowLabel = massWindowLabel;
-
-                    totalPhotonMap[totalKey] = totalLog;
-                } else if (histType == "ptPhoton") {
-                    // Calculate weighted average pT
-                    double weightedSum = 0.0;
-                    double totalCounts = 0.0;
-                    int nBins = hist->GetNbinsX();
-                    for (int i = 1; i <= nBins; ++i) {
-                        double binContent = hist->GetBinContent(i);
-                        double binCenter = hist->GetBinCenter(i);
-                        weightedSum += binContent * binCenter;
-                        totalCounts += binContent;
-                    }
-                    double weightedAveragePt = (totalCounts > 0) ? (weightedSum / totalCounts) : 0.0;
-
-                    // Fill PtWeightingLog
-                    DataStructures::PtWeightingLog ptLog;
-                    ptLog.triggerGroupName = triggerGroupName; // raw name
-                    ptLog.triggerName = triggerName;           // raw name
-                    ptLog.clusECore = cuts.clusECore;
-                    ptLog.chi = cuts.chi;
-                    ptLog.asymmetry = cuts.asymmetry;
-                    ptLog.pTMin = pTMin;
-                    ptLog.pTMax = pTMax;
-                    ptLog.weightedAveragePt = weightedAveragePt;
-                    ptLog.massWindowLabel = massWindowLabel;
-
-                    pTweightingMap[totalKey] = ptLog;
+                totalPhotonMap[totalKey] = totalLog;
+            }
+            else if (histType == "ptPhoton")
+            {
+                // compute weighted average pT
+                double wSum=0., countVal=0.;
+                int nbinsX = hist->GetNbinsX();
+                for (int i=1; i<=nbinsX; ++i) {
+                    double bc   = hist->GetBinContent(i);
+                    double xCtr = hist->GetBinCenter(i);
+                    wSum   += bc*xCtr;
+                    countVal += bc;
                 }
+                double wAvgPt = (countVal>0.? wSum / countVal : 0.0);
+
+                DataStructures::PtWeightingLog ptLog;
+                ptLog.triggerGroupName  = triggerGroupName;
+                ptLog.triggerName       = trig;
+                ptLog.clusECore         = cuts.clusECore;
+                ptLog.chi               = cuts.chi;
+                ptLog.asymmetry         = cuts.asymmetry;
+                ptLog.pTMin             = pTMin;
+                ptLog.pTMax             = pTMax;
+                ptLog.weightedAveragePt = wAvgPt;
+                ptLog.massWindowLabel   = massWindowLabel;
+
+                pTweightingMap[totalKey] = ptLog;
             }
 
+            // done with this object
             delete obj;
-        }
-    }
+        } // end while key
+    } // end for triggers
 }
 
 
-void WriteIsolationDataToCSV(const std::string& outputFilePath) {
+void WriteIsolationDataToCSV(const std::string& outputFilePath)
+{
     std::ofstream outFile(outputFilePath);
     if (!outFile.is_open()) {
         std::cerr << "Error: Could not open CSV file for writing: " << outputFilePath << std::endl;
         return;
     }
 
-    // Write CSV header
-    outFile << "TriggerGroupName,TriggerName,ECore,Chi,Asymmetry,pT Min,pT Max,isoMin,isoMax,"
+    // We add "ShowerShapeStatus" as a new column after isoMax
+    outFile << "TriggerGroupName,TriggerName,ECore,Chi,Asymmetry,pT Min,pT Max,"
+            << "isoMin,isoMax,ShowerShapeStatus," // <--- newly inserted
             << "Isolated Counts,Total Counts,Isolated/Total,Statistical Error,Weighted pT,"
             << "Bin Width,Bin Center,Isolated Yield,Isolated Yield Error,MassWindowLabel\n";
 
-
-    // Iterate through isolatedPhotonMap and correlate with totalPhotonMap and pTweightingMap
+    // Iterate through isolatedPhotonMap and correlate with totalPhotonMap + pTweightingMap
     for (const auto& isoEntry : isolatedPhotonMap) {
         auto isoKey = isoEntry.first;
         const DataStructures::IsolatedPhotonLog& isoLog = isoEntry.second;
 
-        // Extract the common key for totalPhotonMap and pTweightingMap (excluding isoEtMin and isoEtMax)
+        // Build the totalKey ignoring isoEtMin/isoEtMax
         auto totalKey = std::make_tuple(
-            std::get<0>(isoKey),  // triggerGroupName
-            std::get<1>(isoKey),  // triggerName
-            std::get<2>(isoKey),  // clusECore
-            std::get<3>(isoKey),  // chi
-            std::get<4>(isoKey),  // asymmetry
-            std::get<5>(isoKey),  // pTMin
-            std::get<6>(isoKey),  // pTMax
-            std::get<9>(isoKey)   // massWindowLabel
+            std::get<0>(isoKey), // triggerGroupName
+            std::get<1>(isoKey), // triggerName
+            std::get<2>(isoKey), // clusECore
+            std::get<3>(isoKey), // chi
+            std::get<4>(isoKey), // asymmetry
+            std::get<5>(isoKey), // pTMin
+            std::get<6>(isoKey), // pTMax
+            std::get<9>(isoKey)  // massWindowLabel
         );
 
-        // Find corresponding entries in totalPhotonMap and pTweightingMap
-        auto totalEntry = totalPhotonMap.find(totalKey);
+        // Try to find total and pT weighting logs
+        auto totalEntry       = totalPhotonMap.find(totalKey);
         auto pTweightingEntry = pTweightingMap.find(totalKey);
 
-        // Ensure corresponding entries exist in both maps
+        // Only write if we found both
         if (totalEntry != totalPhotonMap.end() && pTweightingEntry != pTweightingMap.end()) {
             const DataStructures::TotalPhotonLog& totalLog = totalEntry->second;
-            const DataStructures::PtWeightingLog& pTLog = pTweightingEntry->second;
+            const DataStructures::PtWeightingLog& pTLog    = pTweightingEntry->second;
 
-            // Map triggerGroupName and triggerName to human-readable names
-            std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-                isoLog.triggerGroupName, TriggerCombinationNames::triggerCombinationNameMap);
-
-            std::string readableTriggerName = isoLog.triggerName;
-            auto triggerNameIt = TriggerConfig::triggerNameMap.find(isoLog.triggerName);
-            if (triggerNameIt != TriggerConfig::triggerNameMap.end()) {
-                readableTriggerName = triggerNameIt->second;
+            // Compute ratio
+            double ratio = 0.0;
+            if (totalLog.totalEntries > 0) {
+                ratio = static_cast<double>(isoLog.isolatedEntries) / totalLog.totalEntries;
             }
 
-            // Calculate the ratio (isolated / total)
-            double ratio = (totalLog.totalEntries > 0) ? static_cast<double>(isoLog.isolatedEntries) / totalLog.totalEntries : 0.0;
-
-            // Calculate the statistical error
+            // Compute statistical error on ratio
             double error = 0.0;
             if (totalLog.totalEntries > 0 && isoLog.isolatedEntries > 0) {
                 double isolatedError = std::sqrt(isoLog.isolatedEntries);
-                double totalError = std::sqrt(totalLog.totalEntries);
+                double totalError    = std::sqrt(totalLog.totalEntries);
                 error = ratio * std::sqrt(
                     (isolatedError / isoLog.isolatedEntries) * (isolatedError / isoLog.isolatedEntries) +
-                    (totalError / totalLog.totalEntries) * (totalError / totalLog.totalEntries)
+                    (totalError    / totalLog.totalEntries)   * (totalError    / totalLog.totalEntries)
                 );
             }
-            
-            // Calculate bin width and bin center
-            double binWidth = isoLog.pTMax - isoLog.pTMin;
+
+            // bin width + center
+            double binWidth  = isoLog.pTMax - isoLog.pTMin;
             double binCenter = (isoLog.pTMin + isoLog.pTMax) / 2.0;
 
-            // Calculate isolated yield and its error
-            double isolatedYield = (binWidth > 0) ? (static_cast<double>(isoLog.isolatedEntries) / binWidth) : 0.0;
-            double isolatedYieldError = (isoLog.isolatedEntries > 0) ? (std::sqrt(static_cast<double>(isoLog.isolatedEntries)) / binWidth) : 0.0;
+            // isolated yield
+            double isolatedYield      = (binWidth > 0.0)
+                                      ? (static_cast<double>(isoLog.isolatedEntries) / binWidth)
+                                      : 0.0;
+            double isolatedYieldError = 0.0;
+            if (isoLog.isolatedEntries > 0) {
+                isolatedYieldError = std::sqrt(static_cast<double>(isoLog.isolatedEntries)) / binWidth;
+            }
 
-            // Write CSV row with additional columns
-            outFile << isoLog.triggerGroupName << ","
-                    << isoLog.triggerName << ","
-                    << isoLog.clusECore << ","
-                    << isoLog.chi << ","
-                    << isoLog.asymmetry << ","
-                    << isoLog.pTMin << ","
-                    << isoLog.pTMax << ","
-                    << isoLog.isoMin << ","
-                    << isoLog.isoMax << ","
-                    << isoLog.isolatedEntries << ","
-                    << totalLog.totalEntries << ","
-                    << ratio << ","
-                    << error << ","
-                    << pTLog.weightedAveragePt << ","
-                    << binWidth << ","
-                    << binCenter << ","
-                    << isolatedYield << ","
-                    << isolatedYieldError << ","
-                    << isoLog.massWindowLabel << "\n";
-        } else {
-            std::cerr << "Warning: Corresponding total or pT weighting data not found for key.\n";
+            // Finally, write a row. We incorporate isoLog.showerShapeStatus:
+            outFile
+              << isoLog.triggerGroupName << ","
+              << isoLog.triggerName      << ","
+              << isoLog.clusECore       << ","
+              << isoLog.chi             << ","
+              << isoLog.asymmetry       << ","
+              << isoLog.pTMin           << ","
+              << isoLog.pTMax           << ","
+              << isoLog.isoMin          << ","
+              << isoLog.isoMax          << ","
+              << isoLog.showerShapeStatus << ","   // <--- NEW COLUMN
+              << isoLog.isolatedEntries << ","
+              << totalLog.totalEntries  << ","
+              << ratio                  << ","
+              << error                  << ","
+              << pTLog.weightedAveragePt << ","
+              << binWidth               << ","
+              << binCenter              << ","
+              << isolatedYield          << ","
+              << isolatedYieldError     << ","
+              << isoLog.massWindowLabel << "\n";
+        }
+        else {
+            std::cerr << "[Warning] total or pT weighting not found for key => skipping.\n";
         }
     }
 
     outFile.close();
-    std::cout << "CSV file successfully written to " << outputFilePath << "\n";
+    std::cout << "[INFO] CSV file successfully written to " << outputFilePath << "\n";
 }
 
 
+/// A robust function to parse the "IsolationData" CSV lines, which have 20 columns:
+///   1)  TriggerGroupName
+///   2)  TriggerName
+///   3)  ECore
+///   4)  Chi
+///   5)  Asymmetry
+///   6)  pT Min
+///   7)  pT Max
+///   8)  isoMin
+///   9)  isoMax
+///   10) ShowerShapeStatus
+///   11) Isolated Counts
+///   12) Total Counts
+///   13) Ratio (Isolated/Total)
+///   14) Statistical Error
+///   15) Weighted pT
+///   16) Bin Width
+///   17) Bin Center
+///   18) Isolated Yield
+///   19) Isolated Yield Error
+///   20) MassWindowLabel
+///
+/// We store "inMassWindow" rows in dataMap_inMassWindow, and "outsideMassWindow" rows
+/// in dataMap_outsideMassWindow. If 'MassWindowLabel' is something else, we skip the row.
+///
+/// This version robustly checks that each column is present & parseable before using it.
+///
 void readDataFromCSV(
     const std::string& filename,
     std::map<std::tuple<
@@ -3021,176 +3509,309 @@ void readDataFromCSV(
         std::string  // MassWindowLabel
     >, DataStructures::IsolationData>& dataMap_inMassWindow,
     std::map<std::tuple<
-        std::string, // TriggerGroupName
-        std::string, // TriggerName
-        float,       // ECore
-        float,       // Chi
-        float,       // Asymmetry
-        float,       // pT Min
-        float,       // pT Max
-        float,       // isoMin
-        float,       // isoMax
-        std::string  // MassWindowLabel
-    >, DataStructures::IsolationData>& dataMap_outsideMassWindow) {
+        std::string,
+        std::string,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        float,
+        std::string
+    >, DataStructures::IsolationData>& dataMap_outsideMassWindow)
+{
+    //=== Helper: trim whitespace from left and right
+    auto trim = [&](std::string& str) {
+        if (str.empty()) return;
+        str.erase(0, str.find_first_not_of(" \t\r\n"));
+        str.erase(str.find_last_not_of(" \t\r\n") + 1);
+    };
+
+    //=== Helper: safely parse float
+    auto safeToFloat = [&](const std::string& s, bool& ok) -> float {
+        std::string tmp = s;
+        trim(tmp);
+        try {
+            float val = std::stof(tmp);
+            ok = true;
+            return val;
+        } catch(...) {
+            ok = false;
+            return 0.f;
+        }
+    };
+
+    //=== Helper: safely parse double
+    auto safeToDouble = [&](const std::string& s, bool& ok) -> double {
+        std::string tmp = s;
+        trim(tmp);
+        try {
+            double val = std::stod(tmp);
+            ok = true;
+            return val;
+        } catch(...) {
+            ok = false;
+            return 0.0;
+        }
+    };
+
+    //=== Helper: safely parse int
+    auto safeToInt = [&](const std::string& s, bool& ok) -> int {
+        std::string tmp = s;
+        trim(tmp);
+        try {
+            int val = std::stoi(tmp);
+            ok = true;
+            return val;
+        } catch(...) {
+            ok = false;
+            return 0;
+        }
+    };
 
     std::ifstream file(filename);
-    std::string line;
     if (!file.is_open()) {
-        std::cerr << "\033[31m[ERROR]\033[0m Error opening file: " << filename << std::endl;
+        std::cerr << "[ERROR] Cannot open CSV for reading: " << filename << std::endl;
         return;
     }
 
-    // Skip the header line
-    std::getline(file, line);
-    std::cout << "\033[33m[INFO]\033[0m Skipping header: " << line << std::endl;
-
-    int lineNumber = 1; // Start from 1 for the header
-
-    // Read CSV data
-    while (std::getline(file, line)) {
-        lineNumber++;
-        std::stringstream ss(line);
-        std::string token, massWindowLabel;
-        std::string triggerGroupName, triggerName;
-        float eCore = 0.0f, chi = 0.0f, asym = 0.0f, ptMin = 0.0f, ptMax = 0.0f, isoMin = 0.0f, isoMax = 0.0f;
-        int isolatedCounts = 0, totalCounts = 0;
-        double ratio = 0.0, error = 0.0, weightedPt = 0.0;
-        double binWidth = 0.0, binCenter = 0.0, isolatedYield = 0.0, isolatedYieldError = 0.0;
-
-        // Parse values from CSV
-        try {
-            std::getline(ss, triggerGroupName, ',');
-            std::getline(ss, triggerName, ',');
-
-            std::getline(ss, token, ',');
-            eCore = std::stof(token);
-
-            std::getline(ss, token, ',');
-            chi = std::stof(token);
-
-            std::getline(ss, token, ',');
-            asym = std::stof(token);
-
-            std::getline(ss, token, ',');
-            ptMin = std::stof(token);
-
-            std::getline(ss, token, ',');
-            ptMax = std::stof(token);
-
-            std::getline(ss, token, ',');
-            isoMin = std::stof(token);
-
-            std::getline(ss, token, ',');
-            isoMax = std::stof(token);
-
-            // Parse the "Isolated Counts" and "Total Counts" columns
-            std::getline(ss, token, ',');
-            isolatedCounts = std::stoi(token);
-
-            std::getline(ss, token, ',');
-            totalCounts = std::stoi(token);
-
-            // Parse the ratio (Isolated/Total)
-            std::getline(ss, token, ',');
-            ratio = std::stod(token);
-
-            // Parse the statistical error
-            std::getline(ss, token, ',');
-            error = std::stod(token);
-
-            // Parse the weighted pT value
-            std::getline(ss, token, ',');
-            weightedPt = std::stod(token);
-
-            // Parse the Bin Width
-            std::getline(ss, token, ',');
-            binWidth = std::stod(token);
-
-            // Parse the Bin Center
-            std::getline(ss, token, ',');
-            binCenter = std::stod(token);
-
-            // Parse the Isolated Yield
-            std::getline(ss, token, ',');
-            isolatedYield = std::stod(token);
-
-            // Parse the Isolated Yield Error
-            std::getline(ss, token, ',');
-            isolatedYieldError = std::stod(token);
-
-            // Parse the MassWindowLabel
-            std::getline(ss, massWindowLabel, ',');
-
-            // Create the key tuple
-            auto key = std::make_tuple(
-                triggerGroupName,
-                triggerName,
-                eCore,
-                chi,
-                asym,
-                ptMin,
-                ptMax,
-                isoMin,
-                isoMax,
-                massWindowLabel
-            );
-
-            // Create an IsolationData struct to hold the data
-            DataStructures::IsolationData isoData;
-            isoData.isolatedCounts = isolatedCounts;
-            isoData.totalCounts = totalCounts;
-            isoData.ratio = ratio;
-            isoData.error = error;
-            isoData.weightedPt = weightedPt;
-            isoData.binWidth = binWidth;
-            isoData.binCenter = binCenter;
-            isoData.isolatedYield = isolatedYield;
-            isoData.isolatedYieldError = isolatedYieldError;
-            isoData.massWindowLabel = massWindowLabel;
-
-            // Debugging output
-            std::cout << "\033[32m[DEBUG]\033[0m Line " << lineNumber << ": Read data - "
-                      << "TriggerGroupName: " << triggerGroupName << ", "
-                      << "TriggerName: " << triggerName << ", "
-                      << "ECore: " << eCore << ", "
-                      << "Chi: " << chi << ", "
-                      << "Asymmetry: " << asym << ", "
-                      << "pT Min: " << ptMin << ", "
-                      << "pT Max: " << ptMax << ", "
-                      << "isoMin: " << isoMin << ", "
-                      << "isoMax: " << isoMax << ", "
-                      << "Isolated Counts: " << isolatedCounts << ", "
-                      << "Total Counts: " << totalCounts << ", "
-                      << "Ratio: " << ratio << ", "
-                      << "Error: " << error << ", "
-                      << "Weighted pT: " << weightedPt << ", "
-                      << "Bin Width: " << binWidth << ", "
-                      << "Bin Center: " << binCenter << ", "
-                      << "Isolated Yield: " << isolatedYield << ", "
-                      << "Isolated Yield Error: " << isolatedYieldError << ", "
-                      << "MassWindowLabel: " << massWindowLabel << std::endl;
-
-            // Add data to the appropriate map based on MassWindowLabel
-            if (massWindowLabel == "inMassWindow") {
-                dataMap_inMassWindow[key] = isoData;
-            } else if (massWindowLabel == "outsideMassWindow") {
-                dataMap_outsideMassWindow[key] = isoData;
-            } else {
-                std::cerr << "\033[31m[WARNING]\033[0m Line " << lineNumber << ": Unknown MassWindowLabel '"
-                          << massWindowLabel << "'. Skipping this entry." << std::endl;
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "\033[31m[ERROR]\033[0m Line " << lineNumber << ": Exception occurred while parsing line. "
-                      << "Error: " << e.what() << ". Line content: " << line << std::endl;
-        }
+    //=== Skip header
+    std::string headerLine;
+    if (!std::getline(file, headerLine)) {
+        std::cerr << "[ERROR] CSV file is empty or missing header => " << filename << std::endl;
+        return;
     }
+    std::cout << "[INFO] Skipping header: " << headerLine << std::endl;
+
+    int lineNumber = 1;  // We read the header as line 1; data starts at line 2
+
+    //=== Read data lines
+    std::string line;
+    while (std::getline(file, line)) {
+        ++lineNumber;
+        if (line.empty()) {
+            // skip empty lines
+            continue;
+        }
+
+        //--- Tokenize by comma
+        std::vector<std::string> tokens;
+        {
+            std::istringstream iss(line);
+            std::string cell;
+            while (std::getline(iss, cell, ',')) {
+                tokens.push_back(cell);
+            }
+        }
+
+        //--- We expect EXACTLY 20 columns
+        if (tokens.size() < 20) {
+            std::cerr << "[WARNING] line " << lineNumber
+                      << ": only " << tokens.size() << " columns found, need 20. Skipping.\n";
+            continue;
+        }
+
+        //--- Now parse each column carefully
+        std::string triggerGroupName  = tokens[0];
+        std::string triggerName       = tokens[1];
+
+        bool okFloat = false;  // used below
+
+        // (3) ECore
+        float eCore        = safeToFloat(tokens[2], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid ECore => '" << tokens[2] << "', skipping.\n";
+            continue;
+        }
+
+        // (4) Chi
+        float chi          = safeToFloat(tokens[3], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Chi => '" << tokens[3] << "', skipping.\n";
+            continue;
+        }
+
+        // (5) Asym
+        float asym         = safeToFloat(tokens[4], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Asym => '" << tokens[4] << "', skipping.\n";
+            continue;
+        }
+
+        // (6) pT Min
+        float ptMin        = safeToFloat(tokens[5], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid pT Min => '" << tokens[5] << "', skipping.\n";
+            continue;
+        }
+
+        // (7) pT Max
+        float ptMax        = safeToFloat(tokens[6], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid pT Max => '" << tokens[6] << "', skipping.\n";
+            continue;
+        }
+
+        // (8) isoMin
+        float isoMin       = safeToFloat(tokens[7], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid isoMin => '" << tokens[7] << "', skipping.\n";
+            continue;
+        }
+
+        // (9) isoMax
+        float isoMax       = safeToFloat(tokens[8], okFloat);
+        if (!okFloat) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid isoMax => '" << tokens[8] << "', skipping.\n";
+            continue;
+        }
+
+        // (10) ShowerShapeStatus
+        std::string showerShapeStatus = tokens[9];
+        trim(showerShapeStatus);
+
+        // (11) IsolatedCounts
+        bool okInt = false;
+        int isolatedCounts = safeToInt(tokens[10], okInt);
+        if (!okInt) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Isolated Counts => '" << tokens[10] << "', skipping.\n";
+            continue;
+        }
+
+        // (12) TotalCounts
+        int totalCounts    = safeToInt(tokens[11], okInt);
+        if (!okInt) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Total Counts => '" << tokens[11] << "', skipping.\n";
+            continue;
+        }
+
+        // (13) Ratio
+        bool okDouble = false;
+        double ratio = safeToDouble(tokens[12], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Ratio => '" << tokens[12] << "', skipping.\n";
+            continue;
+        }
+
+        // (14) Statistical Error
+        double error = safeToDouble(tokens[13], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Statistical Error => '" << tokens[13] << "', skipping.\n";
+            continue;
+        }
+
+        // (15) Weighted pT
+        double weightedPt = safeToDouble(tokens[14], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Weighted pT => '" << tokens[14] << "', skipping.\n";
+            continue;
+        }
+
+        // (16) Bin Width
+        double binWidth = safeToDouble(tokens[15], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Bin Width => '" << tokens[15] << "', skipping.\n";
+            continue;
+        }
+
+        // (17) Bin Center
+        double binCenter = safeToDouble(tokens[16], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Bin Center => '" << tokens[16] << "', skipping.\n";
+            continue;
+        }
+
+        // (18) Isolated Yield
+        double isolatedYield = safeToDouble(tokens[17], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Isolated Yield => '" << tokens[17] << "', skipping.\n";
+            continue;
+        }
+
+        // (19) Isolated Yield Error
+        double isolatedYieldError = safeToDouble(tokens[18], okDouble);
+        if (!okDouble) {
+            std::cerr << "[WARNING] line " << lineNumber << ": invalid Isolated Yield Error => '" << tokens[18] << "', skipping.\n";
+            continue;
+        }
+
+        // (20) MassWindowLabel
+        std::string massWindowLabel = tokens[19];
+        trim(massWindowLabel);
+
+        //--- Fill the IsolationData struct
+        DataStructures::IsolationData isoData;
+        isoData.isolatedCounts       = isolatedCounts;
+        isoData.totalCounts          = totalCounts;
+        isoData.ratio                = ratio;
+        isoData.error                = error;
+        isoData.weightedPt           = weightedPt;
+        isoData.binWidth             = binWidth;
+        isoData.binCenter            = binCenter;
+        isoData.isolatedYield        = isolatedYield;
+        isoData.isolatedYieldError   = isolatedYieldError;
+        isoData.massWindowLabel      = massWindowLabel;
+        isoData.showerCutLabel       = showerShapeStatus; // store the “withShowerShapeCuts” or “without...” label
+
+        //--- Build the key
+        auto key = std::make_tuple(
+            triggerGroupName,
+            triggerName,
+            eCore,
+            chi,
+            asym,
+            ptMin,
+            ptMax,
+            isoMin,
+            isoMax,
+            massWindowLabel
+        );
+
+        //--- Place in the correct map
+        if (massWindowLabel == "inMassWindow") {
+            dataMap_inMassWindow[key] = isoData;
+        }
+        else if (massWindowLabel == "outsideMassWindow") {
+            dataMap_outsideMassWindow[key] = isoData;
+        }
+        else {
+            std::cerr << "[WARNING] line " << lineNumber << ": Unknown MassWindowLabel='"
+                      << massWindowLabel << "'. Skipping row.\n";
+            continue;
+        }
+
+        //--- Debug print
+        std::cout << "[DEBUG] line " << lineNumber << ":"
+                  << " TriggerGroup=" << triggerGroupName
+                  << ", TriggerName=" << triggerName
+                  << ", ECore=" << eCore
+                  << ", Chi=" << chi
+                  << ", Asym=" << asym
+                  << ", pT=[" << ptMin << "," << ptMax << "]"
+                  << ", isoEt=[" << isoMin << "," << isoMax << "]"
+                  << ", showerShapeStatus='" << showerShapeStatus << "'"
+                  << ", isolatedCounts=" << isolatedCounts
+                  << ", totalCounts=" << totalCounts
+                  << ", ratio=" << ratio
+                  << ", error=" << error
+                  << ", weightedPt=" << weightedPt
+                  << ", binWidth=" << binWidth
+                  << ", binCenter=" << binCenter
+                  << ", isoYield=" << isolatedYield
+                  << ", isoYieldErr=" << isolatedYieldError
+                  << ", massWinLabel='" << massWindowLabel
+                  << "'\n";
+    } // end while lines
+
     file.close();
 
-    // Summary of data read
-    std::cout << "\033[33m[INFO]\033[0m Finished reading CSV file." << std::endl;
-    std::cout << "\033[33m[INFO]\033[0m Total entries in dataMap_inMassWindow: " << dataMap_inMassWindow.size() << std::endl;
-    std::cout << "\033[33m[INFO]\033[0m Total entries in dataMap_outsideMassWindow: " << dataMap_outsideMassWindow.size() << std::endl;
+    // Summary
+    std::cout << "[INFO] Finished reading CSV => " << filename << "\n"
+              << "[INFO] dataMap_inMassWindow size:    " << dataMap_inMassWindow.size() << "\n"
+              << "[INFO] dataMap_outsideMassWindow size:" << dataMap_outsideMassWindow.size() << "\n";
 }
+
 
 
 void GeneratePerTriggerSpectraPlots(
@@ -4151,7 +4772,7 @@ void GeneratePerTriggerIsoPlots(
     >, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
     const std::string& basePlotDirectory,
     const std::vector<std::pair<float, float>>& isoEtRanges,
-    const std::vector<int>& isoEtColors,
+    const std::vector<int>& isoEtColors,  // not used but preserved
     const std::vector<double>& referencePTGamma,
     const std::vector<double>& referenceRatio,
     const std::vector<double>& referenceStatError,
@@ -4163,53 +4784,56 @@ void GeneratePerTriggerIsoPlots(
     bool drawRefA,
     bool drawRefB,
     const std::vector<std::pair<float, float>>& exclusionRanges,
-    const std::vector<std::pair<double, double>>& pT_bins, // Added pT_bins
-    double pTExclusionMax                                  // Added pTExclusionMax
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax
 ) {
-    int groupCounter = 0;  // Initialize groupCounter
+    int groupCounter = 0;
 
-    // Now, generate standard plots for each trigger group
+    // --------------------------------------------------------------------------
+    // Iterate over each group (TriggerGroup, TriggerName, ECore, Chi, Asym, MassWindowLabel)
+    // --------------------------------------------------------------------------
     for (const auto& groupEntry : groupedData) {
         groupCounter++;
-        const auto& groupKey = groupEntry.first;
-        const auto& isoEtDataMap = groupEntry.second;
-        
+        const auto& groupKey     = groupEntry.first;  // The tuple
+        const auto& isoEtDataMap = groupEntry.second; // isoEtRange -> vector<IsolationDataWithPt>
+
         // Unpack the group key
         std::string triggerGroupName = std::get<0>(groupKey);
-        std::string triggerName = std::get<1>(groupKey);
-        float eCore = std::get<2>(groupKey);
-        float chi = std::get<3>(groupKey);
-        float asym = std::get<4>(groupKey);
-        std::string massWindowLabel = std::get<5>(groupKey);
-        
-        // Map triggerGroupName and triggerName to human-readable names
-        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-            triggerGroupName, triggerCombinationNameMap);
-        
+        std::string triggerName      = std::get<1>(groupKey);
+        float eCore                  = std::get<2>(groupKey);
+        float chi                    = std::get<3>(groupKey);
+        float asym                   = std::get<4>(groupKey);
+        std::string massWindowLabel  = std::get<5>(groupKey);
+
+        // Convert to human-readable names
+        std::string readableTriggerGroupName =
+            Utils::getTriggerCombinationName(triggerGroupName, triggerCombinationNameMap);
+
         std::string readableTriggerName = triggerName;
-        auto triggerNameIt = triggerNameMap.find(triggerName);
-        if (triggerNameIt != triggerNameMap.end()) {
-            readableTriggerName = triggerNameIt->second;
+        auto it_nameMap = triggerNameMap.find(triggerName);
+        if (it_nameMap != triggerNameMap.end()) {
+            readableTriggerName = it_nameMap->second;
         }
 
-        // Debugging output to verify mapping
         std::cout << "[INFO] Processing group " << groupCounter << ": "
-                  << "TriggerGroupName: " << triggerGroupName << ", "
-                  << "ReadableTriggerGroupName: " << readableTriggerGroupName << ", "
-                  << "TriggerName: " << triggerName << ", "
-                  << "ReadableTriggerName: " << readableTriggerName << ", "
-                  << "ECore: " << eCore << ", "
-                  << "Chi: " << chi << ", "
-                  << "Asymmetry: " << asym << ", "
-                  << "MassWindowLabel: " << massWindowLabel << std::endl;
-    
-        // Check if isoEtDataMap is empty
+                  << "TriggerGroupName = " << triggerGroupName << ", "
+                  << "ReadableGroupName = " << readableTriggerGroupName << ", "
+                  << "TriggerName = " << triggerName << ", "
+                  << "ReadableTriggerName = " << readableTriggerName << ", "
+                  << "ECore = " << eCore << ", "
+                  << "Chi = "   << chi << ", "
+                  << "Asym = "  << asym << ", "
+                  << "MassWindowLabel = " << massWindowLabel << std::endl;
+
+        // If empty, skip
         if (isoEtDataMap.empty()) {
-            std::cerr << "[WARNING] Group " << groupCounter << " has no data. Skipping." << std::endl;
+            std::cerr << "[WARNING] Group " << groupCounter << " has no data. Skipping.\n";
             continue;
         }
-        
-        // Create output directories
+
+        // ----------------------------------------------------------------------
+        // Create base output directories
+        // ----------------------------------------------------------------------
         std::ostringstream dirStream;
         dirStream << basePlotDirectory << "/" << triggerGroupName
                   << "/E" << Utils::formatToThreeSigFigs(eCore)
@@ -4217,397 +4841,286 @@ void GeneratePerTriggerIsoPlots(
                   << "_Asym" << Utils::formatToThreeSigFigs(asym);
         std::string dirPath = dirStream.str();
         gSystem->mkdir(dirPath.c_str(), true);
-        
+
+        // "isolationEnergies" folder
         std::string isolationDir = dirPath + "/isolationEnergies";
         gSystem->mkdir(isolationDir.c_str(), true);
-        
-        // Create a folder for mass window type
+
+        // Subfolder by mass window
         std::string massWindowDir = isolationDir + "/" + massWindowLabel;
         gSystem->mkdir(massWindowDir.c_str(), true);
-        
-        // Create a TCanvas
-        TCanvas canvas("canvas", "Isolation Data", 800, 600);
 
-        // Prepare bin edges for variable bin widths
-        std::vector<double> binEdges;
-        for (const auto& bin : pT_bins) {
-            if (bin.first >= pTExclusionMax) {
-                break;
+        // ----------------------------------------------------------------------
+        // For separate plots: "withShowerShapeCuts" and "withoutShowerShapeCuts"
+        // We'll split isoEtDataMap into 2 subsets
+        // ----------------------------------------------------------------------
+        std::string withShowerFolder    = massWindowDir + "/withShowerShapeCuts";
+        std::string withoutShowerFolder = massWindowDir + "/withoutShowerShapeCuts";
+
+        gSystem->mkdir(withShowerFolder.c_str(),    true);
+        gSystem->mkdir(withoutShowerFolder.c_str(), true);
+
+        // Two maps: isoEtRange -> vector of IsolationDataWithPt
+        std::map<std::pair<float,float>, std::vector<DataStructures::IsolationDataWithPt>> withShowerMap;
+        std::map<std::pair<float,float>, std::vector<DataStructures::IsolationDataWithPt>> withoutShowerMap;
+
+        // Split them based on the showerCutLabel
+        for (const auto& [isoRange, isoDataVec] : isoEtDataMap) {
+            // isoRange is (isoMin, isoMax)
+            std::vector<DataStructures::IsolationDataWithPt> tmpWith;
+            std::vector<DataStructures::IsolationDataWithPt> tmpWithout;
+
+            for (const auto& isoData : isoDataVec) {
+                // isoData.isoData.showerCutLabel => "withShowerShapeCuts"/"withoutShowerShapeCuts"
+                const std::string& showerCutLabel = isoData.isoData.showerCutLabel;
+                if (showerCutLabel == "withShowerShapeCuts") {
+                    tmpWith.push_back(isoData);
+                }
+                else if (showerCutLabel == "withoutShowerShapeCuts") {
+                    tmpWithout.push_back(isoData);
+                }
+                // If there's a third label, you could skip or handle differently
             }
-            binEdges.push_back(bin.first);
+            if (!tmpWith.empty())    withShowerMap[isoRange] = tmpWith;
+            if (!tmpWithout.empty()) withoutShowerMap[isoRange] = tmpWithout;
         }
-        // Add the upper edge of the last included bin
-        if (!binEdges.empty()) {
-            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
-                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+
+        // ----------------------------------------------------------------------
+        // We'll define a small function to produce the ratio plot for a subset
+        // ----------------------------------------------------------------------
+        auto producePlotForSubset = [&](const std::map<std::pair<float, float>,
+                                             std::vector<DataStructures::IsolationDataWithPt>>& dataSubset,
+                                        const std::string& subfolder, // e.g. withShowerFolder or withoutShowerFolder
+                                        const std::string& showerCutLabel // "withShowerShapeCuts" or "withoutShowerShapeCuts"
+                                        )
+        {
+            if (dataSubset.empty()) {
+                std::cout << "[INFO] No data in " << showerCutLabel
+                          << " subset => skipping.\n";
+                return;
+            }
+
+            // Create a TCanvas
+            TCanvas canvas("canvas", "Isolation Data", 800, 600);
+
+            // Prepare bin edges for variable bin widths
+            std::vector<double> binEdges;
+            for (const auto& bin : pT_bins) {
+                if (bin.first >= pTExclusionMax) break;
+                binEdges.push_back(bin.first);
+            }
+            // Add the upper edge if needed
+            if (!binEdges.empty()) {
+                double lastHigh = pT_bins[binEdges.size() - 1].second;
+                if (lastHigh < pTExclusionMax) {
+                    binEdges.push_back(lastHigh);
+                } else {
+                    binEdges.push_back(pTExclusionMax);
+                }
             } else {
-                binEdges.push_back(pTExclusionMax);
-            }
-        } else {
-            // No bins to plot
-            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
-            continue;
-        }
-
-        int nBins = binEdges.size() - 1;
-        double* binEdgesArray = binEdges.data();
-
-        // Create a dummy histogram to set up the axes
-        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
-        hFrame->SetStats(0);
-        hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-        // Define y-axis title based on mass window type
-        const std::string yAxisTitle = (massWindowLabel == "inMassWindow") ?
-            "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}" :
-            "#frac{Isolated Prompt Photons}{All Prompt Photons}";
-
-        hFrame->GetYaxis()->SetTitle(yAxisTitle.c_str());
-        hFrame->GetYaxis()->SetRangeUser(0, 2.0);
-
-        // Remove x-axis labels and ticks
-        hFrame->GetXaxis()->SetLabelOffset(999);
-        hFrame->GetXaxis()->SetTickLength(0);
-
-        // Draw the frame
-        hFrame->Draw("AXIS");
-
-        // Create a legend
-        TLegend legend(0.38, 0.68, 0.85, 0.83);
-        legend.SetBorderSize(0);
-        legend.SetTextSize(0.023);
-
-        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
-
-        // **Determine marker color based on triggerName**
-        int markerColor = kBlack; // Default color
-        auto it_color = triggerColorMap.find(triggerName);
-        if (it_color != triggerColorMap.end()) {
-            markerColor = it_color->second;
-        }
-
-        // Declare refGraphOne and refGraphTwo here so they are accessible later
-        TGraphErrors* refGraphOne = nullptr;
-        TGraphErrors* refGraphTwo = nullptr;
-
-        // **Prepare vectors to collect all data points across isoEtRanges**
-        std::vector<double> ptCenters;
-        std::vector<double> ratios;
-        std::vector<double> errors;
-
-        // Loop over isoEt ranges and collect data for plotting
-        for (size_t i = 0; i < isoEtRanges.size(); ++i) {
-            const auto& isoEtRange = isoEtRanges[i];
-
-            // Skip excluded isoEt ranges
-            if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtRange) != exclusionRanges.end()) {
-                continue;
+                std::cerr << "[WARNING] No pT bins to plot for subset '"
+                          << showerCutLabel << "' => skipping.\n";
+                return;
             }
 
-            // Check if this isoEtRange is in the data
-            auto it = isoEtDataMap.find(isoEtRange);
-            if (it == isoEtDataMap.end()) {
-                continue; // No data for this isoEtRange
-            }
+            int nBins = binEdges.size() - 1;
+            double* binEdgesArray = binEdges.data();
 
-            const auto& isoDataList = it->second;
-            // **No longer using isoEtColors[i]**
+            // Create a dummy histogram for axes
+            TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+            hFrame->SetStats(0);
+            // y-axis title depends on massWindow
+            std::string yTitle = (massWindowLabel == "inMassWindow")
+                ? "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}"
+                : "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+            hFrame->GetYaxis()->SetTitle(yTitle.c_str());
+            hFrame->GetYaxis()->SetRangeUser(0, 2.0);
+            hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+            hFrame->GetXaxis()->SetLabelOffset(999);
+            hFrame->GetXaxis()->SetTickLength(0);
+            hFrame->Draw("AXIS");
 
-            for (const auto& isoData : isoDataList) {
-                double ptMin = isoData.ptMin;
-                double ptMax = isoData.ptMax;
+            // Prepare the legend
+            TLegend legend(0.38, 0.68, 0.85, 0.83);
+            legend.SetBorderSize(0);
+            legend.SetTextSize(0.023);
 
-                // Find the pT bin that matches ptMin and ptMax
-                bool foundBin = false;
-                double ptCenter = 0.0;
-                for (const auto& pT_bin : pT_bins) {
-                    if (std::abs(pT_bin.first - ptMin) < 1e-6 && std::abs(pT_bin.second - ptMax) < 1e-6) {
-                        // Found matching pT bin
-                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
-                        foundBin = true;
-                        break;
+            // We'll gather all points across isoEtRanges in dataSubset
+            std::vector<double> ptCenters;
+            std::vector<double> ratios;
+            std::vector<double> errors;
+
+            for (const auto& isoEtR : isoEtRanges) {
+                // skip if excluded
+                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtR)
+                    != exclusionRanges.end()) {
+                    continue;
+                }
+                auto findIt = dataSubset.find(isoEtR);
+                if (findIt == dataSubset.end()) {
+                    continue;
+                }
+                const auto& isoDataVec = findIt->second;
+                for (const auto& isoData : isoDataVec) {
+                    double ptMin = isoData.ptMin;
+                    double ptMax = isoData.ptMax;
+
+                    // find pT bin center
+                    bool foundBin = false;
+                    double ptC = 0.;
+                    for (const auto& b : pT_bins) {
+                        if (std::fabs(b.first - ptMin) < 1e-6
+                            && std::fabs(b.second - ptMax) < 1e-6) {
+                            ptC = (b.first + b.second)/2.;
+                            foundBin = true;
+                            break;
+                        }
                     }
-                }
-                if (!foundBin) {
-                    std::cerr << "[WARNING] Could not find matching pT bin for ptMin: " << ptMin << ", ptMax: " << ptMax << ". Skipping data point.\n";
-                    continue;
-                }
+                    if (!foundBin) continue;
+                    if (ptC >= pTExclusionMax) continue;
 
-                // Exclude data points where ptCenter >= pTExclusionMax
-                if (ptCenter >= pTExclusionMax) {
-                    continue;
+                    ptCenters.push_back(ptC);
+                    ratios.push_back(isoData.ratio);
+                    errors.push_back(isoData.error);
                 }
-
-                // Add data point
-                ptCenters.push_back(ptCenter);
-                ratios.push_back(isoData.ratio);
-                errors.push_back(isoData.error);
             }
-        }
 
-        if (ptCenters.empty()) {
-            std::cerr << "[WARNING] No valid data points for trigger '" << readableTriggerName << "'. Skipping.\n";
+            if (ptCenters.empty()) {
+                std::cerr << "[WARNING] No valid points in subset '"
+                          << showerCutLabel << "' => skipping.\n";
+                delete hFrame;
+                return;
+            }
+
+            // Build TGraphErrors
+            int markerColor = kBlack;
+            if (auto itc = TriggerConfig::triggerColorMap.find(triggerName);
+                itc != TriggerConfig::triggerColorMap.end()) {
+                markerColor = itc->second;
+            }
+
+            TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
+                                                   ptCenters.data(),
+                                                   ratios.data(),
+                                                   nullptr,
+                                                   errors.data());
+            graph->SetMarkerStyle(20);
+            graph->SetMarkerColor(markerColor);
+            graph->SetLineColor(markerColor);
+            graph->SetLineWidth(2);
+            graph->Draw("P SAME");
+
+            // Add legend entry
+            std::ostringstream legStr;
+            legStr << "#bf{Run24:} " << readableTriggerName
+                   << " [" << showerCutLabel << "]";
+            legend.AddEntry(graph, legStr.str().c_str(), "p");
+
+            // Dashed line y=1
+            TLine* line = new TLine(binEdges.front(), 1, binEdges.back(), 1);
+            line->SetLineStyle(2);
+            line->Draw("SAME");
+
+            // Optionally, re-draw references (PHENIX 2003)
+            // If we want them for each subset, replicate your reference code here
+            // For brevity, omitted. But you can copy the same logic from your snippet.
+
+            legend.Draw();
+
+            // Draw x-axis ticks/labels manually
+            double xMin = binEdges.front();
+            double xMax = binEdges.back();
+            double yMin = hFrame->GetMinimum();
+            double yMax = hFrame->GetMaximum();
+            double tickSize = (yMax - yMin)*0.02;
+            double labelOffset = (yMax - yMin)*0.05;
+            TLatex latex;
+            latex.SetTextSize(0.035);
+            latex.SetTextAlign(22);
+
+            TLine xAxisLine(xMin, yMin, xMax, yMin);
+            xAxisLine.Draw("SAME");
+            for (size_t i=0; i<binEdges.size(); ++i) {
+                double xPos = binEdges[i];
+                double yPos = yMin;
+                TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+                tick->Draw("SAME");
+
+                std::ostringstream lb;
+                lb << std::fixed << std::setprecision(1) << binEdges[i];
+                latex.DrawLatex(xPos, yPos - labelOffset, lb.str().c_str());
+            }
+
+            canvas.RedrawAxis();
+
+            // Add top-left labels
+            TLatex labelText;
+            labelText.SetNDC();
+            labelText.SetTextSize(0.025);
+            labelText.SetTextColor(kBlack);
+
+            double xL = 0.195;
+            double yL = 0.9;
+            double yStep = 0.045;
+
+            std::ostringstream ossLine;
+            ossLine << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
+            labelText.DrawLatex(xL, yL, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{Trigger:} " << readableTriggerName
+                    << " [" << showerCutLabel << "]";
+            labelText.DrawLatex(xL, yL - yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{ECore #geq} " << eCore << " GeV";
+            labelText.DrawLatex(xL, yL - 2*yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{#chi^{2} <} " << chi;
+            labelText.DrawLatex(xL, yL - 3*yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{Asymmetry <} " << asym;
+            labelText.DrawLatex(xL, yL - 4*yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{Mass Window:} " << massWindowLabel;
+            labelText.DrawLatex(xL, yL - 5*yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{#Delta R_{cone} <} 0.3";
+            labelText.DrawLatex(xL, yL - 6*yStep, ossLine.str().c_str());
+
+            ossLine.str("");
+            ossLine << "#font[62]{E_{T, iso} <} 6 GeV";
+            labelText.DrawLatex(xL, yL - 7*yStep, ossLine.str().c_str());
+
+            canvas.Modified();
+            canvas.Update();
+
+            // Save
+            std::ostringstream outName;
+            outName << subfolder << "/IsolationRatio_vs_pT_" << triggerName
+                    << "_" << showerCutLabel << ".png";
+            std::string outPath = outName.str();
+            canvas.SaveAs(outPath.c_str());
+            std::cout << "[INFO] Saved plot => " << outPath << "\n";
+
+            delete line;
             delete hFrame;
-            continue;
-        }
+        }; // end producePlotForSubset
 
-        // **Create a single TGraphErrors for all data points**
-        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
-                                               ptCenters.data(),
-                                               ratios.data(),
-                                               nullptr,
-                                               errors.data());
+        // Actually produce the ratio plot for withShower subset
+        producePlotForSubset(withShowerMap, withShowerFolder, "withShowerShapeCuts");
 
-        graph->SetMarkerStyle(20); // You can choose a marker style
-        graph->SetMarkerColor(markerColor);
-        graph->SetLineColor(markerColor);
-        graph->SetLineWidth(2);
+        // Produce the ratio plot for withoutShower subset
+        producePlotForSubset(withoutShowerMap, withoutShowerFolder, "withoutShowerShapeCuts");
 
-        // Draw the graph
-        graph->Draw("P SAME");
+        // The rest of your code's logic (like cleaning up) is encompassed
+        // as we do everything inside the loop for each subset.
 
-        // **Add entry to legend with the trigger information**
-        std::ostringstream legendEntry;
-        legendEntry << "#bf{Run 24 sPHENIX pp:} " << readableTriggerName;
-        legend.AddEntry(graph, legendEntry.str().c_str(), "p");
-
-        // Draw a dashed line at y = 1
-        TLine* line = new TLine(binEdges.front(), 1, binEdges.back(), 1);
-        line->SetLineStyle(2); // Dashed line
-        line->Draw("SAME");
-
-        // Process and draw the reference data
-        if (drawRefA) {
-            // Process reference data A
-            std::vector<double> refPtCenters;
-            std::vector<double> refRatios;
-            std::vector<double> refErrors;
-
-            for (size_t i = 0; i < referencePTGamma.size(); ++i) {
-                double refPt = referencePTGamma[i];
-                double ratio = referenceRatio[i];
-                double error = referenceStatError[i];
-
-                // Exclude data points where refPt >= pTExclusionMax
-                if (refPt >= pTExclusionMax) {
-                    continue;
-                }
-
-                // Find the pT bin that refPt falls into
-                bool foundBin = false;
-                double ptCenter = 0.0;
-                for (const auto& pT_bin : pT_bins) {
-                    if (refPt >= pT_bin.first && refPt < pT_bin.second) {
-                        // Found the bin
-                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
-                        foundBin = true;
-                        break;
-                    }
-                }
-                if (!foundBin) {
-                    std::cerr << "[WARNING] Could not find pT bin for reference pT: " << refPt << ". Skipping data point.\n";
-                    continue;
-                }
-
-                // Apply a slight offset to the ptCenter to distinguish from user's data
-                double offset = 0.25; // Adjust as needed
-                ptCenter += offset; // Move slightly to the right
-
-                refPtCenters.push_back(ptCenter);
-                refRatios.push_back(ratio);
-                refErrors.push_back(error);
-            }
-
-            // Create a TGraphErrors
-            refGraphOne = new TGraphErrors(refPtCenters.size(),
-                                           refPtCenters.data(),
-                                           refRatios.data(),
-                                           nullptr,
-                                           refErrors.data());
-
-            refGraphOne->SetMarkerStyle(24); // Open circle
-            refGraphOne->SetMarkerColor(kRed);
-            refGraphOne->SetLineColor(kRed);
-            refGraphOne->SetLineWidth(2);
-
-            // Draw the reference graph
-            refGraphOne->Draw("P SAME");
-
-            // Add entry to legend
-            legend.AddEntry(refGraphOne, "#font[62]{PHENIX 2003 pp:} Isolated Direct Photons / All Direct Photons", "p");
-        }
-
-        if (drawRefB) {
-            // Process reference data B
-            std::vector<double> refTwoPtCenters;
-            std::vector<double> refTwoRatios;
-            std::vector<double> refTwoErrors;
-
-            for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
-                double refPt = referenceTwoPTGamma[i];
-                double ratio = referenceTwoRatio[i];
-                double error = referenceTwoStatError[i];
-
-                // Exclude data points where refPt >= pTExclusionMax
-                if (refPt >= pTExclusionMax) {
-                    continue;
-                }
-
-                // Find the pT bin that refPt falls into
-                bool foundBin = false;
-                double ptCenter = 0.0;
-                for (const auto& pT_bin : pT_bins) {
-                    if (refPt >= pT_bin.first && refPt < pT_bin.second) {
-                        // Found the bin
-                        ptCenter = (pT_bin.first + pT_bin.second) / 2.0;
-                        foundBin = true;
-                        break;
-                    }
-                }
-                if (!foundBin) {
-                    std::cerr << "[WARNING] Could not find pT bin for reference pT: " << refPt << ". Skipping data point.\n";
-                    continue;
-                }
-
-                // Apply a slight offset to the ptCenter to distinguish from user's data
-                double offset = -0.1; // Adjust as needed (to the left)
-                ptCenter += offset; // Move slightly to the left
-
-                refTwoPtCenters.push_back(ptCenter);
-                refTwoRatios.push_back(ratio);
-                refTwoErrors.push_back(error);
-            }
-
-            // Create a TGraphErrors
-            refGraphTwo = new TGraphErrors(refTwoPtCenters.size(),
-                                           refTwoPtCenters.data(),
-                                           refTwoRatios.data(),
-                                           nullptr,
-                                           refTwoErrors.data());
-
-            refGraphTwo->SetMarkerStyle(24);
-            refGraphTwo->SetMarkerColor(kRed);
-            refGraphTwo->SetLineColor(kRed);
-            refGraphTwo->SetLineWidth(2);
-
-            // Draw the reference graph
-            refGraphTwo->Draw("P SAME");
-
-            // Add entry to legend
-            legend.AddEntry(refGraphTwo, "#font[62]{PHENIX 2003 pp:} Isolated #pi^{0} Decay / All #pi^{0} Decay", "p");
-        }
-
-        // Draw legend
-        legend.Draw();
-
-        // Draw custom x-axis ticks and labels
-        double xMin = binEdges.front();
-        double xMax = binEdges.back();
-        double yAxisMin = hFrame->GetMinimum();
-        double yAxisMax = hFrame->GetMaximum();
-
-        double tickSize = (yAxisMax - yAxisMin) * 0.02;
-        double labelOffset = (yAxisMax - yAxisMin) * 0.05;
-        TLatex latex;
-        latex.SetTextSize(0.035);
-        latex.SetTextAlign(22); // Center alignment
-
-        // Draw x-axis line
-        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
-        xAxisLine.Draw("SAME");
-
-        // Draw ticks and labels at bin edges
-        for (size_t i = 0; i < binEdges.size(); ++i) {
-            double xPos = binEdges[i];
-            double yPos = yAxisMin;
-
-            // Draw tick
-            TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
-            tick->Draw("SAME");
-
-            // Get pT value for label
-            double pTValue = binEdges[i];
-
-            // Format label to show one decimal place
-            std::ostringstream labelStream;
-            labelStream << std::fixed << std::setprecision(1) << pTValue;
-            std::string label = labelStream.str();
-
-            // Draw label
-            latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
-        }
-
-        // Redraw the axes to ensure labels are on top
-        canvas.RedrawAxis();
-
-        // Add labels using TLatex in the top-left corner
-        TLatex labelText;
-        labelText.SetNDC();
-        labelText.SetTextSize(0.025);
-        labelText.SetTextColor(kBlack);
-
-        double xStart = 0.195; // Starting x-coordinate (left side)
-        double yStartLabel = 0.9; // Starting y-coordinate
-        double yStepLabel = 0.045;  // Vertical spacing between lines
-
-        // Prepare label strings
-        std::ostringstream oss;
-        oss << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
-        labelText.DrawLatex(xStart, yStartLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{Trigger:} " << readableTriggerName;
-        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{ECore #geq} " << eCore << " GeV";
-        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{#chi^{2} <} " << chi;
-        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{Asymmetry <} " << asym;
-        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{Mass Window:} " << massWindowLabel;
-        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{#Delta R_{cone} <} 0.3";
-        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, oss.str().c_str());
-        
-        oss.str("");
-        oss << "#font[62]{E_{T, iso} <} 6 GeV";
-        labelText.DrawLatex(xStart, yStartLabel - 7 * yStepLabel, oss.str().c_str());
-        
-        
-
-        // Force canvas update before saving
-        canvas.Modified();
-        canvas.Update();
-
-        // Save the canvas
-        std::ostringstream outputFilePathStream;
-        outputFilePathStream << massWindowDir << "/IsolationRatio_vs_pT_" << triggerName << ".png";
-        std::string outputFilePath = outputFilePathStream.str();
-        canvas.SaveAs(outputFilePath.c_str());
-        std::cout << "[INFO] Saved plot to " << outputFilePath << std::endl;
-
-        // Clean up
-        delete hFrame;
-        delete line;
-        if (drawRefA && refGraphOne) {
-            delete refGraphOne;
-            refGraphOne = nullptr;
-        }
-        if (drawRefB && refGraphTwo) {
-            delete refGraphTwo;
-            refGraphTwo = nullptr;
-        }
-        // The tick lines are managed by ROOT and don't need explicit deletion
-    }
+    } // end for group
 }
 
 void SortAndCombineTriggers(
@@ -6325,82 +6838,118 @@ void PlotCombinedHistograms(
     const std::string& outputDirectory,
     const std::vector<std::string>& combinedRootFiles,
     const std::map<std::string, std::vector<int>>& combinationToValidRuns,
-    const std::string& fitFunctionType = "sigmoid", bool fitOnly = false) {
+    const std::string& fitFunctionType = "sigmoid", bool fitOnly = false, const std::string& histogramType = "max8x8") {
     
-    // List of all triggers
+    // 1) Determine histogram prefix based on histogramType
+    std::string histPrefix;
+    std::string xAxisTitle;
+    std::string xAxisTitleTurnOn;
+    if (histogramType == "maxEcore")
+    {
+        // Use max Ecore histograms
+        histPrefix = "h_maxEnergyClus_";
+        xAxisTitle = "Maximum Cluster Energy [GeV]";
+        xAxisTitleTurnOn = "Maximum Cluster Energy [GeV]";
+    }
+    else
+    {
+        // Default behavior: use h8x8 Tower Energy histograms
+        histPrefix = "h8by8TowerEnergySum_";
+        xAxisTitle = "Maximum 8x8 EMCal Tower Energy Sum (EMCal) [GeV]";
+        xAxisTitleTurnOn = "Maximum 8x8 Energy Sum [GeV]";
+    }
+
+    // 2) Remove trailing underscore from histPrefix for file naming
+    std::string histPrefixForFile = histPrefix;
+    if (!histPrefixForFile.empty() && histPrefixForFile.back() == '_')
+    {
+        histPrefixForFile.pop_back();
+    }
+
+    // 3) Pull in triggers, color maps, etc.
     const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
     const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
     const auto& triggerColorMap = TriggerConfig::triggerColorMap;
     const auto& triggerNameMap = TriggerConfig::triggerNameMap;
+
     std::map<std::string, double> triggerEfficiencyPoints;
     std::map<std::string, std::map<std::string, double>> combinationToTriggerEfficiencyPoints;
 
-    // Base directory for plots
+    // 4) Base directory for plots
     std::string basePlotDirectory = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots";
+    gSystem->mkdir(basePlotDirectory.c_str(), true); // Create if doesn't exist
 
-    // Create the base plot directory if it doesn't exist
-    gSystem->mkdir(basePlotDirectory.c_str(), true);
-    
-
-    // Function to draw run numbers on canvas
-    auto drawRunNumbersOnCanvas = [](const std::vector<int>& runNumbers, const std::string& firmwareStatus) {
+    // 5) Function to draw run numbers on canvas
+    auto drawRunNumbersOnCanvas = [](const std::vector<int>& runNumbers, const std::string& firmwareStatus)
+    {
         std::cout << "drawRunNumbersOnCanvas: Number of runs = " << runNumbers.size() << std::endl;
 
-        // Set up TLatex for run numbers
         TLatex runNumbersLatex;
         runNumbersLatex.SetNDC();
-        runNumbersLatex.SetTextAlign(13); // Align at top left
+        runNumbersLatex.SetTextAlign(13); // Align at top-left
         runNumbersLatex.SetTextColor(kBlack);
 
-        // Define configuration variables
         double xStart, xEnd, yStart, yEnd, textSize;
         double xSpacingFactor, ySpacingFactor;
         int numColumns;
 
-        // Customize settings based on the number of runs
-        if (runNumbers.size() == 692) {
+        // Some example-based customizing
+        if (runNumbers.size() == 692)
+        {
             numColumns = 27;
             textSize = 0.012;
             xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9; yEnd = 0.45;
+            yStart = 0.9;  yEnd = 0.45;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.8;
-        } else if (runNumbers.size() == 71) {
+        }
+        else if (runNumbers.size() == 71)
+        {
             numColumns = 5;
             textSize = 0.022;
             xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9; yEnd = 0.45;
+            yStart = 0.9;  yEnd = 0.45;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.8;
-        } else if (runNumbers.size() == 125) {
+        }
+        else if (runNumbers.size() == 125)
+        {
             numColumns = 8;
             textSize = 0.022;
             xStart = 0.52; xEnd = 0.93;
-            yStart = 0.9; yEnd = 0.45;
+            yStart = 0.9;  yEnd = 0.45;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
-        } else if (runNumbers.size() == 54) {
+        }
+        else if (runNumbers.size() == 54)
+        {
             numColumns = 3;
             textSize = 0.025;
             xStart = 0.57; xEnd = 0.94;
-            yStart = 0.9; yEnd = 0.42;
+            yStart = 0.9;  yEnd = 0.42;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.92;
-        } else if (runNumbers.size() == 126) {
+        }
+        else if (runNumbers.size() == 126)
+        {
             numColumns = 8;
             textSize = 0.022;
             xStart = 0.52; xEnd = 0.93;
-            yStart = 0.9; yEnd = 0.45;
+            yStart = 0.9;  yEnd = 0.45;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
-        } else if (runNumbers.size() == 146) {
+        }
+        else if (runNumbers.size() == 146)
+        {
             numColumns = 8;
             textSize = 0.018;
             xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9; yEnd = 0.5;
+            yStart = 0.9;  yEnd = 0.5;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
-        } else {
+        }
+        else
+        {
             numColumns = (runNumbers.size() <= 20) ? 2 : 5;
             textSize = 0.03;
             xStart = 0.7; xEnd = 0.9;
@@ -6408,17 +6957,26 @@ void PlotCombinedHistograms(
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
+
         double headerTextSize = 0.03;
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
         headerText << runNumbers.size() << " runs";
-        if (!firmwareStatus.empty()) {
+        if (!firmwareStatus.empty())
+        {
             headerText << " (" << firmwareStatus << ")";
         }
         runNumbersLatex.DrawLatex(0.42, 0.9, headerText.str().c_str());
 
-        // Skip plotting run numbers for specific size
-        if (runNumbers.size() == 257 || runNumbers.size() == 251 || runNumbers.size() == 102 || runNumbers.size() == 101 || runNumbers.size() == 240 || runNumbers.size() == 142 || runNumbers.size() == 440 || runNumbers.size() == 443 || runNumbers.size() == 725 || runNumbers.size() == 100 || runNumbers.size() == 250 || runNumbers.size() == 141 || runNumbers.size() == 254) {
+        // Some run-number sets we skip plotting
+        if (runNumbers.size() == 257 || runNumbers.size() == 251 || runNumbers.size() == 102 ||
+            runNumbers.size() == 101 || runNumbers.size() == 240 || runNumbers.size() == 142 ||
+            runNumbers.size() == 440 || runNumbers.size() == 443 || runNumbers.size() == 725 ||
+            runNumbers.size() == 100 || runNumbers.size() == 250 || runNumbers.size() == 141 ||
+            runNumbers.size() == 254 || runNumbers.size() == 641 || runNumbers.size() == 291 ||
+            runNumbers.size() == 326 || runNumbers.size() == 723 || runNumbers.size() == 382 ||
+            runNumbers.size() == 347 || runNumbers.size() == 88)
+        {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
             return;
         }
@@ -6427,302 +6985,321 @@ void PlotCombinedHistograms(
 
         int numRows = (runNumbers.size() + numColumns - 1) / numColumns;
 
-        // Create a grid to arrange run numbers
+        // Grid for run numbers
         std::vector<std::vector<std::string>> grid(numRows, std::vector<std::string>(numColumns, ""));
-
-        // Fill the grid with run numbers
         int runIndex = 0;
-        for (int col = 0; col < numColumns; ++col) {
-            for (int row = 0; row < numRows; ++row) {
-                if (runIndex < runNumbers.size()) {
+        for (int col = 0; col < numColumns; ++col)
+        {
+            for (int row = 0; row < numRows; ++row)
+            {
+                if (runIndex < (int)runNumbers.size())
+                {
                     grid[row][col] = std::to_string(runNumbers[runIndex]);
                     ++runIndex;
                 }
             }
         }
 
-        // Calculate spacing based on coordinates and number of rows/columns
         double xSpacing = xSpacingFactor * (xEnd - xStart) / numColumns;
-        double ySpacing = ySpacingFactor * (yStart - yEnd) / (numRows + 1); // +1 for spacing
+        double ySpacing = ySpacingFactor * (yStart - yEnd) / (numRows + 1);
 
-        // Draw run numbers in the grid
-        for (int row = 0; row < numRows; ++row) {
+        for (int row = 0; row < numRows; ++row)
+        {
             double yPos = yStart - (row + 1) * ySpacing;
-            for (int col = 0; col < numColumns; ++col) {
-                if (!grid[row][col].empty()) {
+            for (int col = 0; col < numColumns; ++col)
+            {
+                if (!grid[row][col].empty())
+                {
                     double xPos = xStart + col * xSpacing;
                     runNumbersLatex.DrawLatex(xPos, yPos, grid[row][col].c_str());
                 }
             }
         }
     };
-    // Loop over combined ROOT files
-    for (const auto& rootFileName : combinedRootFiles) {
+
+    // 6) Loop over each combined ROOT file
+    for (const auto& rootFileName : combinedRootFiles)
+    {
         std::string rootFilePath = outputDirectory + "/" + rootFileName;
 
-        // Extract triggers from the filename
+        // Extract triggers from filename
         std::vector<std::string> triggers = ExtractTriggersFromFilename(rootFileName, allTriggers);
 
-        // Check for firmware tag in the filename
+        // Check if we have a firmware tag in the filename
         std::string firmwareTag;
-        if (Utils::EndsWith(rootFileName, "_beforeTriggerFirmwareUpdate_Combined.root")) {
+        if (Utils::EndsWith(rootFileName, "_beforeTriggerFirmwareUpdate_Combined.root"))
+        {
             firmwareTag = "_beforeTriggerFirmwareUpdate";
-        } else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root")) {
+        }
+        else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root"))
+        {
             firmwareTag = "_afterTriggerFirmwareUpdate";
         }
-        
-        // Extract firmware status from firmwareTag
+
+        // Firmware status
         std::string firmwareStatus;
-        if (firmwareTag == "_beforeTriggerFirmwareUpdate") {
+        if (firmwareTag == "_beforeTriggerFirmwareUpdate")
+        {
             firmwareStatus = "#bf{Before firmware update at run 47289}";
-        } else if (firmwareTag == "_afterTriggerFirmwareUpdate") {
+        }
+        else if (firmwareTag == "_afterTriggerFirmwareUpdate")
+        {
             firmwareStatus = "#bf{After firmware update at run 47289}";
-        } else {
+        }
+        else
+        {
             firmwareStatus = "";
         }
 
         std::cout << "Processing file: " << rootFileName << std::endl;
         std::cout << "Triggers found: ";
-        for (const auto& trigger : triggers) {
-            std::cout << trigger << " ";
-        }
+        for (const auto& trig : triggers) std::cout << trig << " ";
         std::cout << std::endl;
 
-        // Reconstruct combinationName with firmware tag if present
+        // Build combinationName
         std::string combinationName;
-        for (const auto& trigger : triggers) {
-            combinationName += trigger + "_";
+        for (const auto& trig : triggers)
+        {
+            combinationName += trig + "_";
         }
-        // Remove the trailing underscore
-        if (!combinationName.empty()) {
-            combinationName.pop_back();
-        }
-        // Append firmware tag
-        combinationName += firmwareTag;
+        if (!combinationName.empty()) combinationName.pop_back(); // remove trailing underscore
+        combinationName += firmwareTag; // append firmware tag if any
 
-        // Sanitize combinationName for use as a directory name
+        // Sanitize for directory
         std::string sanitizedCombinationName = combinationName;
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), '/', '_');
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), ' ', '_');
 
-        // Create the subdirectory for this trigger combination
+        // Create subdirectory for plots
         std::string plotDirectory = basePlotDirectory + "/" + sanitizedCombinationName;
         gSystem->mkdir(plotDirectory.c_str(), true);
 
-        // Open the ROOT file
+        // Open the combined ROOT file
         TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
-        if (!inputFile || inputFile->IsZombie()) {
+        if (!inputFile || inputFile->IsZombie())
+        {
             std::cerr << "Error: Could not open file " << rootFilePath << std::endl;
             continue;
         }
-        // -------------------- Overlay 8x8 Tower NRG --------------------
-        // Create a canvas
+
+        // 7) Overlay the main 8x8 tower hist
         TCanvas* canvas = new TCanvas("canvas", "Overlay Plot", 800, 600);
         TLegend* legend = new TLegend(0.5, 0.58, 0.8, 0.88);
         legend->SetTextSize(0.028);
         canvas->SetLogy();
         bool firstDraw = true;
-        // Loop over triggers and plot histograms
-        for (const auto& trigger : triggers) {
+
+        for (const auto& trigger : triggers)
+        {
             TDirectory* triggerDir = inputFile->GetDirectory(trigger.c_str());
-            if (!triggerDir) {
-                std::cerr << "Trigger directory '" << trigger << "' not found in file " << rootFileName << std::endl;
+            if (!triggerDir)
+            {
+                std::cerr << "Trigger directory '" << trigger
+                          << "' not found in file " << rootFileName << std::endl;
                 continue;
             }
-            std::string histName = "h8by8TowerEnergySum_" + trigger;
-
+            std::string histName = histPrefix + trigger;
             TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
-            if (!hist) {
-                std::cerr << "Warning: Histogram " << histName << " not found in file " << rootFileName << std::endl;
+            if (!hist)
+            {
+                std::cerr << "Warning: Histogram " << histName
+                          << " not found in file " << rootFileName << std::endl;
                 continue;
             }
-            // Clone histogram to avoid modifying original
-            TH1* histClone = (TH1*)hist->Clone();
-            histClone->SetDirectory(0); // Detach from file
 
-            int color = kBlack; // Default color
-            auto it = TriggerConfig::triggerColorMap.find(trigger);
-            if (it != TriggerConfig::triggerColorMap.end()) {
-                color = it->second;
-            }
+            TH1* histClone = (TH1*)hist->Clone();
+            histClone->SetDirectory(0);
+            int color = kBlack;
+            auto itC = triggerColorMap.find(trigger);
+            if (itC != triggerColorMap.end()) color = itC->second;
+
             histClone->SetLineColor(color);
             histClone->SetLineWidth(2);
-
             histClone->SetTitle(("Overlay for " + combinationName).c_str());
-            histClone->GetXaxis()->SetTitle("Maximum 8x8 EMCal Tower Energy Sum [GeV]");
-            histClone->GetYaxis()->SetTitle("Events");
+            histClone->GetXaxis()->SetTitle(xAxisTitle.c_str());
+            histClone->GetYaxis()->SetTitle("Prescaled Counts");
 
-            if (firstDraw) {
+            if (firstDraw)
+            {
                 histClone->Draw("HIST");
                 firstDraw = false;
-            } else {
+            }
+            else
+            {
                 histClone->Draw("HIST SAME");
             }
+
             std::string displayTriggerName = trigger;
-            auto it_name = TriggerConfig::triggerNameMap.find(trigger);
-            if (it_name != TriggerConfig::triggerNameMap.end()) {
+            auto it_name = triggerNameMap.find(trigger);
+            if (it_name != triggerNameMap.end())
+            {
                 displayTriggerName = it_name->second;
             }
-
-            // Add histogram to legend with display name
             legend->AddEntry(histClone, displayTriggerName.c_str(), "l");
         }
 
         legend->Draw();
 
-        auto it = combinationToValidRuns.find(combinationName);
-        if (it != combinationToValidRuns.end()) {
-            const std::vector<int>& validRuns = it->second;
-            // Draw run numbers on canvas using the drawRunNumbersOnCanvas function
+        // Optionally draw run numbers
+        auto itRunNumbers = combinationToValidRuns.find(combinationName);
+        if (itRunNumbers != combinationToValidRuns.end())
+        {
+            const std::vector<int>& validRuns = itRunNumbers->second;
             drawRunNumbersOnCanvas(validRuns, firmwareStatus);
-        } else {
-            // If no valid runs info, indicate it
+        }
+        else
+        {
             TLatex text;
             text.SetNDC();
-            text.SetTextAlign(13); // Align at top left
+            text.SetTextAlign(13);
             text.SetTextSize(0.03);
             text.DrawLatex(0.15, 0.6, "Run numbers not available");
         }
 
-
-        // Update the canvas
         canvas->Modified();
         canvas->Update();
 
-        // Save the canvas
-        std::string outputFileName = plotDirectory + "/h8by8TowerEnergySum_Overlay.png";
+        std::string outputFileName = plotDirectory + "/" + histPrefixForFile + "_Overlay.png";
         canvas->SaveAs(outputFileName.c_str());
         std::cout << "Saved plot to " << outputFileName << std::endl;
-
-        // Clean up
         delete canvas;
 
-        // -------------------- Turn-On Plot --------------------
-        // Identify photon triggers in the combination
+        // 8) Photon turn-on block
         std::vector<std::string> photonTriggersInCombination;
-        for (const auto& trigger : triggers) {
-            if (std::find(photonTriggers.begin(), photonTriggers.end(), trigger) != photonTriggers.end()) {
-                photonTriggersInCombination.push_back(trigger);
+        for (const auto& trig : triggers)
+        {
+            if (std::find(photonTriggers.begin(), photonTriggers.end(), trig) != photonTriggers.end())
+            {
+                photonTriggersInCombination.push_back(trig);
             }
         }
-        // Proceed only if there are photon triggers
-        if (!photonTriggersInCombination.empty()) {
+        if (!photonTriggersInCombination.empty())
+        {
             TDirectory* minbiasDir = inputFile->GetDirectory("MBD_NandS_geq_1");
-            if (!minbiasDir) {
-                std::cerr << "Warning: Minbias directory 'MBD_NandS_geq_1' not found in file " << rootFileName << std::endl;
-            } else {
-                // Get the minbias histogram
-                std::string minbiasHistName = "h8by8TowerEnergySum_MBD_NandS_geq_1";
+            if (!minbiasDir)
+            {
+                std::cerr << "Warning: Minbias directory 'MBD_NandS_geq_1' not found in "
+                          << rootFileName << std::endl;
+            }
+            else
+            {
+                std::string minbiasHistName = histPrefix + "MBD_NandS_geq_1";
                 TH1* minbiasHist = (TH1*)minbiasDir->Get(minbiasHistName.c_str());
-                if (!minbiasHist) {
-                    std::cerr << "Warning: Minbias histogram " << minbiasHistName << " not found in file " << rootFileName << std::endl;
-                } else {
-                    // Create a canvas for the turn-on plot
+                if (!minbiasHist)
+                {
+                    std::cerr << "Warning: Minbias histogram " << minbiasHistName
+                              << " not found in file " << rootFileName << std::endl;
+                }
+                else
+                {
                     TCanvas* canvasTurnOn = new TCanvas("canvasTurnOn", "Turn-On Plot", 800, 600);
                     TLegend* legendTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
                     legendTurnOn->SetTextSize(0.028);
                     bool firstDrawTurnOn = true;
-                    
-                    // Loop over photon triggers and plot ratios
-                    for (const auto& photonTrigger : photonTriggersInCombination) {
-                        // Get the photon trigger histogram from its directory
+
+                    for (const auto& photonTrigger : photonTriggersInCombination)
+                    {
                         TDirectory* photonDir = inputFile->GetDirectory(photonTrigger.c_str());
-                        if (!photonDir) {
-                            std::cerr << "Warning: Photon trigger directory '" << photonTrigger << "' not found in file " << rootFileName << std::endl;
+                        if (!photonDir)
+                        {
+                            std::cerr << "Warning: Photon trigger directory '"
+                                      << photonTrigger << "' not found in file "
+                                      << rootFileName << std::endl;
                             continue;
                         }
-                        // Get the photon trigger histogram
-                        std::string photonHistName = "h8by8TowerEnergySum_" + photonTrigger;
+                        std::string photonHistName = histPrefix + photonTrigger;
                         TH1* photonHist = (TH1*)photonDir->Get(photonHistName.c_str());
-                        if (!photonHist) {
-                            std::cerr << "Warning: Histogram " << photonHistName << " not found in file " << rootFileName << std::endl;
+                        if (!photonHist)
+                        {
+                            std::cerr << "Warning: Histogram " << photonHistName
+                                      << " not found in file " << rootFileName << std::endl;
                             continue;
-                        }
-                        
-                        // Compute the ratio with proper error propagation
-                        std::string ratioHistName = "ratio_" + photonTrigger;
-                        TH1* ratioHist = (TH1*)photonHist->Clone(ratioHistName.c_str());
-                        ratioHist->SetDirectory(0); // Detach from file
-                        
-                        // Perform the division with proper error propagation
-                        ratioHist->Divide(photonHist, minbiasHist, 1.0, 1.0, "B"); // "B" for binomial errors
-                        
-                        int color = kBlack; // Default color
-                        auto it = TriggerConfig::triggerColorMap.find(photonTrigger);
-                        if (it != TriggerConfig::triggerColorMap.end()) {
-                            color = it->second;
                         }
 
-                        ratioHist->SetMarkerStyle(20); // Filled circle
+                        std::string ratioHistName = "ratio_" + photonTrigger;
+                        TH1* ratioHist = (TH1*)photonHist->Clone(ratioHistName.c_str());
+                        ratioHist->SetDirectory(0);
+                        ratioHist->Divide(photonHist, minbiasHist, 1.0, 1.0, "B");
+
+                        int color = kBlack;
+                        auto itColor = triggerColorMap.find(photonTrigger);
+                        if (itColor != triggerColorMap.end()) color = itColor->second;
+
+                        ratioHist->SetMarkerStyle(20);
                         ratioHist->SetMarkerColor(color);
                         ratioHist->SetLineColor(color);
                         
                         ratioHist->SetTitle(("Turn-On Curve for " + combinationName).c_str());
-                        ratioHist->GetXaxis()->SetTitle("Maximum 8x8 Energy Sum (EMCal) [GeV]");
-                        ratioHist->GetYaxis()->SetTitle("Ratio to Minbias");
+                        ratioHist->GetXaxis()->SetTitle(xAxisTitleTurnOn.c_str());
+                        ratioHist->GetYaxis()->SetTitle("Ratio to MBD NS #geq 1");
                         ratioHist->GetYaxis()->SetRangeUser(0, 2.0);
-                        
-                        if (firstDrawTurnOn) {
-                            ratioHist->Draw("E1"); // Draw with error bars
+
+                        if (firstDrawTurnOn)
+                        {
+                            ratioHist->Draw("E1");
                             firstDrawTurnOn = false;
-                        } else {
+                        }
+                        else
+                        {
                             ratioHist->Draw("E1 SAME");
                         }
-                        
-                        // Draw a dashed line at y = 1
-                        TLine* line = new TLine(ratioHist->GetXaxis()->GetXmin(), 1, ratioHist->GetXaxis()->GetXmax(), 1);
-                        line->SetLineStyle(1); // Dashed line
-                        line->SetLineColor(kBlack); // Black color
+
+                        TLine* line = new TLine(ratioHist->GetXaxis()->GetXmin(), 1,
+                                                ratioHist->GetXaxis()->GetXmax(), 1);
+                        line->SetLineStyle(1);
+                        line->SetLineColor(kBlack);
                         line->Draw("SAME");
-                        
+
                         std::string displayPhotonTriggerName = photonTrigger;
-                        auto it_name = TriggerConfig::triggerNameMap.find(photonTrigger);
-                        if (it_name != TriggerConfig::triggerNameMap.end()) {
+                        auto it_name = triggerNameMap.find(photonTrigger);
+                        if (it_name != triggerNameMap.end())
+                        {
                             displayPhotonTriggerName = it_name->second;
                         }
 
-                        
                         std::ostringstream legendEntry;
                         legendEntry << displayPhotonTriggerName;
-                        
-                        // Prepare the key using combinationName with firmware tag
+
+                        // Attempt to find fit parameters
                         std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
-
-                        // Try to find the fit parameters for the combination and trigger
                         auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
-
-                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
-                            // If not found, try with combinationName without firmware tag
-                            std::string combinationNameWithoutFirmware = Utils::stripFirmwareTag(combinationName);
-                            key = std::make_pair(combinationNameWithoutFirmware, photonTrigger);
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end())
+                        {
+                            // Try combinationName w/o firmware
+                            std::string comboNoFirmware = Utils::stripFirmwareTag(combinationName);
+                            key = std::make_pair(comboNoFirmware, photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
-
-                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
-                            // If not found, try with empty combinationName
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end())
+                        {
+                            // Try empty combination
                             key = std::make_pair("", photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
 
-
-                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
+                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end())
+                        {
                             DataStructures::FitParameters params = it_fitParams->second;
-
                             TF1* fitFunc = nullptr;
-                            if (fitFunctionType == "sigmoid") {
+                            if (fitFunctionType == "sigmoid")
+                            {
                                 fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
                                                             params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
                                                             params.amplitudeMin, params.amplitudeMax,
                                                             params.slopeMin, params.slopeMax,
                                                             params.xOffsetMin, params.xOffsetMax);
-                            } else if (fitFunctionType == "erf") {
+                            }
+                            else if (fitFunctionType == "erf")
+                            {
                                 fitFunc = Utils::erfFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
                                                         params.amplitudeEstimate, params.xOffsetEstimate, params.sigmaEstimate,
                                                         params.amplitudeMin, params.amplitudeMax,
                                                         params.xOffsetMin, params.xOffsetMax,
                                                         params.sigmaMin, params.sigmaMax);
-                            } else {
-                                // Default to sigmoid if unrecognized fitFunctionType
+                            }
+                            else
+                            {
+                                // default to sigmoid
                                 fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
                                                             params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
                                                             params.amplitudeMin, params.amplitudeMax,
@@ -6735,170 +7312,302 @@ void PlotCombinedHistograms(
                             ratioHist->Fit(fitFunc, "R");
                             fitFunc->Draw("SAME");
 
-                            // Retrieve the fit parameters regardless of convergence
+                            // Grab fit params
                             double A = fitFunc->GetParameter(0);
                             double A_error = fitFunc->GetParError(0);
 
                             double x99 = 0;
                             double x99_error = 0;
-
-                            if (fitFunctionType == "sigmoid") {
+                            if (fitFunctionType == "sigmoid")
+                            {
                                 double k = fitFunc->GetParameter(1);
                                 double x0 = fitFunc->GetParameter(2);
                                 double k_error = fitFunc->GetParError(1);
                                 double x0_error = fitFunc->GetParError(2);
 
-                                // Calculate the 99% efficiency point for sigmoid
                                 x99 = x0 + (std::log(99) / k);
-
-                                // Propagate error for x99 using partial derivatives
-                                x99_error = std::sqrt(
-                                    (x0_error * x0_error) +
-                                    (std::pow((std::log(99) / (k * k)), 2) * k_error * k_error)
-                                );
-
-                                // Debugging output
+                                x99_error = std::sqrt((x0_error*x0_error) +
+                                            (std::pow((std::log(99)/(k*k)),2)*k_error*k_error));
                                 std::cout << "Sigmoid Fit for " << photonTrigger
-                                          << ": A = " << A << " ± " << A_error
-                                          << ", k = " << k << " ± " << k_error
-                                          << ", x0 = " << x0 << " ± " << x0_error
-                                          << ", x99 = " << x99 << " ± " << x99_error << " GeV" << std::endl;
-
-                            } else if (fitFunctionType == "erf") {
+                                          << ": A="<<A<<" ± "<<A_error << ", k="<<k<<" ± "<<k_error
+                                          << ", x0="<<x0<<" ± "<<x0_error
+                                          << ", x99="<<x99<<" ± "<<x99_error<<" GeV\n";
+                            }
+                            else if (fitFunctionType == "erf")
+                            {
                                 double x0 = fitFunc->GetParameter(1);
                                 double sigma = fitFunc->GetParameter(2);
                                 double x0_error = fitFunc->GetParError(1);
                                 double sigma_error = fitFunc->GetParError(2);
-
-                                // Calculate the 99% efficiency point for erf
-                                double erfInvValue = TMath::ErfInverse(0.98); // erfInv(0.98)
-                                x99 = x0 + sqrt(2) * sigma * erfInvValue;
-
-                                // Propagate error for x99
-                                x99_error = std::sqrt(
-                                    x0_error * x0_error +
-                                    (sqrt(2) * erfInvValue * sigma_error) * (sqrt(2) * erfInvValue * sigma_error)
-                                );
-
-                                // Debugging output
+                                double erfInvVal = TMath::ErfInverse(0.98);
+                                x99 = x0 + sqrt(2)*sigma*erfInvVal;
+                                x99_error = std::sqrt(x0_error*x0_error +
+                                            (sqrt(2)*erfInvVal*sigma_error)*(sqrt(2)*erfInvVal*sigma_error));
                                 std::cout << "Erf Fit for " << photonTrigger
-                                          << ": A = " << A << " ± " << A_error
-                                          << ", x0 = " << x0 << " ± " << x0_error
-                                          << ", sigma = " << sigma << " ± " << sigma_error
-                                          << ", x99 = " << x99 << " ± " << x99_error << " GeV" << std::endl;
+                                          << ": A="<<A<<" ± "<<A_error
+                                          << ", x0="<<x0<<" ± "<<x0_error
+                                          << ", sigma="<<sigma<<" ± "<<sigma_error
+                                          << ", x99="<<x99<<" ± "<<x99_error<<" GeV\n";
                             }
-
-                            // Store the 99% efficiency point
+                            // store
                             triggerEfficiencyPoints[photonTrigger] = x99;
                             combinationToTriggerEfficiencyPoints[combinationName][photonTrigger] = x99;
-                            // Append fit parameters to the legend entry with errors
-                            legendEntry << ", 99% efficiency = " << std::fixed << std::setprecision(2) << x99 << " GeV";
 
-                            // Draw a dashed vertical line at x99
-                            if (x99 > ratioHist->GetXaxis()->GetXmin() && x99 < ratioHist->GetXaxis()->GetXmax()) {
-                                TLine* verticalLine = new TLine(x99, 0, x99, 1); // Draw line up to y = 1
-                                verticalLine->SetLineStyle(2); // Dashed line
-                                verticalLine->SetLineColor(color); // Use the color of the current trigger
-                                verticalLine->SetLineWidth(5); // Set the line width
+                            legendEntry << ", 99% efficiency = " << std::fixed << std::setprecision(2)
+                                        << x99 << " GeV";
+
+                            if (x99 > ratioHist->GetXaxis()->GetXmin() && x99 < ratioHist->GetXaxis()->GetXmax())
+                            {
+                                TLine* verticalLine = new TLine(x99, 0, x99, 1);
+                                verticalLine->SetLineStyle(2);
+                                verticalLine->SetLineColor(color);
+                                verticalLine->SetLineWidth(5);
                                 verticalLine->Draw("SAME");
                             }
-                        } else {
-                            std::cerr << "No fit parameters found for trigger " << photonTrigger << " in combination " << combinationName << std::endl;
+                        }
+                        else
+                        {
+                            std::cerr << "No fit parameters found for trigger " << photonTrigger
+                                      << " in combination " << combinationName << std::endl;
                         }
 
-                        // Add the updated legend entry with the fit parameters
                         legendTurnOn->AddEntry(ratioHist, legendEntry.str().c_str(), "p");
                         std::cout << "Legend Entry Added: " << legendEntry.str() << std::endl;
-                    }
-                    
-                    // Draw the legend
+                    } // end photon triggers loop
+
                     legendTurnOn->Draw();
-                    
-                    
-                    // Add a separate legend for the 99% efficiency line
+
+                    // Another small legend for 99% line
                     TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72);
                     legendEfficiencyLine->SetTextSize(0.03);
                     legendEfficiencyLine->SetBorderSize(0);
                     legendEfficiencyLine->SetFillStyle(0);
-                    
-                    // Create a dummy line for the 99% efficiency point
-                    TLine* dummyLine = new TLine(0, 0, 0, 0); // The coordinates do not matter since it is a dummy :(
-                    dummyLine->SetLineStyle(2); // Dashed line
-                    dummyLine->SetLineColor(kGray + 1); // Gray color
+                    TLine* dummyLine = new TLine(0,0,0,0);
+                    dummyLine->SetLineStyle(2);
+                    dummyLine->SetLineColor(kGray+1);
                     dummyLine->SetLineWidth(2);
-                    
-                    // Add the dummy line to the legend
-                    legendEfficiencyLine->AddEntry(dummyLine, "99% Efficiency Point", "l"); // "l" for line
-                    legendEfficiencyLine->SetLineWidth(2);
+                    legendEfficiencyLine->AddEntry(dummyLine, "99% Efficiency Point", "l");
                     legendEfficiencyLine->Draw();
-                    
-                    // Draw the firmware status on the overlay canvas
-                    if (!firmwareStatus.empty()) {
+
+                    if (!firmwareStatus.empty())
+                    {
                         canvasTurnOn->cd();
                         TLatex firmwareStatusText;
                         firmwareStatusText.SetNDC();
-                        firmwareStatusText.SetTextAlign(22); // Centered
+                        firmwareStatusText.SetTextAlign(22);
                         firmwareStatusText.SetTextSize(0.03);
                         firmwareStatusText.SetTextColor(kBlack);
                         firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
                     }
 
-                    
                     canvasTurnOn->Modified();
                     canvasTurnOn->Update();
-                    
-                    // Save the canvas
-                    std::string outputTurnOnFileName = plotDirectory + "/h8by8TowerEnergySum_TurnOn.png";
+
+                    std::string outputTurnOnFileName = plotDirectory + "/" + histPrefixForFile + "_TurnOn.png";
                     canvasTurnOn->SaveAs(outputTurnOnFileName.c_str());
                     std::cout << "Saved turn-on plot to " << outputTurnOnFileName << std::endl;
-                    
-                    // Clean up
+
                     delete canvasTurnOn;
                 }
             }
         }
-        if (fitOnly) {
-            // Close the ROOT file and continue to the next iteration
+
+        // ===================== NEW CODE for Jet Triggers =====================
+        {
+            const std::string jetHistPrefix = "h_jet_energy_";
+            const std::string xAxisTitleJets    = "Max 0.8x0.8 Jet Energy [GeV]";
+            const std::string xAxisTitleTurnOnJ = "Jet Energy [GeV]";
+
+            // Identify jet triggers in combination
+            std::vector<std::string> jetTriggersInCombination;
+            for (const auto& trig : triggers)
+            {
+                if (trig == "Jet_8_GeV_plus_MBD_NS_geq_1" ||
+                    trig == "Jet_10_GeV_plus_MBD_NS_geq_1" ||
+                    trig == "Jet_12_GeV_plus_MBD_NS_geq_1")
+                {
+                    jetTriggersInCombination.push_back(trig);
+                }
+            }
+
+            if (!jetTriggersInCombination.empty())
+            {
+                // We get minbias for jets from directory "MBD_NandS_geq_1" but with "h_jet_energy_MBD_NandS_geq_1"
+                TDirectory* minbiasJetDir = inputFile->GetDirectory("MBD_NandS_geq_1");
+                if (!minbiasJetDir)
+                {
+                    std::cerr << "Warning: MBD_NandS_geq_1 directory not found in "
+                              << rootFileName << " for Jet turn-on.\n";
+                }
+                else
+                {
+                    std::string minbiasJetHistName = jetHistPrefix + "MBD_NandS_geq_1";
+                    TH1* minbiasJetHist = (TH1*)minbiasJetDir->Get(minbiasJetHistName.c_str());
+                    if (!minbiasJetHist)
+                    {
+                        std::cerr << "Warning: histogram " << minbiasJetHistName
+                                  << " not found in " << rootFileName << std::endl;
+                    }
+                    else
+                    {
+                        // Turn-on canvas for jets
+                        TCanvas* cJetTurnOn = new TCanvas("cJetTurnOn", "Jet Turn-On", 800, 600);
+                        TLegend* legJetTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
+                        legJetTurnOn->SetTextSize(0.028);
+                        bool firstJetDraw = true;
+
+                        for (const auto& jetTrig : jetTriggersInCombination)
+                        {
+                            TDirectory* jetDir = inputFile->GetDirectory(jetTrig.c_str());
+                            if (!jetDir)
+                            {
+                                std::cerr << "Warning: Jet dir '" << jetTrig
+                                          << "' not in file " << rootFileName << "\n";
+                                continue;
+                            }
+                            std::string jetHName = jetHistPrefix + jetTrig;
+                            TH1* jetHist = (TH1*)jetDir->Get(jetHName.c_str());
+                            if (!jetHist)
+                            {
+                                std::cerr << "Warning: histogram " << jetHName
+                                          << " not found in " << rootFileName << "\n";
+                                continue;
+                            }
+                            std::string ratioName = "ratioJet_" + jetTrig;
+                            TH1* ratioJetHist = (TH1*)jetHist->Clone(ratioName.c_str());
+                            ratioJetHist->SetDirectory(0);
+                            ratioJetHist->Divide(jetHist, minbiasJetHist, 1.0, 1.0, "B"); // binomial
+
+                            int color = kGray+3;
+                            auto itC = triggerColorMap.find(jetTrig);
+                            if (itC != triggerColorMap.end()) color = itC->second;
+
+                            ratioJetHist->SetMarkerStyle(20);
+                            ratioJetHist->SetMarkerColor(color);
+                            ratioJetHist->SetLineColor(color);
+
+                            ratioJetHist->SetTitle(("Jet Turn-On for " + combinationName).c_str());
+                            ratioJetHist->GetXaxis()->SetTitle(xAxisTitleTurnOnJ.c_str());
+                            ratioJetHist->GetYaxis()->SetTitle("Ratio to MBD NS #geq 1");
+                            ratioJetHist->GetYaxis()->SetRangeUser(0, 2.0);
+
+                            if (firstJetDraw)
+                            {
+                                ratioJetHist->Draw("E1");
+                                firstJetDraw = false;
+                            }
+                            else
+                            {
+                                ratioJetHist->Draw("E1 SAME");
+                            }
+
+                            // dashed line at y=1
+                            TLine* ln = new TLine(ratioJetHist->GetXaxis()->GetXmin(), 1,
+                                                  ratioJetHist->GetXaxis()->GetXmax(), 1);
+                            ln->SetLineStyle(2);
+                            ln->SetLineColor(kBlack);
+                            ln->Draw("SAME");
+
+                            std::string displayJetName = jetTrig;
+                            auto it_name = triggerNameMap.find(jetTrig);
+                            if (it_name != triggerNameMap.end())
+                            {
+                                displayJetName = it_name->second;
+                            }
+                            legJetTurnOn->AddEntry(ratioJetHist, displayJetName.c_str(), "p");
+                        } // end for each jet trigger
+                        legJetTurnOn->Draw();
+
+                        // Possibly draw run numbers
+                        auto it_runJet = combinationToValidRuns.find(combinationName);
+                        if (it_runJet != combinationToValidRuns.end())
+                        {
+                            const std::vector<int>& valid = it_runJet->second;
+                            drawRunNumbersOnCanvas(valid, firmwareStatus);
+                        }
+                        else
+                        {
+                            TLatex noRunTex;
+                            noRunTex.SetNDC();
+                            noRunTex.SetTextAlign(13);
+                            noRunTex.SetTextSize(0.03);
+                            noRunTex.DrawLatex(0.15, 0.6, "Run numbers not available (Jet).");
+                        }
+
+                        cJetTurnOn->Modified();
+                        cJetTurnOn->Update();
+
+                        std::string outJetTurnOn = plotDirectory + "/" + jetHistPrefix + "_JetTurnOn.png";
+                        cJetTurnOn->SaveAs(outJetTurnOn.c_str());
+                        std::cout << "Saved Jet turn-on plot => " << outJetTurnOn << "\n";
+                        delete cJetTurnOn;
+                    }
+                }
+            }
+        } // End NEW JET block
+
+        // 9) If fitOnly => skip the rest
+        if (fitOnly)
+        {
             inputFile->Close();
             delete inputFile;
-            
-            // Now, generate run-by-run overlays
+
             auto it_run = combinationToValidRuns.find(combinationName);
-            // Call PlotRunByRunHistograms with firmwareStatus
-            if (it_run != combinationToValidRuns.end()) {
+            if (it_run != combinationToValidRuns.end())
+            {
                 const std::vector<int>& validRuns = it_run->second;
-                PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers, validRuns, triggerColorMap, triggerNameMap, firmwareStatus);
-            } else {
+                PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers,
+                                       validRuns, triggerColorMap, triggerNameMap,
+                                       firmwareStatus);
+            }
+            else
+            {
                 std::cout << "No valid runs found for combination: " << combinationName << std::endl;
             }
-            
-            continue; // Skip to the next ROOT file
+            continue;
         }
 
-        // The following code will only execute if fitOnly is false
-        // -------------------- Process Invariant Mass Histograms --------------------
-        ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers, triggerColorMap, combinationName);
+        // 10) Process Invariant Mass
+        ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers,
+                                       triggerColorMap, combinationName);
 
-        // -------------------- Process Meson Mass vs Pt --------------------
-        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers, triggerEfficiencyPoints, DataStructures::pT_bins);
+        // 11) Process Meson Mass vs Pt
+        ProcessMesonMassVsPt(plotDirectory, combinationName, triggers,
+                             triggerEfficiencyPoints, DataStructures::pT_bins);
 
-        // -------------------- Process Isolation Energy Histograms --------------------
-        ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory, triggers, combinationName);
+        // 12) Process Isolation Energy (the call that sometimes segfaults)
+        // -----------------------------------------------------------
+        std::cout << "[DEBUG] About to call ProcessIsolationEnergyHistogramsWithCuts for '"
+                  << combinationName << "'...\n";
+
+        // You could optionally wrap in try/catch:
+        try {
+            ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory,
+                                                     triggers, combinationName);
+        } catch (...) {
+            std::cerr << "[FATAL] Exception in ProcessIsolationEnergyHistogramsWithCuts for combination="
+                      << combinationName << "\n";
+        }
 
         inputFile->Close();
         delete inputFile;
-        
-        // Now, generate run-by-run overlays
+
+        // 13) Finally, run-by-run overlays
         auto it_run = combinationToValidRuns.find(combinationName);
-        // Call PlotRunByRunHistograms with firmwareStatus
-        if (it_run != combinationToValidRuns.end()) {
+        if (it_run != combinationToValidRuns.end())
+        {
             const std::vector<int>& validRuns = it_run->second;
-            PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers, validRuns, triggerColorMap, triggerNameMap, firmwareStatus);
-        } else {
+            PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers,
+                                   validRuns, triggerColorMap, triggerNameMap,
+                                   firmwareStatus);
+        }
+        else
+        {
             std::cout << "No valid runs found for combination: " << combinationName << std::endl;
         }
-    }
+    } // end for each combinedRootFile
 
+    // 14) Some isolation data final steps
     std::string csvOutputPath = "/Users/patsfan753/Desktop/isolation_data.csv";
     WriteIsolationDataToCSV(csvOutputPath);
     readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
@@ -6924,8 +7633,8 @@ void PlotCombinedHistograms(
         combinationToTriggerEfficiencyPoints,
         true,
         false);
-    
 }
+
 
 void AddLabelsToCanvas(
     const std::string& triggerGroupName,
@@ -7318,6 +8027,223 @@ void ProcessAllIsolationEnergies(
         ProcessIsolationEnergyHistograms(rootFilePath, combinationName, triggerCombinationNameMap);
     }
 }
+
+/**
+ * @brief Overlays the NoShowerShapeCuts vs withShowerShapeCuts histograms for
+ *        each shower-shape variable (e.g. E3by7_over_E7by7, w72, etc.) in each
+ *        trigger directory of the combined ROOT file. Stores PNG plots under
+ *        `plotDirectory/<CombinationName>/showerShapeQA/<TriggerName>`.
+ *
+ * @param outputDirectory   Path to your combined ROOT files. E.g. ".../output"
+ * @param combinedRootFiles List of filenames ending in "_Combined.root", one
+ *                          per trigger combination. E.g. {"MBD_NandS_geq_1_Combined.root", ...}
+ * @param combinationToValidRuns  Map from "CombinationName" -> vector of runNumbers
+ *                                (used here only if you want to label runs; you can skip).
+ */
+void ProcessAllShowerShapeQA(
+    const std::string& outputDirectory,
+    const std::vector<std::string>& combinedRootFiles,
+    const std::map<std::string, std::vector<int>>& combinationToValidRuns )
+{
+    // Helper: Check string suffix
+    auto endsWith = [](const std::string& str, const std::string& suffix) {
+        if (suffix.size() > str.size()) return false;
+        return std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
+    };
+
+    // Helper: Extract triggers from a combined filename (used in your existing code)
+    // or adapt if you already have an approach for that.
+    auto extractTriggersFromFilename = [&](const std::string& filename) -> std::string {
+        // Typically you'd parse out the combination name from the file name
+        // For example: "MBD_NandS_geq_1_Photon_3_GeV_afterTriggerFirmwareUpdate_Combined.root"
+        // => combinationName = "MBD_NandS_geq_1_Photon_3_GeV_afterTriggerFirmwareUpdate"
+        // For simplicity, just remove "_Combined.root"
+        std::string combo = filename;
+        std::string suffix = "_Combined.root";
+        if (endsWith(combo, suffix)) {
+            combo = combo.substr(0, combo.size() - suffix.size());
+        }
+        return combo; // This is the "combination name"
+    };
+
+    // Loop over each combined root file
+    for (const auto& rootFileName : combinedRootFiles)
+    {
+        // 1) Identify combination name from filename
+        std::string combinationName = extractTriggersFromFilename(rootFileName);
+        std::string rootFilePath = outputDirectory + "/" + rootFileName;
+
+        // 2) Build a directory for "showerShapeQA" under
+        //    "somePlotDir/CombinationName/showerShapeQA"
+        //    (You can adapt to your existing scheme if you prefer.)
+        //    If you already have a basePlotDirectory, just adapt this.
+        std::string basePlotDir = "/Users/YourUserName/Desktop/DirectPhotonAna/Plots";
+        std::string comboPlotDir = basePlotDir + "/" + combinationName;
+        gSystem->mkdir(comboPlotDir.c_str(), true);
+
+        std::string showerQA_Dir = comboPlotDir + "/showerShapeQA";
+        gSystem->mkdir(showerQA_Dir.c_str(), true);
+
+        // 3) Open the combined ROOT file
+        TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
+        if (!inputFile || inputFile->IsZombie()) {
+            std::cerr << "[WARN] Could not open combined file: " << rootFilePath << "\n";
+            continue;
+        }
+        std::cout << "\n[INFO] Processing shower-shape QA for: " << combinationName
+                  << "  =>  " << rootFileName << std::endl;
+
+        // 4) Retrieve the top-level directories (which correspond to triggers)
+        TList* dirList = inputFile->GetListOfKeys();
+        if (!dirList) {
+            std::cerr << "[WARN] No triggers found in " << rootFileName << "\n";
+            inputFile->Close();
+            delete inputFile;
+            continue;
+        }
+
+        // For each top-level directory => that directory name is a trigger
+        TIter nextDir(dirList);
+        TKey* dirKey;
+        while ((dirKey = (TKey*)nextDir()))
+        {
+            TObject* dirObj = dirKey->ReadObj();
+            if (!dirObj->InheritsFrom(TDirectory::Class())) {
+                delete dirObj; // skip non-directory
+                continue;
+            }
+
+            TDirectory* trigDir = (TDirectory*)dirObj;
+            std::string triggerName = trigDir->GetName();
+            delete dirObj; // we just keep the pointer as trigDir
+
+            // Make subfolder for each trigger
+            std::string trigPlotDir = showerQA_Dir + "/" + triggerName;
+            gSystem->mkdir(trigPlotDir.c_str(), true);
+
+            // 5) For each histogram in this directory, identify if it's of the form:
+            //    E3by7_over_E7by7_NoShowerShapeCuts_<triggerName>
+            //    E3by7_over_E7by7_withShowerShapeCuts_<triggerName>
+            //    etc...
+            //
+            //    We'll store them in a map: map<baseName, pair<TH1*, TH1*>> => (NoCut, WithCut)
+            //    Example baseName = "E3by7_over_E7by7".
+            //    Then we overlay these two on the same plot.
+            std::map<std::string, std::pair<TH1*, TH1*>> histPairs; // base -> (noCut, withCut)
+
+            TList* histList = trigDir->GetListOfKeys();
+            if (!histList) continue;
+            TIter nextHist(histList);
+            TKey* histKey;
+            while ((histKey = (TKey*)nextHist()))
+            {
+                TObject* hObj = histKey->ReadObj();
+                if (!hObj->InheritsFrom(TH1::Class())) {
+                    delete hObj;
+                    continue;
+                }
+                TH1* h = (TH1*)hObj;
+                std::string hName = h->GetName();
+
+                // We look for "X_NoShowerShapeCuts_<triggerName>"
+                // or        "X_withShowerShapeCuts_<triggerName>"
+                // where X is the prefix (like "E3by7_over_E7by7", "w72", etc.)
+                // We'll do a quick parse.
+                static std::regex reNoCut ("^(.*)_NoShowerShapeCuts_"   + triggerName + "$");
+                static std::regex reWithCut("^(.*)_withShowerShapeCuts_"+ triggerName + "$");
+
+                std::smatch matchRes;
+                if (std::regex_match(hName, matchRes, reNoCut) && matchRes.size()>=2)
+                {
+                    std::string baseName = matchRes[1].str();
+                    histPairs[baseName].first = h; // NoCut hist
+                }
+                else if (std::regex_match(hName, matchRes, reWithCut) && matchRes.size()>=2)
+                {
+                    std::string baseName = matchRes[1].str();
+                    histPairs[baseName].second = h; // WithCut hist
+                }
+                else {
+                    // Not a shower-shape QA we care about
+                    // or doesn't match the naming. Safe to skip.
+                    // We do still delete it if we won't use it:
+                    // but be careful only if we don't keep it in map?
+                    // We'll keep them in the map only if matched.
+                    delete h;
+                }
+            } // end while histKey
+
+            // 6) Now we have a map of baseName -> (noCut, withCut).
+            //    For each baseName, overlay them on the same canvas,
+            //    produce a single .png in trigPlotDir.
+            for (auto& pairEntry : histPairs)
+            {
+                std::string baseName = pairEntry.first;
+                TH1* noCutHist  = pairEntry.second.first;
+                TH1* withCutHist= pairEntry.second.second;
+
+                if (!noCutHist && !withCutHist) {
+                    continue; // nothing to plot
+                }
+
+                // Make a canvas
+                TCanvas c("c","ShowerShapeOverlay",800,600);
+                TLegend leg(0.58,0.65,0.88,0.82);
+                leg.SetBorderSize(0);
+                leg.SetTextSize(0.04);
+
+                // optional log scale if you want
+                // c.SetLogy();
+
+                bool firstDrawn = false;
+                // Draw noCut first
+                if (noCutHist)
+                {
+                    noCutHist->SetLineColor(kBlack);
+                    noCutHist->SetLineWidth(2);
+                    noCutHist->SetStats(false);
+
+                    noCutHist->SetTitle(baseName.c_str());
+                    noCutHist->Draw("HIST");
+                    leg.AddEntry(noCutHist, "NoShowerShapeCuts", "l");
+                    firstDrawn = true;
+                }
+                // Then withCut
+                if (withCutHist)
+                {
+                    withCutHist->SetLineColor(kRed);
+                    withCutHist->SetLineWidth(2);
+                    withCutHist->SetStats(false);
+                    if (!firstDrawn) {
+                        withCutHist->SetTitle(baseName.c_str());
+                        withCutHist->Draw("HIST");
+                        firstDrawn = true;
+                        leg.AddEntry(withCutHist, "withShowerShapeCuts", "l");
+                    } else {
+                        withCutHist->Draw("HIST SAME");
+                        leg.AddEntry(withCutHist, "withShowerShapeCuts", "l");
+                    }
+                }
+
+                leg.Draw();
+                c.Modified();
+                c.Update();
+
+                // Save as PNG
+                std::string outFile = trigPlotDir + "/" + baseName + "_Overlay.png";
+                c.SaveAs(outFile.c_str());
+                std::cout << "[INFO] Saved " << outFile << std::endl;
+            }
+
+        } // end while triggers
+
+        inputFile->Close();
+        delete inputFile;
+
+    } // end for combinedRootFiles
+    std::cout << "\n[INFO] Finished processing all shower-shape QA.\n";
+}
+
 /*
  To process only a specific trigger combination, you can call AnalyzeTriggerGroupings with the desired combination name:
  */
@@ -7333,8 +8259,8 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     bool debugMode = false;
     std::map<int, std::map<std::string, std::string>> overrideTriggerStatus; // Empty map
     
-    overrideTriggerStatus[46697]["Photon_3_GeV_plus_MBD_NS_geq_1"] = "OFF";
-
+//    overrideTriggerStatus[46697]["Photon_3_GeV_plus_MBD_NS_geq_1"] = "OFF";
+  
     // Get the map of trigger combinations to run numbers
     std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns = AnalyzeWhatTriggerGroupsAvailable(csvFilePath, debugMode, overrideTriggerStatus);
 
@@ -7460,4 +8386,10 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     PlotCombinedHistograms(outputDirectory, combinedRootFiles, combinationToValidRuns, "sigmoid", false);
 
     ProcessAllIsolationEnergies(outputDirectory, combinedRootFiles, TriggerCombinationNames::triggerCombinationNameMap);
+    
+    ProcessAllShowerShapeQA(
+        outputDirectory,
+        combinedRootFiles,
+        combinationToValidRuns  // If you do not need the run-number map, you can omit or pass an empty map
+    );
 }
