@@ -3021,7 +3021,9 @@ void ProcessIsolationEnergyHistogramsWithCuts(
     // The raw combinationName is used as the "triggerGroupName" in the final map keys
     std::string triggerGroupName = combinationName;
 
+    //--------------------------------------------------------------------------------
     // A safer parse function that returns false if the crucial capture groups are empty
+    //--------------------------------------------------------------------------------
     auto parseIsolationHistNameWithCuts = [&](const std::string& histName)
       -> std::pair<bool, std::tuple<
             DataStructures::CutValues,  // cuts (ECore, Chi, Asym)
@@ -3049,102 +3051,158 @@ void ProcessIsolationEnergyHistogramsWithCuts(
         std::string showerCutLabel;
 
         // Helper to replace "point" with '.' and parse float carefully
-        auto convert = [&](const std::string& inputStr) -> float {
+        auto convert = [&](const std::string& inputStr) -> float
+        {
             if (inputStr.empty()) return 0.f; // early return
             std::string tmp = inputStr;
             size_t pos = tmp.find("point");
-            if (pos != std::string::npos) {
+            if (pos != std::string::npos)
+            {
+                // Replace the literal substring "point" with "."
                 tmp.replace(pos, 5, ".");
             }
             try {
                 return std::stof(tmp);
-            } catch (...) {
+            }
+            catch (...)
+            {
                 return 0.f;
             }
         };
 
+        // ----------------------------------------------------------------------------
+        // This REGEX carefully parses a histogram name like:
+        //  isolatedPhotonCount_E1_Chi3_Asym0point7_outsideMassWindow_isoEt_-100to6_pT_10to12_withShowerShapeCuts_Photon_5_GeV_plus_MBD_NS_geq_1
+        //
+        // Breakdown:
+        //  (1) => histType: "isolatedPhotonCount" | "allPhotonCount" | "ptPhoton" | "h1_cluster_iso_Et" | "h2_cluster_iso_Et"
+        //  (2) => E (like "1" or "1point5")
+        //  (3) => Chi (like "3" or "4point5")
+        //  (4) => Asym (like "0point7")
+        //  (5) => optional "inMassWindow" or "outsideMassWindow"
+        //  (6) => isoEtMin (like "-100")
+        //  (7) => isoEtMax (like "6")
+        //  (8) => pTMin (like "10")
+        //  (9) => pTMax (like "12")
+        //  (10) => optional "withShowerShapeCuts" or "withoutShowerShapeCuts"
+        //  (11) => everything else at the end => triggerName
+        // ----------------------------------------------------------------------------
         static std::regex histPattern(
-          "("
-            "(h[12]_cluster_iso_Et|allPhotonCount|ptPhoton|isolatedPhotonCount)"
-          ")"                                           // (1) => histType
-          "_E(-?[0-9]+(?:point[0-9]*)?)"                // (2) => E
-          "_Chi(-?[0-9]+(?:point[0-9]*)?)"              // (3) => Chi
-          "_Asym(-?[0-9]+(?:point[0-9]*)?)"             // (4) => Asym
-          "(?:(_inMassWindow|_outsideMassWindow))?"     // (5) => massWindowLabel? optional
-          "(?:_isoEt_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?))?" // (6),(7) => isoEtMin, isoEtMax optional
-          "_pT_(-?[0-9]+(?:point[0-9]*)?)to(-?[0-9]+(?:point[0-9]*)?)"         // (8),(9) => pTMin, pTMax
-          "_(?:(withShowerShapeCuts|withoutShowerShapeCuts)_)?"                // (10) => optional showerCut
-          "([^ ]+)"                                                            // (11) => triggerName
+            R"REGEX(^(isolatedPhotonCount|allPhotonCount|ptPhoton|h[12]_cluster_iso_Et)_E([-+]?\d+(?:point\d+)?)_Chi([-+]?\d+(?:point\d+)?)_Asym([-+]?\d+(?:point\d+)?)(?:_(inMassWindow|outsideMassWindow))?(?:_isoEt_([-+]?\d+(?:point\d+)?)to([-+]?\d+(?:point\d+)?))?_pT_([-+]?\d+(?:point\d+)?)to([-+]?\d+(?:point\d+)?)(?:_(withShowerShapeCuts|withoutShowerShapeCuts)_)?([^ ]+)$)REGEX"
         );
 
+        // We'll store the entire pattern match in 'match'. We'll check if we have
+        // enough capture groups, etc.
         std::smatch match;
         if (!std::regex_match(histName, match, histPattern)) {
             return { false, {} };
         }
 
-        // At this point, we know the pattern matched, but we still must check each group.
-        // match.size() should be 12 in total, but let's do safe checks:
-        if (match.size() < 12) {
+        // The capturing groups are, in order:
+        //   0 => entire string
+        //   1 => histType
+        //   2 => E
+        //   3 => Chi
+        //   4 => Asym
+        //   5 => massWindowLabel (inMassWindow|outsideMassWindow) if present
+        //   6 => isoEtMin
+        //   7 => isoEtMax
+        //   8 => pTMin
+        //   9 => pTMax
+        //   10 => showerCutLabel (withShowerShapeCuts|withoutShowerShapeCuts)
+        //   11 => final => triggerName
+        //
+        // So match.size() should be 12 total.
+        // Let's debug-print them so we see exactly what was captured:
+        std::cout << "[PARSE DEBUG] histName: " << histName << "\n";
+        for (size_t i = 0; i < match.size(); ++i) {
+            std::cout << "    match[" << i << "]: '" << match[i].str() << "'\n";
+        }
+
+        if (match.size() < 12)
+        {
+            // Not all groups captured
+            std::cerr << "[PARSE DEBUG] Not enough captures => " << match.size() << "\n";
             return { false, {} };
         }
 
+        // If we get here, it means the regex matched and we have the required #groups
         success = true;
 
-        histType = match[1].str();
-        cuts.clusECore = convert(match[2].str());
-        cuts.chi       = convert(match[3].str());
-        cuts.asymmetry = convert(match[4].str());
-
-        // massWindowLabel might be empty or start with "_"
-        massWindowLabel = match[5].str();
-        if (!massWindowLabel.empty() && massWindowLabel[0] == '_') {
-            massWindowLabel.erase(0, 1);
-        }
+        histType         = match[1].str();
+        cuts.clusECore   = convert(match[2].str());
+        cuts.chi         = convert(match[3].str());
+        cuts.asymmetry   = convert(match[4].str());
+        massWindowLabel  = match[5].str(); // might be empty
 
         std::string isoEtMinStr = match[6].str();
         std::string isoEtMaxStr = match[7].str();
-        if (!isoEtMinStr.empty() && !isoEtMaxStr.empty()) {
+        if (!isoEtMinStr.empty() && !isoEtMaxStr.empty())
+        {
             isoEtMin    = convert(isoEtMinStr);
             isoEtMax    = convert(isoEtMaxStr);
             hasIsoRange = true;
         }
 
-        // Check pTMin, pTMax capturing group matched:
-        if (!match[8].matched || !match[9].matched) {
+        std::string pTMinStr = match[8].str();
+        std::string pTMaxStr = match[9].str();
+        if (pTMinStr.empty() || pTMaxStr.empty()) {
             // crucial pT range was not found => fail parse
+            std::cerr << "[PARSE DEBUG] Missing pT ranges => pTMinStr='"
+                      << pTMinStr << "' pTMaxStr='" << pTMaxStr << "'\n";
             return { false, {} };
         }
-        pTMin = convert(match[8].str());
-        pTMax = convert(match[9].str());
+        pTMin = convert(pTMinStr);
+        pTMax = convert(pTMaxStr);
 
-        showerCutLabel = match[10].str(); // might be empty
-        triggerName    = match[11].str();
+        showerCutLabel   = match[10].str();  // might be empty
+        triggerName      = match[11].str();  // the final piece
+
+        // More debug info
+        std::cout << "[PARSE DEBUG] => histType='"        << histType          << "'\n"
+                  << "                E="                 << cuts.clusECore    << "\n"
+                  << "                Chi="               << cuts.chi          << "\n"
+                  << "                Asym="              << cuts.asymmetry    << "\n"
+                  << "                massWindowLabel='"  << massWindowLabel   << "'\n"
+                  << "                isoEtMin="          << isoEtMin          << ", isoEtMax=" << isoEtMax
+                  << " (hasIsoRange=" << std::boolalpha  << hasIsoRange << ")\n"
+                  << "                pTMin="             << pTMin << ", pTMax=" << pTMax << "\n"
+                  << "                showerCutLabel='"   << showerCutLabel    << "'\n"
+                  << "                triggerName='"      << triggerName       << "'\n";
 
         return {
             success,
-            std::make_tuple(cuts, massWindowLabel, pTMin, pTMax,
-                            triggerName, histType,
-                            hasIsoRange, isoEtMin, isoEtMax,
-                            showerCutLabel)
+            std::make_tuple(
+                cuts,
+                massWindowLabel,
+                pTMin, pTMax,
+                triggerName,
+                histType,
+                hasIsoRange, isoEtMin, isoEtMax,
+                showerCutLabel
+            )
         };
     };
 
     // --------------------------------------------------------------------------
-    // Loop over each "trigger" directory
+    // Loop over each "trigger" directory in the file
     // --------------------------------------------------------------------------
-    for (const auto& trig : triggers) {
+    for (const auto& trig : triggers)
+    {
         std::cout << "[DEBUG] Checking directory for trigger='" << trig << "'...\n";
         TDirectory* trigDir = inputFile->GetDirectory(trig.c_str());
-        if (!trigDir) {
+        if (!trigDir)
+        {
             std::cerr << "[WARNING] Trigger directory '" << trig
                       << "' not found in file. Skipping.\n";
             continue;
         }
 
-        // Iterate over objects in that directory
+        // Iterate over all TH* objects in that directory
         TIter nextKey(trigDir->GetListOfKeys());
         TKey* key;
-        while ((key = (TKey*)nextKey())) {
+        while ((key = (TKey*)nextKey()))
+        {
             // Print info for debugging
             std::cout << "[DEBUG] Found object key->GetName()='" << key->GetName()
                       << "', class='" << key->GetClassName() << "'\n";
@@ -3156,22 +3214,27 @@ void ProcessIsolationEnergyHistogramsWithCuts(
             }
 
             // If not a TH1 or TH2, skip
-            if (!obj->InheritsFrom(TH1::Class())) {
-                std::cout << "[DEBUG] Object '" << obj->GetName() << "' is not TH1-based. Skipping.\n";
+            if (!obj->InheritsFrom(TH1::Class()))
+            {
+                std::cout << "[DEBUG] Object '" << obj->GetName()
+                          << "' is not TH1-based. Skipping.\n";
                 delete obj;
                 continue;
             }
 
             // If it's a TProfile or TProfile2D (which also inherits from TH1), skip
-            if (obj->InheritsFrom(TProfile::Class())) {
+            if (obj->InheritsFrom(TProfile::Class()))
+            {
                 std::cout << "[DEBUG] Skipping TProfile: " << obj->GetName() << "\n";
                 delete obj;
                 continue;
             }
 
+            // Now we have a TH1 or TH2
             TH1* hist = dynamic_cast<TH1*>(obj);
-            if (!hist) {
-                // This should never happen if we already confirmed InheritsFrom(TH1::Class())
+            if (!hist)
+            {
+                // This theoretically shouldn't happen if we've confirmed TH1 above
                 std::cerr << "[ERROR] dynamic_cast<TH1*> failed for '"
                           << obj->GetName() << "'\n";
                 delete obj;
@@ -3179,9 +3242,11 @@ void ProcessIsolationEnergyHistogramsWithCuts(
             }
 
             std::string histName = hist->GetName();
+
             // Attempt parse
             auto [parsedOk, dataTuple] = parseIsolationHistNameWithCuts(histName);
-            if (!parsedOk) {
+            if (!parsedOk)
+            {
                 // Not an isolation-histogram we care about
                 std::cout << "[DEBUG] parseIsolationHistNameWithCuts() => FAIL for '"
                           << histName << "'. Skipping.\n";
@@ -3190,20 +3255,27 @@ void ProcessIsolationEnergyHistogramsWithCuts(
             }
 
             // Now extract results
-            auto [cuts, massWindowLabel, pTMin, pTMax,
-                  actualTriggerName, histType,
+            auto [cuts,
+                  massWindowLabel,
+                  pTMin, pTMax,
+                  actualTriggerName,
+                  histType,
                   hasIsoEtRange, isoEtMin, isoEtMax,
                   showerCutLabel] = dataTuple;
 
             // If the parse shows a different triggerName than 'trig', skip
-            if (actualTriggerName != trig) {
-                std::cout << "[DEBUG] 'actualTriggerName' mismatch: " << actualTriggerName
-                          << " vs " << trig << ". Skipping.\n";
+            if (actualTriggerName != trig)
+            {
+                std::cout << "[DEBUG] 'actualTriggerName' mismatch: "
+                          << actualTriggerName << " vs " << trig
+                          << ". Skipping.\n";
                 delete obj;
                 continue;
             }
 
-            // 4) Build the output directories
+            // ------------------------------------------------------------------
+            // 4) Build the output directories for saving the .png
+            // ------------------------------------------------------------------
             std::ostringstream cutDirStr;
             cutDirStr << plotDirectory
                       << "/E"   << Utils::formatToThreeSigFigs(cuts.clusECore)
@@ -3226,7 +3298,8 @@ void ProcessIsolationEnergyHistogramsWithCuts(
 
             // If iso range is present, nest one more level
             std::string finalDirPath = ptDirPath;
-            if (hasIsoEtRange) {
+            if (hasIsoEtRange)
+            {
                 std::ostringstream isoEtSubStr;
                 isoEtSubStr << ptDirPath
                             << "/isoEt_"
@@ -3242,16 +3315,19 @@ void ProcessIsolationEnergyHistogramsWithCuts(
 
             // 6) Draw + Save the histogram
             TCanvas canvas("canvas","Histogram Canvas",800,600);
-            if (hist->InheritsFrom(TH2::Class())) {
+            if (hist->InheritsFrom(TH2::Class()))
+            {
                 hist->Draw("COLZ");
                 canvas.SetLogz();
-            } else {
+            }
+            else
+            {
                 hist->SetStats(true);
                 hist->Draw("HIST");
                 canvas.SetLogy();
             }
 
-            // 7) Add custom labels
+            // 7) Add custom labels (if you have a function for that)
             AddLabelsToCanvas_isoHistsWithCuts(
                 cuts,
                 massWindowLabel,
@@ -3333,31 +3409,33 @@ void ProcessIsolationEnergyHistogramsWithCuts(
             else if (histType == "ptPhoton")
             {
                 // compute weighted average pT
-                double wSum=0., countVal=0.;
+                double wSum   = 0.0;
+                double countVal = 0.0;
                 int nbinsX = hist->GetNbinsX();
-                for (int i=1; i<=nbinsX; ++i) {
+                for (int i=1; i<=nbinsX; ++i)
+                {
                     double bc   = hist->GetBinContent(i);
                     double xCtr = hist->GetBinCenter(i);
-                    wSum   += bc*xCtr;
+                    wSum    += (bc * xCtr);
                     countVal += bc;
                 }
-                double wAvgPt = (countVal>0.? wSum / countVal : 0.0);
+                double wAvgPt = (countVal>0. ? wSum / countVal : 0.0);
 
                 DataStructures::PtWeightingLog ptLog;
-                ptLog.triggerGroupName  = triggerGroupName;
-                ptLog.triggerName       = trig;
-                ptLog.clusECore         = cuts.clusECore;
-                ptLog.chi               = cuts.chi;
-                ptLog.asymmetry         = cuts.asymmetry;
-                ptLog.pTMin             = pTMin;
-                ptLog.pTMax             = pTMax;
-                ptLog.weightedAveragePt = wAvgPt;
-                ptLog.massWindowLabel   = massWindowLabel;
+                ptLog.triggerGroupName   = triggerGroupName;
+                ptLog.triggerName        = trig;
+                ptLog.clusECore          = cuts.clusECore;
+                ptLog.chi                = cuts.chi;
+                ptLog.asymmetry          = cuts.asymmetry;
+                ptLog.pTMin              = pTMin;
+                ptLog.pTMax              = pTMax;
+                ptLog.weightedAveragePt  = wAvgPt;
+                ptLog.massWindowLabel    = massWindowLabel;
 
                 pTweightingMap[totalKey] = ptLog;
             }
 
-            // done with this object
+            // done with this histogram object
             delete obj;
         } // end while key
     } // end for triggers
