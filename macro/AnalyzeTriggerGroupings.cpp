@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <utility>
 #include <set>
 #include <algorithm>
 #include <memory>
@@ -142,460 +143,453 @@ void estimateSigmoidParameters(TH1* ratioHist, double& amplitude, double& xOffse
     slope = (deltaX > 0) ? 4.0 / deltaX : 0.1;  // Default to a gentle slope if deltaX is zero
 }
 
-std::map<std::set<std::string>, DataStructures::RunInfo> AnalyzeWhatTriggerGroupsAvailable(
+
+std::map<std::set<std::string>, DataStructures::RunInfo>
+AnalyzeWhatTriggerGroupsAvailable(
     const std::string& csvFilePath,
     bool debugMode,
-    const std::map<int, std::map<std::string, std::string>>& overrideTriggerStatus) {
+    const std::map<int, std::map<std::string, std::string>>& overrideTriggerStatus)
+{
+    using namespace std;
 
+    // 1) Pull from TriggerConfig
+    const vector<string>& allTriggers    = TriggerConfig::allTriggers;
+    const vector<string>& photonTriggers = TriggerConfig::photonTriggers;
 
-    const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
-    const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
+    // Jet triggers (we skip Jet_6 if desired)
+    vector<string> jetTriggers = {
+        "Jet_8_GeV_plus_MBD_NS_geq_1",
+        "Jet_10_GeV_plus_MBD_NS_geq_1",
+        "Jet_12_GeV_plus_MBD_NS_geq_1"
+    };
 
-    // Map from trigger name to column index in the CSV
-    std::map<std::string, int> triggerToIndex;
+    // 2) Data structures
+    map<string, int> triggerToIndex;
+    map<int, set<string>> runToActiveTriggers;
 
-    // Map from run number to set of triggers that are 'ON'
-    std::map<int, std::set<std::string>> runToActiveTriggers;
-
-    // Variables for debug output
     int totalRunsProcessed = 0;
-    std::map<std::set<std::string>, std::vector<int>> initialCombinationToRuns;
-    std::vector<std::pair<std::set<std::string>, DataStructures::RunInfo>> finalCombinations;
 
-    // Open the CSV file
-    std::ifstream file(csvFilePath);
+    // For debug printing
+    map<set<string>, vector<int>> initialCombinationToRuns;
+    vector<pair<set<string>, DataStructures::RunInfo>> finalCombinations;
+
+    // 3) Open CSV + parse header
+    ifstream file(csvFilePath);
     if (!file.is_open()) {
-        std::cerr << "Failed to open file: " << csvFilePath << std::endl;
+        cerr << "Failed to open file: " << csvFilePath << endl;
         return {};
     }
 
-    // Read the header line
-    std::string line;
-    if (!std::getline(file, line)) {
-        std::cerr << "Failed to read header from CSV file." << std::endl;
+    string line;
+    if (!getline(file, line)) {
+        cerr << "Failed to read header from CSV file." << endl;
         return {};
     }
 
-    // Parse the header to get the indices of the triggers
-    std::vector<std::string> headers;
-    std::istringstream headerStream(line);
-    std::string header;
-    int colIndex = 0;
-    while (std::getline(headerStream, header, ',')) {
-        // Trim whitespace
-        header.erase(0, header.find_first_not_of(" \t\r\n"));
-        header.erase(header.find_last_not_of(" \t\r\n") + 1);
+    vector<string> headers;
+    {
+        istringstream headerStream(line);
+        string hdr;
+        int colIdx = 0;
+        while (getline(headerStream, hdr, ',')) {
+            // Trim
+            hdr.erase(0, hdr.find_first_not_of(" \t\r\n"));
+            hdr.erase(hdr.find_last_not_of(" \t\r\n") + 1);
 
-        headers.push_back(header);
-        // If header is in allTriggers or is 'runNumber', store its index
-        if (std::find(allTriggers.begin(), allTriggers.end(), header) != allTriggers.end() || header == "runNumber") {
-            triggerToIndex[header] = colIndex;
+            headers.push_back(hdr);
+
+            // If "runNumber" or recognized trigger, store col index
+            if (hdr == "runNumber" ||
+                find(allTriggers.begin(), allTriggers.end(), hdr) != allTriggers.end())
+            {
+                triggerToIndex[hdr] = colIdx;
+            }
+            colIdx++;
         }
-        colIndex++;
     }
-
     if (triggerToIndex.find("runNumber") == triggerToIndex.end()) {
-        std::cerr << "runNumber column not found in CSV header." << std::endl;
+        cerr << "runNumber column not found in CSV header." << endl;
         return {};
     }
 
-    // Read each line of the CSV
-    while (std::getline(file, line)) {
-        // Parse the line into cells
-        std::vector<std::string> cells;
-        std::istringstream lineStream(line);
-        std::string cell;
-        while (std::getline(lineStream, cell, ',')) {
-            // Trim whitespace and carriage returns
-            cell.erase(0, cell.find_first_not_of(" \t\r\n"));
-            cell.erase(cell.find_last_not_of(" \t\r\n") + 1);
-            cells.push_back(cell);
+    // 4) Read CSV lines => fill runToActiveTriggers
+    while (getline(file, line)) {
+        vector<string> cells;
+        {
+            istringstream rowStream(line);
+            string c;
+            while (getline(rowStream, c, ',')) {
+                c.erase(0, c.find_first_not_of(" \t\r\n"));
+                c.erase(c.find_last_not_of(" \t\r\n") + 1);
+                cells.push_back(c);
+            }
         }
-
-        // Ensure that the number of cells matches the number of headers
         if (cells.size() != headers.size()) {
-            std::cerr << "Mismatch between number of cells and headers in line: " << line << std::endl;
+            cerr << "Mismatch (#cells vs. #headers) in line: " << line << endl;
             continue;
         }
 
-        // Get run number
-        int runNumber = std::stoi(cells[triggerToIndex["runNumber"]]);
+        int runNumber = stoi(cells[triggerToIndex["runNumber"]]);
 
-        // Collect triggers that are 'ON' for this run
-        std::set<std::string> activeTriggers;
-        for (const auto& trigger : allTriggers) {
-            if (triggerToIndex.find(trigger) != triggerToIndex.end()) {
-                int idx = triggerToIndex[trigger];
-                std::string status = cells[idx];
-                // Trim whitespace
-                status.erase(0, status.find_first_not_of(" \t\r\n"));
-                status.erase(status.find_last_not_of(" \t\r\n") + 1);
+        set<string> activeTriggers;
+        for (const auto& trig : allTriggers) {
+            auto itIdx = triggerToIndex.find(trig);
+            if (itIdx == triggerToIndex.end()) {
+                // e.g. triggers not in CSV or ones you skip
+                continue;
+            }
+            int idx = itIdx->second;
+            string status = cells[idx];
 
-                // Check if there is an override for this run and trigger
-                auto runOverrideIt = overrideTriggerStatus.find(runNumber);
-                if (runOverrideIt != overrideTriggerStatus.end()) {
-                    const auto& triggerOverrides = runOverrideIt->second;
-                    auto triggerOverrideIt = triggerOverrides.find(trigger);
-                    if (triggerOverrideIt != triggerOverrides.end()) {
-                        // Override exists, use it
-                        status = triggerOverrideIt->second;
-                    }
-                }
+            // Trim
+            status.erase(0, status.find_first_not_of(" \t\r\n"));
+            status.erase(status.find_last_not_of(" \t\r\n") + 1);
 
-                if (status == "ON") {
-                    activeTriggers.insert(trigger);
+            // Overrides
+            auto runOver = overrideTriggerStatus.find(runNumber);
+            if (runOver != overrideTriggerStatus.end()) {
+                auto trigOver = runOver->second.find(trig);
+                if (trigOver != runOver->second.end()) {
+                    status = trigOver->second;
                 }
             }
+            if (status == "ON") {
+                activeTriggers.insert(trig);
+            }
         }
-        // Store active triggers for this run
-        runToActiveTriggers[runNumber] = activeTriggers;
+        // Use std::move to quiet the unqualified call warnings
+        runToActiveTriggers[runNumber] = std::move(activeTriggers);
     }
-
     file.close();
+    totalRunsProcessed = static_cast<int>(runToActiveTriggers.size());
 
-    // Total runs processed
-    totalRunsProcessed = runToActiveTriggers.size();
-
-    // Now generate all combinations of triggers we're interested in
-    // Generate all subsets of photonTriggers
-    std::vector<std::set<std::string>> triggerCombinations;
-    int nPhotonTriggers = photonTriggers.size();
-    int totalCombinations = 1 << nPhotonTriggers; // 2^n combinations
-
-    for (int mask = 0; mask < totalCombinations; ++mask) {
-        std::set<std::string> combination;
-        combination.insert("MBD_NandS_geq_1"); // Always include MBD_NandS_geq_1
-        for (int i = 0; i < nPhotonTriggers; ++i) {
-            if (mask & (1 << i)) {
-                combination.insert(photonTriggers[i]);
-            }
-        }
-        triggerCombinations.push_back(combination);
-    }
-
-    // Map from combination to vector of run numbers
-    std::map<std::set<std::string>, std::vector<int>> tempCombinationToRuns;
-
-    // For each run, check which combinations it satisfies
-    for (const auto& runEntry : runToActiveTriggers) {
-        int runNumber = runEntry.first;
-        const std::set<std::string>& activeTriggers = runEntry.second;
-
-        // Proceed only if 'MBD_NandS_geq_1' is 'ON'
-        if (activeTriggers.find("MBD_NandS_geq_1") != activeTriggers.end()) {
-            // For each combination, check if it is satisfied
-            for (const auto& combination : triggerCombinations) {
-                // Check if all triggers in the combination are in activeTriggers
-                bool satisfiesCombination = true;
-                for (const auto& trigger : combination) {
-                    if (activeTriggers.find(trigger) == activeTriggers.end()) {
-                        satisfiesCombination = false;
-                        break;
-                    }
-                }
-                if (satisfiesCombination) {
-                    // Add run number to this combination
-                    tempCombinationToRuns[combination].push_back(runNumber);
+    // 5) Build photon combos & jet combos, then unify
+    // 5A) photon combos
+    vector<set<string>> photonCombinations;
+    {
+        int nPhot = static_cast<int>(photonTriggers.size());
+        int totalPhotonSubsets = (1 << nPhot);
+        for (int mask = 0; mask < totalPhotonSubsets; ++mask) {
+            set<string> combo;
+            combo.insert("MBD_NandS_geq_1");
+            for (int i = 0; i < nPhot; i++) {
+                if (mask & (1 << i)) {
+                    combo.insert(photonTriggers[i]);
                 }
             }
+            // Again, use std::move to avoid the warning
+            photonCombinations.push_back(std::move(combo));
         }
     }
 
-    // Store initial combinations and their runs before splitting
+    // 5B) jet combos
+    vector<set<string>> jetCombinations;
+    {
+        int nJet = static_cast<int>(jetTriggers.size());
+        int totalJetSubsets = (1 << nJet);
+        for (int mask = 0; mask < totalJetSubsets; ++mask) {
+            set<string> combo;
+            combo.insert("MBD_NandS_geq_1");
+            for (int i = 0; i < nJet; i++) {
+                if (mask & (1 << i)) {
+                    combo.insert(jetTriggers[i]);
+                }
+            }
+            jetCombinations.push_back(std::move(combo));
+        }
+    }
+
+    // unify them
+    vector<set<string>> triggerCombinations;
+    triggerCombinations.reserve(photonCombinations.size() + jetCombinations.size());
+
+    // push photon combos
+    for (auto& pc : photonCombinations) {
+        triggerCombinations.push_back(std::move(pc));
+    }
+    // push jet combos
+    for (auto& jc : jetCombinations) {
+        triggerCombinations.push_back(std::move(jc));
+    }
+
+    // 6) For each run => which combos are satisfied
+    map<set<string>, vector<int>> tempCombinationToRuns;
+    for (auto& kv : runToActiveTriggers) {
+        int runNumber = kv.first;
+        const set<string>& active = kv.second;
+
+        // must have MBD
+        if (active.find("MBD_NandS_geq_1") == active.end()) {
+            continue;
+        }
+        for (auto& combo : triggerCombinations) {
+            bool satisfies = true;
+            for (auto& trig : combo) {
+                if (active.find(trig) == active.end()) {
+                    satisfies = false;
+                    break;
+                }
+            }
+            if (satisfies) {
+                tempCombinationToRuns[combo].push_back(runNumber);
+            }
+        }
+    }
     initialCombinationToRuns = tempCombinationToRuns;
 
-    // Now, for each combination, split runs into runsBeforeFirmwareUpdate and runsAfterFirmwareUpdate
+    // 7) Split runs by firmware
     struct TempRunInfo {
-        std::vector<int> runsBeforeFirmwareUpdate;
-        std::vector<int> runsAfterFirmwareUpdate;
+        vector<int> runsBeforeFirmwareUpdate;
+        vector<int> runsAfterFirmwareUpdate;
     };
-    std::map<std::set<std::string>, TempRunInfo> tempCombinationToRunInfo;
+    map<set<string>, TempRunInfo> tempComboRunInfo;
+    set<set<string>> combosWithRun47289;
 
-    // Collect combinations that include run 47289
-    std::set<std::set<std::string>> combinationsWithRun47289;
-
-    for (const auto& entry : tempCombinationToRuns) {
-        const std::set<std::string>& combination = entry.first;
-        const std::vector<int>& runs = entry.second;
+    for (auto& kv2 : tempCombinationToRuns) {
+        const auto& combo = kv2.first;
+        const auto& runs  = kv2.second;
 
         TempRunInfo runInfo;
-        bool hasRun47289 = false;
-        for (int runNumber : runs) {
-            if (runNumber == 47289) {
-                hasRun47289 = true;
+        bool has47289 = false;
+        for (int rn : runs) {
+            if (rn == 47289) {
+                has47289 = true;
             }
-            if (runNumber < 47289) {
-                runInfo.runsBeforeFirmwareUpdate.push_back(runNumber);
+            if (rn < 47289) {
+                runInfo.runsBeforeFirmwareUpdate.push_back(rn);
             } else {
-                runInfo.runsAfterFirmwareUpdate.push_back(runNumber);
+                runInfo.runsAfterFirmwareUpdate.push_back(rn);
             }
         }
-
-        if (hasRun47289) {
-            combinationsWithRun47289.insert(combination);
+        if (has47289) {
+            combosWithRun47289.insert(combo);
         }
-
-        tempCombinationToRunInfo[combination] = runInfo;
+        tempComboRunInfo[combo] = std::move(runInfo);
     }
 
-    // Now, process runsBeforeFirmwareUpdate and runsAfterFirmwareUpdate separately
+    // 8) Group combos by identical run-lists => pick largest combos
+    map<vector<int>, vector<set<string>>> runListToCombinationsBeforeFW;
+    map<vector<int>, vector<set<string>>> runListToCombinationsAfterFW;
 
-    // For runsBeforeFirmwareUpdate
-    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinationsBeforeFirmwareUpdate;
+    for (auto& kv3 : tempComboRunInfo) {
+        const auto& combo   = kv3.first;
+        const auto& runInfo = kv3.second;
 
-    for (const auto& entry : tempCombinationToRunInfo) {
-        const std::set<std::string>& combination = entry.first;
-        const std::vector<int>& runList = entry.second.runsBeforeFirmwareUpdate;
-        if (runList.empty()) continue;
-        std::vector<int> sortedRunList = runList;
-        std::sort(sortedRunList.begin(), sortedRunList.end());
-
-        runListToCombinationsBeforeFirmwareUpdate[sortedRunList].push_back(combination);
+        if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
+            vector<int> tmp = runInfo.runsBeforeFirmwareUpdate;
+            sort(tmp.begin(), tmp.end());
+            runListToCombinationsBeforeFW[tmp].push_back(combo);
+        }
+        if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+            vector<int> tmp = runInfo.runsAfterFirmwareUpdate;
+            sort(tmp.begin(), tmp.end());
+            runListToCombinationsAfterFW[tmp].push_back(combo);
+        }
     }
 
-    // For runsAfterFirmwareUpdate
-    std::map<std::vector<int>, std::vector<std::set<std::string>>> runListToCombinationsAfterFirmwareUpdate;
+    map<set<string>, vector<int>> filteredCombinationToRunsBeforeFirmwareUpdate;
+    {
+        for (auto& kvB : runListToCombinationsBeforeFW) {
+            const auto& runList = kvB.first;
+            const auto& combos  = kvB.second;
 
-    for (const auto& entry : tempCombinationToRunInfo) {
-        const std::set<std::string>& combination = entry.first;
-        const std::vector<int>& runList = entry.second.runsAfterFirmwareUpdate;
-        if (runList.empty()) continue;
-        std::vector<int> sortedRunList = runList;
-        std::sort(sortedRunList.begin(), sortedRunList.end());
-
-        runListToCombinationsAfterFirmwareUpdate[sortedRunList].push_back(combination);
-    }
-
-    // For each run list, find the largest combination(s) and remove subsets
-
-    // Process before firmware update
-    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRunsBeforeFirmwareUpdate;
-
-    for (const auto& entry : runListToCombinationsBeforeFirmwareUpdate) {
-        const std::vector<int>& runList = entry.first;
-        const std::vector<std::set<std::string>>& combinations = entry.second;
-
-        // Find the combination(s) with the maximum size (most triggers)
-        size_t maxSize = 0;
-        for (const auto& combo : combinations) {
-            if (combo.size() > maxSize) {
-                maxSize = combo.size();
+            size_t maxSize = 0;
+            for (auto& c : combos) {
+                if (c.size() > maxSize) {
+                    maxSize = c.size();
+                }
             }
-        }
-
-        // Collect combinations with maximum size
-        for (const auto& combo : combinations) {
-            if (combo.size() == maxSize) {
-                // Add to the filtered map
-                filteredCombinationToRunsBeforeFirmwareUpdate[combo] = runList;
+            for (auto& c : combos) {
+                if (c.size() == maxSize) {
+                    filteredCombinationToRunsBeforeFirmwareUpdate[c] = runList;
+                }
             }
         }
     }
 
-    // Process after firmware update
-    std::map<std::set<std::string>, std::vector<int>> filteredCombinationToRunsAfterFirmwareUpdate;
+    map<set<string>, vector<int>> filteredCombinationToRunsAfterFirmwareUpdate;
+    {
+        for (auto& kvA : runListToCombinationsAfterFW) {
+            const auto& runList = kvA.first;
+            const auto& combos  = kvA.second;
 
-    for (const auto& entry : runListToCombinationsAfterFirmwareUpdate) {
-        const std::vector<int>& runList = entry.first;
-        const std::vector<std::set<std::string>>& combinations = entry.second;
-
-        // Find the combination(s) with the maximum size (most triggers)
-        size_t maxSize = 0;
-        for (const auto& combo : combinations) {
-            if (combo.size() > maxSize) {
-                maxSize = combo.size();
+            size_t maxSize = 0;
+            for (auto& c : combos) {
+                if (c.size() > maxSize) {
+                    maxSize = c.size();
+                }
             }
-        }
-
-        // Collect combinations with maximum size
-        for (const auto& combo : combinations) {
-            if (combo.size() == maxSize) {
-                // Add to the filtered map
-                filteredCombinationToRunsAfterFirmwareUpdate[combo] = runList;
+            for (auto& c : combos) {
+                if (c.size() == maxSize) {
+                    filteredCombinationToRunsAfterFirmwareUpdate[c] = runList;
+                }
             }
         }
     }
 
-    // Now, assemble combinationToRuns
-    std::map<std::set<std::string>, DataStructures::RunInfo> combinationToRuns;
+    // 9) Build final map => combinationToRuns
+    map<set<string>, DataStructures::RunInfo> combinationToRuns;
 
-    // Handle before firmware update
-    for (const auto& entry : filteredCombinationToRunsBeforeFirmwareUpdate) {
-        const std::set<std::string>& combination = entry.first;
-        const std::vector<int>& runs = entry.second;
+    // fill "before FW"
+    for (auto& kvBB : filteredCombinationToRunsBeforeFirmwareUpdate) {
+        const auto& combo  = kvBB.first;
+        const auto& runVec = kvBB.second;
 
-        DataStructures::RunInfo& runInfo = combinationToRuns[combination];
-        runInfo.runsBeforeFirmwareUpdate = runs;
+        DataStructures::RunInfo& runInfo = combinationToRuns[combo];
+        runInfo.runsBeforeFirmwareUpdate = runVec;
+    }
+    // fill "after FW"
+    for (auto& kvAA : filteredCombinationToRunsAfterFirmwareUpdate) {
+        const auto& combo  = kvAA.first;
+        const auto& runVec = kvAA.second;
+
+        DataStructures::RunInfo& runInfo = combinationToRuns[combo];
+        runInfo.runsAfterFirmwareUpdate = runVec;
     }
 
-    // Handle after firmware update
-    for (const auto& entry : filteredCombinationToRunsAfterFirmwareUpdate) {
-        const std::set<std::string>& combination = entry.first;
-        const std::vector<int>& runs = entry.second;
-
-        DataStructures::RunInfo& runInfo = combinationToRuns[combination];
-        runInfo.runsAfterFirmwareUpdate = runs;
+    // for debug
+    for (auto& kvC : combinationToRuns) {
+        finalCombinations.emplace_back(kvC.first, kvC.second);
     }
 
-    // Store final combinations for debug output
-    finalCombinations.assign(combinationToRuns.begin(), combinationToRuns.end());
-
-    // If debugMode is true, output the processing information and terminate
+    // 10) debugMode printing
     if (debugMode) {
-        // Output the detailed processing information
-        std::cout << BOLD << BLUE << "\n===== Processing Summary =====\n" << RESET;
+        cout << BOLD << BLUE << "\n===== Processing Summary =====\n" << RESET;
+        cout << BOLD << "Total runs processed: " << totalRunsProcessed << RESET << "\n";
 
-        // Output total number of runs processed
-        std::cout << BOLD << "Total runs processed: " << totalRunsProcessed << RESET << "\n";
+        // 1) initial combos
+        cout << BOLD << "\nInitial Active Trigger Combinations (before splitting due to firmware update):\n" << RESET;
+        cout << BOLD << left << setw(60) << "Combination" << right << setw(20) << "Number of Runs" << RESET << "\n";
+        cout << string(80, '=') << "\n";
+        for (auto& kv0 : initialCombinationToRuns) {
+            const auto& combo = kv0.first;
+            const auto& runs  = kv0.second;
 
-        // Output initial combinations before splitting
-        std::cout << BOLD << "\nInitial Active Trigger Combinations (before splitting due to firmware update):\n" << RESET;
-        // Prepare header
-        std::cout << BOLD << std::left << std::setw(60) << "Combination" << std::right << std::setw(20) << "Number of Runs" << RESET << "\n";
-        std::cout << std::string(80, '=') << "\n";
-
-        for (const auto& entry : initialCombinationToRuns) {
-            const std::set<std::string>& combination = entry.first;
-            const std::vector<int>& runs = entry.second;
-
-            // Build combination string
-            std::string combinationStr;
-            for (const auto& trigger : combination) {
-                combinationStr += trigger + " ";
+            string comboStr;
+            for (auto& trig : combo) {
+                comboStr += trig + " ";
             }
-
-            // Output combination and number of runs
-            std::cout << std::left << std::setw(60) << combinationStr << std::right << std::setw(20) << runs.size() << "\n";
+            cout << left << setw(60) << comboStr << right << setw(20) << runs.size() << "\n";
         }
 
-        // Output combinations that had run 47289 and were split
-        std::cout << BOLD << "\nCombinations that included run 47289 and were split due to firmware update:\n" << RESET;
-        if (combinationsWithRun47289.empty()) {
-            std::cout << "  None\n";
+        // 2) combos that had run 47289
+        cout << BOLD << "\nCombinations that included run 47289 and were split due to firmware update:\n" << RESET;
+        if (combosWithRun47289.empty()) {
+            cout << "  None\n";
         } else {
-            // Prepare header
-            std::cout << BOLD << std::left << std::setw(60) << "Combination" << RESET << "\n";
-            std::cout << std::string(60, '=') << "\n";
-
-            for (const auto& combination : combinationsWithRun47289) {
-                // Build combination string
-                std::string combinationStr;
-                for (const auto& trigger : combination) {
-                    combinationStr += trigger + " ";
+            cout << BOLD << left << setw(60) << "Combination" << RESET << "\n";
+            cout << string(60, '=') << "\n";
+            for (auto& combination : combosWithRun47289) {
+                string comboStr;
+                for (auto& trig : combination) {
+                    comboStr += trig + " ";
                 }
-
-                std::cout << std::left << std::setw(60) << combinationStr << "\n";
+                cout << left << setw(60) << comboStr << "\n";
             }
         }
 
-        // Output groups found with the same run numbers before firmware update
-        std::cout << BOLD << "\nGroups with identical run numbers before firmware update:\n" << RESET;
-        int groupIndex = 1;
-        for (const auto& entry : runListToCombinationsBeforeFirmwareUpdate) {
-            const std::vector<int>& runList = entry.first;
-            const std::vector<std::set<std::string>>& combinations = entry.second;
+        // 3) groups w/ same run numbers (before FW)
+        cout << BOLD << "\nGroups with identical run numbers before firmware update:\n" << RESET;
+        {
+            int groupIndex = 1;
+            for (auto& kvB : runListToCombinationsBeforeFW) {
+                const auto& runList = kvB.first;
+                const auto& combos  = kvB.second;
 
-            std::cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
-            std::cout << "Run List (size " << runList.size() << "):\n";
-            // Print run numbers in columns
-            for (size_t i = 0; i < runList.size(); ++i) {
-                std::cout << std::setw(8) << runList[i];
-                if ((i + 1) % 10 == 0 || i == runList.size() - 1) {
-                    std::cout << "\n";
+                cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
+                cout << "Run List (size " << runList.size() << "):\n";
+                for (size_t i=0; i<runList.size(); ++i) {
+                    cout << setw(8) << runList[i];
+                    if((i+1)%10==0 || i==runList.size()-1) {
+                        cout << "\n";
+                    }
                 }
-            }
-
-            std::cout << "  Combinations:\n";
-            for (const auto& combo : combinations) {
-                // Build combination string
-                std::string combinationStr;
-                for (const auto& trigger : combo) {
-                    combinationStr += trigger + " ";
+                cout << "  Combinations:\n";
+                for (auto& c : combos) {
+                    string comboStr;
+                    for (auto& t : c) {
+                        comboStr += t + " ";
+                    }
+                    cout << "    " << comboStr << "\n";
                 }
-                std::cout << "    " << combinationStr << "\n";
             }
         }
 
-        // Output groups found with the same run numbers after firmware update
-        std::cout << BOLD << "\nGroups with identical run numbers after firmware update:\n" << RESET;
-        groupIndex = 1;
-        for (const auto& entry : runListToCombinationsAfterFirmwareUpdate) {
-            const std::vector<int>& runList = entry.first;
-            const std::vector<std::set<std::string>>& combinations = entry.second;
+        // 4) groups w/ same run numbers (after FW)
+        cout << BOLD << "\nGroups with identical run numbers after firmware update:\n" << RESET;
+        {
+            int groupIndex = 1;
+            for (auto& kvA : runListToCombinationsAfterFW) {
+                const auto& runList = kvA.first;
+                const auto& combos  = kvA.second;
 
-            std::cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
-            std::cout << "Run List (size " << runList.size() << "):\n";
-            // Print run numbers in columns
-            for (size_t i = 0; i < runList.size(); ++i) {
-                std::cout << std::setw(8) << runList[i];
-                if ((i + 1) % 10 == 0 || i == runList.size() - 1) {
-                    std::cout << "\n";
+                cout << YELLOW << BOLD << "\nGroup " << groupIndex++ << RESET << "\n";
+                cout << "Run List (size " << runList.size() << "):\n";
+                for (size_t i=0; i<runList.size(); ++i) {
+                    cout << setw(8) << runList[i];
+                    if((i+1)%10==0 || i==runList.size()-1) {
+                        cout << "\n";
+                    }
                 }
-            }
-
-            std::cout << "  Combinations:\n";
-            for (const auto& combo : combinations) {
-                // Build combination string
-                std::string combinationStr;
-                for (const auto& trigger : combo) {
-                    combinationStr += trigger + " ";
+                cout << "  Combinations:\n";
+                for (auto& c : combos) {
+                    string comboStr;
+                    for (auto& t : c) {
+                        comboStr += t + " ";
+                    }
+                    cout << "    " << comboStr << "\n";
                 }
-                std::cout << "    " << combinationStr << "\n";
             }
         }
 
-        // Output final combinations after splitting and filtering
-        std::cout << BOLD << "\nFinal Active Trigger Combinations (after splitting and filtering):\n" << RESET;
-        // Prepare header
-        std::cout << BOLD << std::left << std::setw(60) << "Combination"
-                  << std::right << std::setw(25) << "Runs Before Firmware Update"
-                  << std::setw(25) << "Runs After Firmware Update" << RESET << "\n";
-        std::cout << std::string(110, '=') << "\n";
+        // 5) final combos
+        cout << BOLD << "\nFinal Active Trigger Combinations (after splitting and filtering):\n" << RESET;
+        cout << BOLD << left << setw(60) << "Combination"
+             << right << setw(25) << "Runs Before Firmware Update"
+             << setw(25) << "Runs After Firmware Update" << RESET << "\n";
+        cout << string(110, '=') << "\n";
 
-        for (const auto& entry : finalCombinations) {
-            const std::set<std::string>& combination = entry.first;
-            const DataStructures::RunInfo& runInfo = entry.second;
+        for (auto& fc : finalCombinations) {
+            const auto& combo   = fc.first;
+            const auto& runInfo = fc.second;
 
-            // Build combination string
-            std::string combinationStr;
-            for (const auto& trigger : combination) {
-                combinationStr += trigger + " ";
+            string comboStr;
+            for (auto& trig : combo) {
+                comboStr += trig + " ";
             }
+            cout << left << setw(60) << comboStr;
+            cout << right << setw(25) << runInfo.runsBeforeFirmwareUpdate.size();
+            cout << setw(25) << runInfo.runsAfterFirmwareUpdate.size() << "\n";
 
-            std::cout << std::left << std::setw(60) << combinationStr;
-            std::cout << std::right << std::setw(25) << runInfo.runsBeforeFirmwareUpdate.size();
-            std::cout << std::setw(25) << runInfo.runsAfterFirmwareUpdate.size() << "\n";
-
-            // Optionally, print run numbers
             if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
-                std::cout << "  Runs before firmware update (" << runInfo.runsBeforeFirmwareUpdate.size() << " runs):\n";
-                for (size_t i = 0; i < runInfo.runsBeforeFirmwareUpdate.size(); ++i) {
-                    std::cout << std::setw(8) << runInfo.runsBeforeFirmwareUpdate[i];
-                    if ((i + 1) % 10 == 0 || i == runInfo.runsBeforeFirmwareUpdate.size() - 1) {
-                        std::cout << "\n";
+                cout << "  Runs before firmware update ("
+                     << runInfo.runsBeforeFirmwareUpdate.size() << " runs):\n";
+                for (size_t i=0; i<runInfo.runsBeforeFirmwareUpdate.size(); i++) {
+                    cout << setw(8) << runInfo.runsBeforeFirmwareUpdate[i];
+                    if ((i+1)%10==0 || i==runInfo.runsBeforeFirmwareUpdate.size()-1) {
+                        cout << "\n";
                     }
                 }
             }
             if (!runInfo.runsAfterFirmwareUpdate.empty()) {
-                std::cout << "  Runs after firmware update (" << runInfo.runsAfterFirmwareUpdate.size() << " runs):\n";
-                for (size_t i = 0; i < runInfo.runsAfterFirmwareUpdate.size(); ++i) {
-                    std::cout << std::setw(8) << runInfo.runsAfterFirmwareUpdate[i];
-                    if ((i + 1) % 10 == 0 || i == runInfo.runsAfterFirmwareUpdate.size() - 1) {
-                        std::cout << "\n";
+                cout << "  Runs after firmware update ("
+                     << runInfo.runsAfterFirmwareUpdate.size() << " runs):\n";
+                for (size_t i=0; i<runInfo.runsAfterFirmwareUpdate.size(); i++) {
+                    cout << setw(8) << runInfo.runsAfterFirmwareUpdate[i];
+                    if ((i+1)%10==0 || i==runInfo.runsAfterFirmwareUpdate.size()-1) {
+                        cout << "\n";
                     }
                 }
             }
         }
 
-        std::cout << BOLD << BLUE << "\n===== End of Processing Summary =====\n" << RESET;
-
-        // Terminate the program
-        exit(0);
+        cout << BOLD << BLUE << "\n===== End of Processing Summary =====\n" << RESET;
+        // Possibly exit(0);
     }
 
-    // Return the adjusted map
     return combinationToRuns;
 }
+
 
 
 void PrintSortedCombinations(const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns) {
@@ -908,71 +902,166 @@ void ProcessRunsForCombination(
     // zeroDataFile closes automatically when function ends
 }
 
+
+/**
+ * @brief Builds a sorted combination name starting with "MBD_NandS_geq_1"
+ *        then listing other triggers in ascending threshold order.
+ *
+ *        Examples:
+ *            Input set: {"MBD_NandS_geq_1", "Photon_3_GeV_plus_MBD_NS_geq_1", "Photon_5_GeV_plus_MBD_NS_geq_1"}
+ *            Output:    "MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1"
+ *
+ *            Input set: {"MBD_NandS_geq_1", "Jet_8_GeV_plus_MBD_NS_geq_1", "Jet_10_GeV_plus_MBD_NS_geq_1"}
+ *            Output:    "MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1"
+ *
+ *        If the set is just {"MBD_NandS_geq_1"}, returns "MBD_NandS_geq_1".
+ *
+ */
+static std::string buildSortedCombinationName(const std::set<std::string>& triggers)
+{
+    // If the set is just MBD alone => quick return
+    if (triggers.size() == 1 && triggers.count("MBD_NandS_geq_1") == 1) {
+        return "MBD_NandS_geq_1";
+    }
+
+    // We'll gather all triggers except "MBD_NandS_geq_1" in a vector
+    // Then parse their threshold and sort them ascending.
+    std::vector<std::string> otherTriggers;
+    otherTriggers.reserve(triggers.size() - 1);
+
+    for (const auto& trig : triggers) {
+        if (trig == "MBD_NandS_geq_1") {
+            continue; // skip
+        }
+        otherTriggers.push_back(trig);
+    }
+
+    // A small helper to parse the threshold integer from e.g. "Photon_4_GeV_plus_MBD_NS_geq_1"
+    // or "Jet_8_GeV_plus_MBD_NS_geq_1".
+    // You can adjust the regex as needed or do manual substring search.
+    auto extractThreshold = [&](const std::string& triggerName) -> int {
+        // Regex approach: match e.g. "Photon_(\d+)_GeV_plus" or "Jet_(\d+)_GeV_plus"
+        static const std::regex re(R"((?:Photon|Jet)_(\d+)_GeV_plus)");
+        std::smatch match;
+        if (std::regex_search(triggerName, match, re)) {
+            // capture group #1 = the digits
+            return std::stoi(match[1].str());
+        }
+        return 0; // fallback if something goes wrong
+    };
+
+    // Sort otherTriggers by the integer threshold
+    std::sort(otherTriggers.begin(), otherTriggers.end(),
+              [&](const std::string& A, const std::string& B) {
+                  int thrA = extractThreshold(A);
+                  int thrB = extractThreshold(B);
+                  return (thrA < thrB);
+              }
+    );
+
+    // Now build final name, always start with "MBD_NandS_geq_1"
+    // then underscore, then sorted triggers.
+    std::ostringstream oss;
+    oss << "MBD_NandS_geq_1";  // always first
+    for (const auto& trig : otherTriggers) {
+        oss << "_" << trig;
+    }
+
+    return oss.str();
+}
+
+/**
+ * @brief Merges the histograms for each unique trigger combination into a
+ *        single combined ROOT file, labeling them with a sorted combination name.
+ *
+ *        If a combination is exactly "MBD_NandS_geq_1", we combine all runs
+ *        before/after firmware into one file. Otherwise, we split runs
+ *        into "beforeTriggerFirmwareUpdate" and "afterTriggerFirmwareUpdate"
+ *        as usual.
+ *
+ * @param combinationToRuns        The map of (trigger set) -> (RunInfo with runsBefore/After)
+ * @param outputDirectory          Where to output the combined ROOT files
+ * @param combinationToValidRuns   [Output] This map is filled with the final valid run list for each combination
+ */
 void ProcessAndMergeRootFiles(
     const std::map<std::set<std::string>, DataStructures::RunInfo>& combinationToRuns,
     const std::string& outputDirectory,
-    std::map<std::string, std::vector<int>>& combinationToValidRuns) {
-    
+    std::map<std::string, std::vector<int>>& combinationToValidRuns)
+{
     std::cout << "Starting ProcessAndMergeRootFiles" << std::endl;
+
     // Disable automatic addition of histograms to directories
     TH1::AddDirectory(false);
-    
-    // Iterate over each trigger combination
+
+    // -------------------------------------------------------------------------
+    //  Iterate over each trigger combination
+    // -------------------------------------------------------------------------
     for (const auto& kv : combinationToRuns) {
         const std::set<std::string>& triggers = kv.first;
         const DataStructures::RunInfo& runInfo = kv.second;
-        
-        // Create a string to represent the combination for naming
-        std::string baseCombinationName;
-        for (const auto& trigger : triggers) {
-            baseCombinationName += trigger + "_";
-        }
-        // Remove the trailing underscore
-        if (!baseCombinationName.empty()) {
-            baseCombinationName.pop_back();
-        }
 
-        // Check if this combination is exactly "MBD_NandS_geq_1"
+        // ---------------------------------------------------------------------
+        // Build the sorted combination name: always MBD first, then ascending thresholds
+        // ---------------------------------------------------------------------
+        std::string baseCombinationName = buildSortedCombinationName(triggers);
+
+        // ---------------------------------------------------------------------
+        // If combination is exactly {"MBD_NandS_geq_1"} => combine runs (before/after)
+        // ---------------------------------------------------------------------
         if (triggers.size() == 1 && triggers.count("MBD_NandS_geq_1") == 1) {
-            // Combine runs before and after firmware update
+            // Merge runs before & after FW into one
             std::vector<int> allRuns = runInfo.runsBeforeFirmwareUpdate;
-            allRuns.insert(allRuns.end(), runInfo.runsAfterFirmwareUpdate.begin(), runInfo.runsAfterFirmwareUpdate.end());
+            allRuns.insert(allRuns.end(),
+                           runInfo.runsAfterFirmwareUpdate.begin(),
+                           runInfo.runsAfterFirmwareUpdate.end());
 
-            std::string combinationName = baseCombinationName; // Do not append firmware update tags
-
+            // This name is simply "MBD_NandS_geq_1" in that scenario
+            std::string combinationName = baseCombinationName;
+            
             // Merge ROOT files for these runs
-            ProcessRunsForCombination(combinationName, allRuns, triggers, outputDirectory, combinationToValidRuns);
-        } else {
-            // For other combinations, process runs before and after firmware update separately
-
-            // Process runs before firmware update
+            ProcessRunsForCombination(
+                combinationName, allRuns, triggers,
+                outputDirectory, combinationToValidRuns
+            );
+        }
+        // ---------------------------------------------------------------------
+        // Otherwise, handle runsBeforeFirmwareUpdate & runsAfterFirmwareUpdate separately
+        // ---------------------------------------------------------------------
+        else {
+            // 1) Runs before firmware update
             if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
                 std::string combinationName = baseCombinationName;
                 if (!runInfo.runsAfterFirmwareUpdate.empty()) {
+                    // If we also have runsAfter, append suffix
                     combinationName += "_beforeTriggerFirmwareUpdate";
                 }
                 const std::vector<int>& runs = runInfo.runsBeforeFirmwareUpdate;
-                // Merge ROOT files for these runs
-                ProcessRunsForCombination(combinationName, runs, triggers, outputDirectory, combinationToValidRuns);
+
+                ProcessRunsForCombination(
+                    combinationName, runs, triggers,
+                    outputDirectory, combinationToValidRuns
+                );
             }
-            
-            // Process runs after firmware update
+
+            // 2) Runs after firmware update
             if (!runInfo.runsAfterFirmwareUpdate.empty()) {
                 std::string combinationName = baseCombinationName;
                 if (!runInfo.runsBeforeFirmwareUpdate.empty()) {
                     combinationName += "_afterTriggerFirmwareUpdate";
                 }
                 const std::vector<int>& runs = runInfo.runsAfterFirmwareUpdate;
-                // Merge ROOT files for these runs
-                ProcessRunsForCombination(combinationName, runs, triggers, outputDirectory, combinationToValidRuns);
+
+                ProcessRunsForCombination(
+                    combinationName, runs, triggers,
+                    outputDirectory, combinationToValidRuns
+                );
             }
         }
     }
-    
+
     // Re-enable automatic addition of histograms to directories
     TH1::AddDirectory(true);
 }
-
 
 
 
@@ -3155,20 +3244,25 @@ void ProcessIsolationEnergyHistogramsWithCuts(
         pTMin = convert(pTMinStr);
         pTMax = convert(pTMaxStr);
 
-        showerCutLabel   = match[10].str();  // might be empty
-        triggerName      = match[11].str();  // the final piece
+        showerCutLabel = match[10].str();      // might be empty
+        triggerName    = match[11].str();      // the final piece
 
-        // More debug info
-        std::cout << "[PARSE DEBUG] => histType='"        << histType          << "'\n"
-                  << "                E="                 << cuts.clusECore    << "\n"
-                  << "                Chi="               << cuts.chi          << "\n"
-                  << "                Asym="              << cuts.asymmetry    << "\n"
-                  << "                massWindowLabel='"  << massWindowLabel   << "'\n"
-                  << "                isoEtMin="          << isoEtMin          << ", isoEtMax=" << isoEtMax
-                  << " (hasIsoRange=" << std::boolalpha  << hasIsoRange << ")\n"
-                  << "                pTMin="             << pTMin << ", pTMax=" << pTMax << "\n"
-                  << "                showerCutLabel='"   << showerCutLabel    << "'\n"
-                  << "                triggerName='"      << triggerName       << "'\n";
+
+        if (!triggerName.empty() && triggerName.front() == '_') {
+            triggerName.erase(0, 1);
+        }
+
+        // Debug info
+        std::cout << "[PARSE DEBUG] => histType='" << histType << "'\n"
+                  << "                E=" << cuts.clusECore << "\n"
+                  << "                Chi=" << cuts.chi << "\n"
+                  << "                Asym=" << cuts.asymmetry << "\n"
+                  << "                massWindowLabel='" << massWindowLabel << "'\n"
+                  << "                isoEtMin=" << isoEtMin << ", isoEtMax=" << isoEtMax
+                  << " (hasIsoRange=" << std::boolalpha << hasIsoRange << ")\n"
+                  << "                pTMin=" << pTMin << ", pTMax=" << pTMax << "\n"
+                  << "                showerCutLabel='" << showerCutLabel << "'\n"
+                  << "                triggerName='" << triggerName << "'\n";
 
         return {
             success,
@@ -4839,6 +4933,420 @@ void GenerateCombinedSpectraPlots(
 }
 
 
+static void producePlotForSubset(
+    const std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>& dataSubset,
+    const std::string& subfolder,
+    const std::string& showerCutLabel,
+    const std::string& triggerName,
+    const std::string& readableTriggerName,
+    const std::string& readableTriggerGroupName,
+    float eCore,
+    float chi,
+    float asym,
+    const std::string& massWindowLabel,
+    const std::vector<std::pair<float,float>>& exclusionRanges,
+    const std::vector<std::pair<double, double>>& pT_bins,
+    double pTExclusionMax,
+    // references for optional PHENIX lines
+    bool drawRefA,
+    bool drawRefB,
+    const std::vector<double>& referencePTGamma,
+    const std::vector<double>& referenceRatio,
+    const std::vector<double>& referenceStatError,
+    const std::vector<double>& referenceTwoPTGamma,
+    const std::vector<double>& referenceTwoRatio,
+    const std::vector<double>& referenceTwoStatError
+)
+{
+    std::cout << "[DEBUG] producePlotForSubset(): subfolder='"
+              << subfolder << "', showerCutLabel='" << showerCutLabel
+              << "', dataSubset.size()=" << dataSubset.size() << "\n";
+
+    // Quick check if subset is empty
+    if (dataSubset.empty()) {
+        std::cout << "   [INFO] dataSubset is empty => skipping plot.\n\n";
+        return; // no data => no plot
+    }
+
+    // ------------------------------------------------------------------
+    // Build the TCanvas
+    // ------------------------------------------------------------------
+    TCanvas canvas("canvas", "Isolation Data", 800, 600);
+
+    // ------------------------------------------------------------------
+    // Prepare the pT bin edges from pT_bins up to pTExclusionMax
+    // ------------------------------------------------------------------
+    std::cout << "[DEBUG] Preparing pT bin edges from pT_bins...\n";
+    std::vector<double> binEdges;
+    for (const auto& bin : pT_bins) {
+        if (bin.first >= pTExclusionMax) {
+            std::cout << "   [DEBUG] bin.first=" << bin.first
+                      << " >= pTExclusionMax=" << pTExclusionMax
+                      << " => break.\n";
+            break;
+        }
+        binEdges.push_back(bin.first);
+        std::cout << "   [DEBUG] Added bin lower edge=" << bin.first << "\n";
+    }
+
+    // Add final edge if possible
+    if (!binEdges.empty()) {
+        double lastHigh = pT_bins[binEdges.size() - 1].second;
+        std::cout << "   [DEBUG] lastHigh=" << lastHigh << "\n";
+        if (lastHigh < pTExclusionMax) {
+            binEdges.push_back(lastHigh);
+            std::cout << "   [DEBUG] lastHigh < pTExclusionMax => adding " << lastHigh << "\n";
+        } else {
+            binEdges.push_back(pTExclusionMax);
+            std::cout << "   [DEBUG] lastHigh >= pTExclusionMax => add pTExclusionMax=" << pTExclusionMax << "\n";
+        }
+    } else {
+        std::cerr << "[WARNING] No valid bin edges from pT_bins => skipping plot.\n";
+        return;
+    }
+
+    int nBins = static_cast<int>(binEdges.size()) - 1;
+    if (nBins <= 0) {
+        std::cerr << "[ERROR] nBins <= 0 => no valid histogram bins => skipping.\n";
+        return;
+    }
+    double* binEdgesArray = binEdges.data();
+
+    // ------------------------------------------------------------------
+    // Create a dummy hist for axis
+    // ------------------------------------------------------------------
+    TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+    hFrame->SetStats(0);
+
+    // Decide Y-axis label from massWindow
+    std::string yTitle;
+    if (massWindowLabel == "inMassWindow") {
+        yTitle = "#frac{Isolated Photons from #pi^{0}/#eta}{All Photons from #pi^{0}/#eta}";
+    } else {
+        yTitle = "#frac{Isolated Prompt Photons}{All Prompt Photons}";
+    }
+    hFrame->GetYaxis()->SetTitle(yTitle.c_str());
+    hFrame->GetYaxis()->SetRangeUser(0, 2.0);
+    hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
+
+    // Hide default x-axis numeric labels
+    hFrame->GetXaxis()->SetLabelOffset(999);
+    hFrame->GetXaxis()->SetTickLength(0);
+
+    // Draw the frame
+    hFrame->Draw("AXIS");
+
+    // ------------------------------------------------------------------
+    // Prepare a TLegend
+    // ------------------------------------------------------------------
+    TLegend legend(0.38, 0.68, 0.85, 0.83);
+    legend.SetBorderSize(0);
+    legend.SetTextSize(0.023);
+
+    // Marker color from a config (replace with your code as needed)
+    int markerColor = kBlack; // default
+
+    // ------------------------------------------------------------------
+    // Gather data points by iterating over dataSubset keys
+    // ------------------------------------------------------------------
+    std::vector<double> ptCenters;
+    std::vector<double> ratios;
+    std::vector<double> errors;
+
+    for (const auto& kv : dataSubset) {
+        const auto& isoEtR     = kv.first;   // (isoMin, isoMax)
+        const auto& isoDataVec = kv.second;  // vector of IsolationDataWithPt
+
+        // Exclude if isoEtR is in "exclusionRanges"
+        if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtR)
+            != exclusionRanges.end())
+        {
+            std::cout << "   [DEBUG] isoEtR={" << isoEtR.first << ", "
+                      << isoEtR.second << "} is excluded => skip.\n";
+            continue;
+        }
+
+        if (isoDataVec.empty()) {
+            std::cout << "   [DEBUG] isoDataVec empty for isoEtR => skip.\n";
+            continue;
+        }
+
+        std::cout << "   [DEBUG] isoEtR={" << isoEtR.first << ", "
+                  << isoEtR.second << "} => isoDataVec.size()="
+                  << isoDataVec.size() << "\n";
+
+        // Collect data from isoDataVec
+        for (const auto& isoData : isoDataVec) {
+            double ptMin = isoData.ptMin;
+            double ptMax = isoData.ptMax;
+
+            // Find bin
+            bool foundBin = false;
+            double ptC = 0.0;
+            for (const auto& b : pT_bins) {
+                if (std::fabs(b.first - ptMin) < 1e-6 &&
+                    std::fabs(b.second - ptMax) < 1e-6)
+                {
+                    ptC = (b.first + b.second) / 2.0;
+                    foundBin = true;
+                    break;
+                }
+            }
+
+            if (!foundBin) {
+                std::cout << "      [DEBUG] pTMin=" << ptMin
+                          << ", pTMax=" << ptMax
+                          << " => not in pT_bins => skip.\n";
+                continue;
+            }
+
+            if (ptC >= pTExclusionMax) {
+                std::cout << "      [DEBUG] pT center=" << ptC
+                          << " >= pTExclusionMax=" << pTExclusionMax
+                          << " => skip.\n";
+                continue;
+            }
+
+            ptCenters.push_back(ptC);
+            ratios.push_back(isoData.ratio);
+            errors.push_back(isoData.error);
+
+            std::cout << "      [DEBUG] => pTCenter=" << ptC
+                      << ", ratio=" << isoData.ratio
+                      << ", error=" << isoData.error << "\n";
+        }
+    }
+
+    std::cout << "[DEBUG] Total #points => " << ptCenters.size() << "\n";
+
+    // Crash (or skip) if no points found:
+    if (ptCenters.empty()) {
+        // throw std::runtime_error("[FATAL] No valid points found for subset '" + showerCutLabel + "'");
+        std::cerr << "[WARNING] No valid points for subset '"
+                  << showerCutLabel << "' => skipping plot.\n";
+        delete hFrame;
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Build TGraphErrors for these points
+    // ------------------------------------------------------------------
+    TGraphErrors* mainGraph = new TGraphErrors(
+        static_cast<int>(ptCenters.size()),
+        ptCenters.data(),
+        ratios.data(),
+        nullptr,
+        errors.data()
+    );
+    mainGraph->SetMarkerStyle(20);
+    mainGraph->SetMarkerColor(markerColor);
+    mainGraph->SetLineColor(markerColor);
+    mainGraph->SetLineWidth(2);
+    mainGraph->Draw("P SAME");
+
+    // Add legend entry
+    std::ostringstream legendEntry;
+    legendEntry << "#bf{Run24:} " << readableTriggerName
+                << " [" << showerCutLabel << "]";
+    legend.AddEntry(mainGraph, legendEntry.str().c_str(), "p");
+
+    // dashed line at y=1
+    TLine* line = new TLine(binEdges.front(), 1, binEdges.back(), 1);
+    line->SetLineStyle(2);
+    line->Draw("SAME");
+
+    // ------------------------------------------------------------------
+    // Optionally draw references (PHENIX etc.)
+    // ------------------------------------------------------------------
+    TGraphErrors* refGraphA = nullptr;
+    TGraphErrors* refGraphB = nullptr;
+
+    // -- Reference A (PHENIX direct photons)
+    if (drawRefA) {
+        std::vector<double> refPtC, refRat, refErr;
+        for (size_t i = 0; i < referencePTGamma.size(); ++i) {
+            double rPt = referencePTGamma[i];
+            if (rPt >= pTExclusionMax) continue;
+            // find bin center
+            double pTC = 0.0;
+            bool foundIt = false;
+            for (const auto& b : pT_bins) {
+                if (rPt >= b.first && rPt < b.second) {
+                    pTC = (b.first + b.second)/2.;
+                    foundIt = true;
+                    break;
+                }
+            }
+            if (!foundIt) continue;
+            pTC += 0.25; // offset
+
+            refPtC.push_back(pTC);
+            refRat.push_back(referenceRatio[i]);
+            refErr.push_back(referenceStatError[i]);
+        }
+        refGraphA = new TGraphErrors(
+            static_cast<int>(refPtC.size()),
+            refPtC.data(),
+            refRat.data(),
+            nullptr,
+            refErr.data()
+        );
+        refGraphA->SetMarkerStyle(24);
+        refGraphA->SetMarkerColor(kRed);
+        refGraphA->SetLineColor(kRed);
+        refGraphA->SetLineWidth(2);
+        refGraphA->Draw("P SAME");
+        legend.AddEntry(refGraphA, "#font[62]{PHENIX 2003 pp:} Isolated Direct / All Direct", "p");
+    }
+
+    // -- Reference B (PHENIX pi0 decays)
+    if (drawRefB) {
+        std::vector<double> ref2PtC, ref2Rat, ref2Err;
+        for (size_t i = 0; i < referenceTwoPTGamma.size(); ++i) {
+            double rPt = referenceTwoPTGamma[i];
+            if (rPt >= pTExclusionMax) continue;
+            double pTC2 = 0.0;
+            bool found2 = false;
+            for (const auto& b : pT_bins) {
+                if (rPt >= b.first && rPt < b.second) {
+                    pTC2 = (b.first + b.second)/2.;
+                    found2 = true;
+                    break;
+                }
+            }
+            if (!found2) continue;
+            pTC2 -= 0.1; // shift left
+
+            ref2PtC.push_back(pTC2);
+            ref2Rat.push_back(referenceTwoRatio[i]);
+            ref2Err.push_back(referenceTwoStatError[i]);
+        }
+        refGraphB = new TGraphErrors(
+            static_cast<int>(ref2PtC.size()),
+            ref2PtC.data(),
+            ref2Rat.data(),
+            nullptr,
+            ref2Err.data()
+        );
+        refGraphB->SetMarkerStyle(25);
+        refGraphB->SetMarkerColor(kBlue);
+        refGraphB->SetLineColor(kBlue);
+        refGraphB->SetLineWidth(2);
+        refGraphB->Draw("P SAME");
+        legend.AddEntry(refGraphB, "#font[62]{PHENIX 2003 pp:} Isolated #pi^{0} / All #pi^{0}", "p");
+    }
+
+    // draw legend
+    legend.Draw();
+
+    // ------------------------------------------------------------------
+    // Manual x-axis
+    // ------------------------------------------------------------------
+    double xMin = binEdges.front();
+    double xMax = binEdges.back();
+    double yMin = hFrame->GetMinimum();
+    double yMax = hFrame->GetMaximum();
+    double tickSize   = (yMax - yMin)*0.02;
+    double labelOffset= (yMax - yMin)*0.05;
+
+    TLine xAxisLine(xMin, yMin, xMax, yMin);
+    xAxisLine.Draw("SAME");
+
+    TLatex latex;
+    latex.SetTextSize(0.035);
+    latex.SetTextAlign(22);
+    for (size_t i=0; i < binEdges.size(); ++i) {
+        double xPos = binEdges[i];
+        double yPos = yMin;
+        TLine* tick2 = new TLine(xPos, yPos, xPos, yPos - tickSize);
+        tick2->Draw("SAME");
+
+        std::ostringstream lb;
+        lb << std::fixed << std::setprecision(1) << binEdges[i];
+        latex.DrawLatex(xPos, yPos - labelOffset, lb.str().c_str());
+    }
+
+    canvas.RedrawAxis();
+
+    // ------------------------------------------------------------------
+    // Top-left labels
+    // ------------------------------------------------------------------
+    TLatex labelText;
+    labelText.SetNDC();
+    labelText.SetTextSize(0.025);
+    labelText.SetTextColor(kBlack);
+
+    double xL = 0.195;
+    double yL = 0.9;
+    double yStep = 0.045;
+
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
+        labelText.DrawLatex(xL, yL, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{Trigger:} " << readableTriggerName
+                << " [" << showerCutLabel << "]";
+        labelText.DrawLatex(xL, yL - yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{ECore #geq} " << eCore << " GeV";
+        labelText.DrawLatex(xL, yL - 2*yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{#chi^{2} <} " << chi;
+        labelText.DrawLatex(xL, yL - 3*yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{Asymmetry <} " << asym;
+        labelText.DrawLatex(xL, yL - 4*yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{Mass Window:} " << massWindowLabel;
+        labelText.DrawLatex(xL, yL - 5*yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{#Delta R_{cone} <} 0.3";
+        labelText.DrawLatex(xL, yL - 6*yStep, ossLine.str().c_str());
+    }
+    {
+        std::ostringstream ossLine;
+        ossLine << "#font[62]{E_{T, iso} <} 6 GeV";
+        labelText.DrawLatex(xL, yL - 7*yStep, ossLine.str().c_str());
+    }
+
+    // finalize
+    canvas.Modified();
+    canvas.Update();
+
+    // ------------------------------------------------------------------
+    // Save plot
+    // ------------------------------------------------------------------
+    std::ostringstream outName;
+    outName << subfolder << "/IsolationRatio_vs_pT_"
+            << triggerName << "_" << showerCutLabel << ".png";
+    std::string outPath = outName.str();
+    canvas.SaveAs(outPath.c_str());
+    std::cout << "[INFO] Saved plot => " << outPath << "\n";
+
+    // cleanup
+    delete line;
+    delete hFrame;
+    if (refGraphA)  { delete refGraphA;  }
+    if (refGraphB)  { delete refGraphB;  }
+    // mainGraph is typically owned by ROOT at this point
+}
+
+// ------------------------------------------------------------------------
+// Now the main function that calls producePlotForSubset
+// ------------------------------------------------------------------------
 void GeneratePerTriggerIsoPlots(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -4847,10 +5355,12 @@ void GeneratePerTriggerIsoPlots(
         float,       // Chi
         float,       // Asymmetry
         std::string  // MassWindowLabel
-    >, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
+    >,
+    std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>
+    >& groupedData,
     const std::string& basePlotDirectory,
     const std::vector<std::pair<float, float>>& isoEtRanges,
-    const std::vector<int>& isoEtColors,  // not used but preserved
+    const std::vector<int>& isoEtColors,  // not used here, but kept for interface
     const std::vector<double>& referencePTGamma,
     const std::vector<double>& referenceRatio,
     const std::vector<double>& referenceStatError,
@@ -4864,16 +5374,21 @@ void GeneratePerTriggerIsoPlots(
     const std::vector<std::pair<float, float>>& exclusionRanges,
     const std::vector<std::pair<double, double>>& pT_bins,
     double pTExclusionMax
-) {
+)
+{
+    std::cout << "[DEBUG] Entering GeneratePerTriggerIsoPlots()...\n"
+              << "        groupedData.size() = " << groupedData.size() << "\n\n";
+
     int groupCounter = 0;
 
     // --------------------------------------------------------------------------
     // Iterate over each group (TriggerGroup, TriggerName, ECore, Chi, Asym, MassWindowLabel)
     // --------------------------------------------------------------------------
-    for (const auto& groupEntry : groupedData) {
+    for (const auto& groupEntry : groupedData)
+    {
         groupCounter++;
-        const auto& groupKey     = groupEntry.first;  // The tuple
-        const auto& isoEtDataMap = groupEntry.second; // isoEtRange -> vector<IsolationDataWithPt>
+        const auto& groupKey     = groupEntry.first;   // The tuple
+        const auto& isoEtDataMap = groupEntry.second;  // isoEtRange -> vector<IsolationDataWithPt>
 
         // Unpack the group key
         std::string triggerGroupName = std::get<0>(groupKey);
@@ -4885,27 +5400,30 @@ void GeneratePerTriggerIsoPlots(
 
         // Convert to human-readable names
         std::string readableTriggerGroupName =
-            Utils::getTriggerCombinationName(triggerGroupName, triggerCombinationNameMap);
+            (triggerCombinationNameMap.count(triggerGroupName)
+                 ? triggerCombinationNameMap.at(triggerGroupName)
+                 : triggerGroupName);
 
-        std::string readableTriggerName = triggerName;
-        auto it_nameMap = triggerNameMap.find(triggerName);
-        if (it_nameMap != triggerNameMap.end()) {
-            readableTriggerName = it_nameMap->second;
-        }
+        std::string readableTriggerName = (triggerNameMap.count(triggerName)
+                 ? triggerNameMap.at(triggerName)
+                 : triggerName);
 
-        std::cout << "[INFO] Processing group " << groupCounter << ": "
-                  << "TriggerGroupName = " << triggerGroupName << ", "
-                  << "ReadableGroupName = " << readableTriggerGroupName << ", "
-                  << "TriggerName = " << triggerName << ", "
-                  << "ReadableTriggerName = " << readableTriggerName << ", "
-                  << "ECore = " << eCore << ", "
-                  << "Chi = "   << chi << ", "
-                  << "Asym = "  << asym << ", "
-                  << "MassWindowLabel = " << massWindowLabel << std::endl;
+        std::cout << "[DEBUG] ---------------------------------------------------------\n";
+        std::cout << "[DEBUG] Processing group # " << groupCounter
+                  << " / " << groupedData.size() << ":\n"
+                  << "        TriggerGroupName = '" << triggerGroupName << "'\n"
+                  << "        ReadableGroupName = '" << readableTriggerGroupName << "'\n"
+                  << "        TriggerName       = '" << triggerName << "'\n"
+                  << "        ReadableTriggerName = '" << readableTriggerName << "'\n"
+                  << "        ECore = " << eCore
+                  << ", Chi = "  << chi
+                  << ", Asym = " << asym << "\n"
+                  << "        MassWindowLabel = '" << massWindowLabel << "'\n"
+                  << "        isoEtDataMap.size() = " << isoEtDataMap.size() << "\n\n";
 
-        // If empty, skip
         if (isoEtDataMap.empty()) {
-            std::cerr << "[WARNING] Group " << groupCounter << " has no data. Skipping.\n";
+            std::cerr << "[WARNING] Group " << groupCounter
+                      << " has empty isoEtDataMap. Skipping.\n\n";
             continue;
         }
 
@@ -4914,9 +5432,9 @@ void GeneratePerTriggerIsoPlots(
         // ----------------------------------------------------------------------
         std::ostringstream dirStream;
         dirStream << basePlotDirectory << "/" << triggerGroupName
-                  << "/E" << Utils::formatToThreeSigFigs(eCore)
-                  << "_Chi" << Utils::formatToThreeSigFigs(chi)
-                  << "_Asym" << Utils::formatToThreeSigFigs(asym);
+                  << "/E" << eCore
+                  << "_Chi" << chi
+                  << "_Asym" << asym;
         std::string dirPath = dirStream.str();
         gSystem->mkdir(dirPath.c_str(), true);
 
@@ -4930,7 +5448,9 @@ void GeneratePerTriggerIsoPlots(
 
         // ----------------------------------------------------------------------
         // For separate plots: "withShowerShapeCuts" and "withoutShowerShapeCuts"
-        // We'll split isoEtDataMap into 2 subsets
+        // We'll split isoEtDataMap into 2 subsets:
+        //    withShowerMap    => showerCutLabel == "withShowerShapeCuts"
+        //    withoutShowerMap => showerCutLabel == "withoutShowerShapeCuts"
         // ----------------------------------------------------------------------
         std::string withShowerFolder    = massWindowDir + "/withShowerShapeCuts";
         std::string withoutShowerFolder = massWindowDir + "/withoutShowerShapeCuts";
@@ -4938,268 +5458,110 @@ void GeneratePerTriggerIsoPlots(
         gSystem->mkdir(withShowerFolder.c_str(),    true);
         gSystem->mkdir(withoutShowerFolder.c_str(), true);
 
-        // Two maps: isoEtRange -> vector of IsolationDataWithPt
         std::map<std::pair<float,float>, std::vector<DataStructures::IsolationDataWithPt>> withShowerMap;
         std::map<std::pair<float,float>, std::vector<DataStructures::IsolationDataWithPt>> withoutShowerMap;
 
-        // Split them based on the showerCutLabel
+        // ----------------------------------------------------------------------
+        // Debug: examine isoEtDataMap contents
+        // ----------------------------------------------------------------------
+        std::cout << "[DEBUG] Splitting isoEtDataMap into (with/without)ShowerShapeCuts...\n";
+        int dataMapCounter = 0;
         for (const auto& [isoRange, isoDataVec] : isoEtDataMap) {
-            // isoRange is (isoMin, isoMax)
+            dataMapCounter++;
+            std::cout << "   [DEBUG] isoRange #" << dataMapCounter
+                      << " => isoMin=" << isoRange.first
+                      << ", isoMax=" << isoRange.second
+                      << ", isoDataVec.size()=" << isoDataVec.size() << "\n";
+
             std::vector<DataStructures::IsolationDataWithPt> tmpWith;
             std::vector<DataStructures::IsolationDataWithPt> tmpWithout;
 
             for (const auto& isoData : isoDataVec) {
-                // isoData.isoData.showerCutLabel => "withShowerShapeCuts"/"withoutShowerShapeCuts"
-                const std::string& showerCutLabel = isoData.isoData.showerCutLabel;
-                if (showerCutLabel == "withShowerShapeCuts") {
+                const std::string& label = isoData.isoData.showerCutLabel;
+                if (label == "withShowerShapeCuts") {
                     tmpWith.push_back(isoData);
                 }
-                else if (showerCutLabel == "withoutShowerShapeCuts") {
+                else if (label == "withoutShowerShapeCuts") {
                     tmpWithout.push_back(isoData);
                 }
-                // If there's a third label, you could skip or handle differently
+                else {
+                    std::cerr << "   [WARNING] Unknown showerCutLabel='"
+                              << label << "' encountered. Skipping it.\n";
+                }
             }
-            if (!tmpWith.empty())    withShowerMap[isoRange] = tmpWith;
-            if (!tmpWithout.empty()) withoutShowerMap[isoRange] = tmpWithout;
+            if (!tmpWith.empty()) {
+                withShowerMap[isoRange] = tmpWith;
+                std::cout << "       => withShower subset size=" << tmpWith.size() << "\n";
+            }
+            if (!tmpWithout.empty()) {
+                withoutShowerMap[isoRange] = tmpWithout;
+                std::cout << "       => withoutShower subset size=" << tmpWithout.size() << "\n";
+            }
         }
+        std::cout << "[DEBUG] Done splitting subsets.\n\n";
 
         // ----------------------------------------------------------------------
-        // We'll define a small function to produce the ratio plot for a subset
+        // Generate plot for "withShowerShapeCuts"
         // ----------------------------------------------------------------------
-        auto producePlotForSubset = [&](const std::map<std::pair<float, float>,
-                                             std::vector<DataStructures::IsolationDataWithPt>>& dataSubset,
-                                        const std::string& subfolder, // e.g. withShowerFolder or withoutShowerFolder
-                                        const std::string& showerCutLabel // "withShowerShapeCuts" or "withoutShowerShapeCuts"
-                                        )
-        {
-            if (dataSubset.empty()) {
-                std::cout << "[INFO] No data in " << showerCutLabel
-                          << " subset => skipping.\n";
-                return;
-            }
+        std::cout << "[DEBUG] Generating plot for withShowerShapeCuts...\n";
+        producePlotForSubset(
+            withShowerMap,
+            withShowerFolder,
+            "withShowerShapeCuts",
+            triggerName,
+            readableTriggerName,
+            readableTriggerGroupName,
+            eCore,
+            chi,
+            asym,
+            massWindowLabel,
+            exclusionRanges,
+            pT_bins,
+            pTExclusionMax,
+            drawRefA,
+            drawRefB,
+            referencePTGamma,
+            referenceRatio,
+            referenceStatError,
+            referenceTwoPTGamma,
+            referenceTwoRatio,
+            referenceTwoStatError
+        );
 
-            // Create a TCanvas
-            TCanvas canvas("canvas", "Isolation Data", 800, 600);
+        // ----------------------------------------------------------------------
+        // Generate plot for "withoutShowerShapeCuts"
+        // ----------------------------------------------------------------------
+        std::cout << "[DEBUG] Generating plot for withoutShowerShapeCuts...\n";
+        producePlotForSubset(
+            withoutShowerMap,
+            withoutShowerFolder,
+            "withoutShowerShapeCuts",
+            triggerName,
+            readableTriggerName,
+            readableTriggerGroupName,
+            eCore,
+            chi,
+            asym,
+            massWindowLabel,
+            exclusionRanges,
+            pT_bins,
+            pTExclusionMax,
+            drawRefA,
+            drawRefB,
+            referencePTGamma,
+            referenceRatio,
+            referenceStatError,
+            referenceTwoPTGamma,
+            referenceTwoRatio,
+            referenceTwoStatError
+        );
 
-            // Prepare bin edges for variable bin widths
-            std::vector<double> binEdges;
-            for (const auto& bin : pT_bins) {
-                if (bin.first >= pTExclusionMax) break;
-                binEdges.push_back(bin.first);
-            }
-            // Add the upper edge if needed
-            if (!binEdges.empty()) {
-                double lastHigh = pT_bins[binEdges.size() - 1].second;
-                if (lastHigh < pTExclusionMax) {
-                    binEdges.push_back(lastHigh);
-                } else {
-                    binEdges.push_back(pTExclusionMax);
-                }
-            } else {
-                std::cerr << "[WARNING] No pT bins to plot for subset '"
-                          << showerCutLabel << "' => skipping.\n";
-                return;
-            }
+        std::cout << "[DEBUG] Finished group # " << groupCounter << ".\n\n";
+    } // end for each group
 
-            int nBins = binEdges.size() - 1;
-            double* binEdgesArray = binEdges.data();
-
-            // Create a dummy histogram for axes
-            TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
-            hFrame->SetStats(0);
-            // y-axis title depends on massWindow
-            std::string yTitle = (massWindowLabel == "inMassWindow")
-                ? "#frac{Isolated Photons from #pi^{0}/#eta Decays}{All Photons from #pi^{0}/#eta Decays}"
-                : "#frac{Isolated Prompt Photons}{All Prompt Photons}";
-            hFrame->GetYaxis()->SetTitle(yTitle.c_str());
-            hFrame->GetYaxis()->SetRangeUser(0, 2.0);
-            hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
-            hFrame->GetXaxis()->SetLabelOffset(999);
-            hFrame->GetXaxis()->SetTickLength(0);
-            hFrame->Draw("AXIS");
-
-            // Prepare the legend
-            TLegend legend(0.38, 0.68, 0.85, 0.83);
-            legend.SetBorderSize(0);
-            legend.SetTextSize(0.023);
-
-            // We'll gather all points across isoEtRanges in dataSubset
-            std::vector<double> ptCenters;
-            std::vector<double> ratios;
-            std::vector<double> errors;
-
-            for (const auto& isoEtR : isoEtRanges) {
-                // skip if excluded
-                if (std::find(exclusionRanges.begin(), exclusionRanges.end(), isoEtR)
-                    != exclusionRanges.end()) {
-                    continue;
-                }
-                auto findIt = dataSubset.find(isoEtR);
-                if (findIt == dataSubset.end()) {
-                    continue;
-                }
-                const auto& isoDataVec = findIt->second;
-                for (const auto& isoData : isoDataVec) {
-                    double ptMin = isoData.ptMin;
-                    double ptMax = isoData.ptMax;
-
-                    // find pT bin center
-                    bool foundBin = false;
-                    double ptC = 0.;
-                    for (const auto& b : pT_bins) {
-                        if (std::fabs(b.first - ptMin) < 1e-6
-                            && std::fabs(b.second - ptMax) < 1e-6) {
-                            ptC = (b.first + b.second)/2.;
-                            foundBin = true;
-                            break;
-                        }
-                    }
-                    if (!foundBin) continue;
-                    if (ptC >= pTExclusionMax) continue;
-
-                    ptCenters.push_back(ptC);
-                    ratios.push_back(isoData.ratio);
-                    errors.push_back(isoData.error);
-                }
-            }
-
-            if (ptCenters.empty()) {
-                std::cerr << "[WARNING] No valid points in subset '"
-                          << showerCutLabel << "' => skipping.\n";
-                delete hFrame;
-                return;
-            }
-
-            // Build TGraphErrors
-            int markerColor = kBlack;
-            if (auto itc = TriggerConfig::triggerColorMap.find(triggerName);
-                itc != TriggerConfig::triggerColorMap.end()) {
-                markerColor = itc->second;
-            }
-
-            TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
-                                                   ptCenters.data(),
-                                                   ratios.data(),
-                                                   nullptr,
-                                                   errors.data());
-            graph->SetMarkerStyle(20);
-            graph->SetMarkerColor(markerColor);
-            graph->SetLineColor(markerColor);
-            graph->SetLineWidth(2);
-            graph->Draw("P SAME");
-
-            // Add legend entry
-            std::ostringstream legStr;
-            legStr << "#bf{Run24:} " << readableTriggerName
-                   << " [" << showerCutLabel << "]";
-            legend.AddEntry(graph, legStr.str().c_str(), "p");
-
-            // Dashed line y=1
-            TLine* line = new TLine(binEdges.front(), 1, binEdges.back(), 1);
-            line->SetLineStyle(2);
-            line->Draw("SAME");
-
-            // Optionally, re-draw references (PHENIX 2003)
-            // If we want them for each subset, replicate your reference code here
-            // For brevity, omitted. But you can copy the same logic from your snippet.
-
-            legend.Draw();
-
-            // Draw x-axis ticks/labels manually
-            double xMin = binEdges.front();
-            double xMax = binEdges.back();
-            double yMin = hFrame->GetMinimum();
-            double yMax = hFrame->GetMaximum();
-            double tickSize = (yMax - yMin)*0.02;
-            double labelOffset = (yMax - yMin)*0.05;
-            TLatex latex;
-            latex.SetTextSize(0.035);
-            latex.SetTextAlign(22);
-
-            TLine xAxisLine(xMin, yMin, xMax, yMin);
-            xAxisLine.Draw("SAME");
-            for (size_t i=0; i<binEdges.size(); ++i) {
-                double xPos = binEdges[i];
-                double yPos = yMin;
-                TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
-                tick->Draw("SAME");
-
-                std::ostringstream lb;
-                lb << std::fixed << std::setprecision(1) << binEdges[i];
-                latex.DrawLatex(xPos, yPos - labelOffset, lb.str().c_str());
-            }
-
-            canvas.RedrawAxis();
-
-            // Add top-left labels
-            TLatex labelText;
-            labelText.SetNDC();
-            labelText.SetTextSize(0.025);
-            labelText.SetTextColor(kBlack);
-
-            double xL = 0.195;
-            double yL = 0.9;
-            double yStep = 0.045;
-
-            std::ostringstream ossLine;
-            ossLine << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
-            labelText.DrawLatex(xL, yL, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{Trigger:} " << readableTriggerName
-                    << " [" << showerCutLabel << "]";
-            labelText.DrawLatex(xL, yL - yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{ECore #geq} " << eCore << " GeV";
-            labelText.DrawLatex(xL, yL - 2*yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{#chi^{2} <} " << chi;
-            labelText.DrawLatex(xL, yL - 3*yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{Asymmetry <} " << asym;
-            labelText.DrawLatex(xL, yL - 4*yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{Mass Window:} " << massWindowLabel;
-            labelText.DrawLatex(xL, yL - 5*yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{#Delta R_{cone} <} 0.3";
-            labelText.DrawLatex(xL, yL - 6*yStep, ossLine.str().c_str());
-
-            ossLine.str("");
-            ossLine << "#font[62]{E_{T, iso} <} 6 GeV";
-            labelText.DrawLatex(xL, yL - 7*yStep, ossLine.str().c_str());
-
-            canvas.Modified();
-            canvas.Update();
-
-            // Save
-            std::ostringstream outName;
-            outName << subfolder << "/IsolationRatio_vs_pT_" << triggerName
-                    << "_" << showerCutLabel << ".png";
-            std::string outPath = outName.str();
-            canvas.SaveAs(outPath.c_str());
-            std::cout << "[INFO] Saved plot => " << outPath << "\n";
-
-            delete line;
-            delete hFrame;
-        }; // end producePlotForSubset
-
-        // Actually produce the ratio plot for withShower subset
-        producePlotForSubset(withShowerMap, withShowerFolder, "withShowerShapeCuts");
-
-        // Produce the ratio plot for withoutShower subset
-        producePlotForSubset(withoutShowerMap, withoutShowerFolder, "withoutShowerShapeCuts");
-
-        // The rest of your code's logic (like cleaning up) is encompassed
-        // as we do everything inside the loop for each subset.
-
-    } // end for group
+    std::cout << "[DEBUG] Finished GeneratePerTriggerIsoPlots() for all groups.\n\n";
 }
+
 
 void SortAndCombineTriggers(
     const std::map<GroupKey, std::map<std::pair<float, float>, std::vector<DataStructures::IsolationDataWithPt>>>& groupedData,
@@ -5727,6 +6089,9 @@ void GenerateCombinedRatioPlot(
 }
 
 
+// -----------------------------------------------------------------------------
+//   1) PrepareDataForIsolationPurity
+// -----------------------------------------------------------------------------
 void PrepareDataForIsolationPurity(
     const std::map<std::tuple<
         std::string, // TriggerGroupName
@@ -5740,32 +6105,40 @@ void PrepareDataForIsolationPurity(
         float,       // isoMax
         std::string  // MassWindowLabel
     >, DataStructures::IsolationData>& dataMap,
+
+    // We now group by an 8-element key that ends with showerCutLabel:
     std::map<std::tuple<
         std::string, // TriggerGroupName
         std::string, // TriggerName
         float,       // ECore
         float,       // Chi
-        float,       // Asymmetry
+        float,       // Asym
         float,       // isoMin
         float,       // isoMax
-        std::string  // MassWindowLabel (not used here)
-    >, std::vector<DataStructures::IsolationDataWithPt>>& groupedData
-) {
-    for (const auto& [key, isoData] : dataMap) {
-        // Extract relevant keys
-        std::string triggerGroupName = std::get<0>(key);
-        std::string triggerName = std::get<1>(key);
-        float eCore = std::get<2>(key);
-        float chi = std::get<3>(key);
-        float asym = std::get<4>(key);
-        float ptMin = std::get<5>(key);
-        float ptMax = std::get<6>(key);
-        float isoMin = std::get<7>(key);
-        float isoMax = std::get<8>(key);
-        std::string massWindowLabel = std::get<9>(key);
+        std::string  // showerCutLabel
+    >,
+    std::vector<DataStructures::IsolationDataWithPt>>& groupedData
+)
+{
+    for (const auto& [key, isoData] : dataMap)
+    {
+        // Unpack the old key
+        const std::string& triggerGroupName = std::get<0>(key);
+        const std::string& triggerName      = std::get<1>(key);
+        float eCore                         = std::get<2>(key);
+        float chi                           = std::get<3>(key);
+        float asym                          = std::get<4>(key);
+        float ptMin                         = std::get<5>(key);
+        float ptMax                         = std::get<6>(key);
+        float isoMin                        = std::get<7>(key);
+        float isoMax                        = std::get<8>(key);
+        // We ignore massWindowLabel here, because we want to combine them.
 
-        // Create a new key without pT bins to group over pT
-        auto groupKey = std::make_tuple(
+        // The actual showerCutLabel comes from the IsolationData itself:
+        const std::string& showerCutLabel = isoData.showerCutLabel;
+
+        // Build the new grouping key with 8 fields:
+        auto newGroupKey = std::make_tuple(
             triggerGroupName,
             triggerName,
             eCore,
@@ -5773,22 +6146,25 @@ void PrepareDataForIsolationPurity(
             asym,
             isoMin,
             isoMax,
-            "" // MassWindowLabel is not needed here
+            showerCutLabel // new
         );
 
-        // Prepare IsolationDataWithPt
+        // Prepare the data-with-pt object
         DataStructures::IsolationDataWithPt isoDataWithPt;
-        isoDataWithPt.ptMin = ptMin;
-        isoDataWithPt.ptMax = ptMax;
+        isoDataWithPt.ptMin   = ptMin;
+        isoDataWithPt.ptMax   = ptMax;
         isoDataWithPt.isoData = isoData;
 
-        // Add to groupedData
-        groupedData[groupKey].push_back(isoDataWithPt);
+        groupedData[newGroupKey].push_back(isoDataWithPt);
     }
 }
 
 
+// -----------------------------------------------------------------------------
+//   2) GenerateIsolationPurityPlots
+// -----------------------------------------------------------------------------
 void GenerateIsolationPurityPlots(
+    // Notice the group key now has *eight* elements, with showerCutLabel at index 7:
     const std::map<std::tuple<
         std::string, // TriggerGroupName
         std::string, // TriggerName
@@ -5797,65 +6173,83 @@ void GenerateIsolationPurityPlots(
         float,       // Asymmetry
         float,       // isoMin
         float,       // isoMax
-        std::string  // MassWindowLabel
-    >, std::vector<DataStructures::IsolationDataWithPt>>& groupedData,
+        std::string  // showerCutLabel => "withShowerShapeCuts" / "withoutShowerShapeCuts"
+    >,
+    std::vector<DataStructures::IsolationDataWithPt>>& groupedData,
     const std::string& basePlotDirectory,
     const std::map<std::string, std::string>& triggerCombinationNameMap,
     const std::map<std::string, std::string>& triggerNameMap,
     const std::vector<std::pair<double, double>>& pT_bins,
-    double pTExclusionMax) {
-    std::cout << BOLD << YELLOW << "[INFO] Generating Isolation Purity Plots..." << RESET << std::endl;
-    
+    double pTExclusionMax
+) {
+    std::cout << "[INFO] Generating Isolation Purity Plots (split by showerCutLabel)...\n";
+
     int plotCounter = 0;
-    // Iterate over each group (trigger combination and isoEt range)
-    for (const auto& groupEntry : groupedData) {
+
+    // -------------------------------------------------------------------------
+    // Iterate over each group
+    // -------------------------------------------------------------------------
+    for (const auto& [groupKey, isoDataList] : groupedData)
+    {
         plotCounter++;
-        const auto& groupKey = groupEntry.first;
-        const auto& isoDataList = groupEntry.second;
 
-        // Unpack the group key
-        std::string triggerGroupName = std::get<0>(groupKey);
-        std::string triggerName = std::get<1>(groupKey);
-        float eCore = std::get<2>(groupKey);
-        float chi = std::get<3>(groupKey);
-        float asym = std::get<4>(groupKey);
-        float isoMin = std::get<5>(groupKey);
-        float isoMax = std::get<6>(groupKey);
-        // massWindowLabel is not used here since we are combining both mass windows
+        // Unpack the 8-element key
+        std::string triggerGroupName  = std::get<0>(groupKey);
+        std::string triggerName       = std::get<1>(groupKey);
+        float eCore                   = std::get<2>(groupKey);
+        float chi                     = std::get<3>(groupKey);
+        float asym                    = std::get<4>(groupKey);
+        float isoMin                  = std::get<5>(groupKey);
+        float isoMax                  = std::get<6>(groupKey);
+        std::string showerCutLabel    = std::get<7>(groupKey);
 
-        // Map to human-readable names
-        std::string readableTriggerGroupName = Utils::getTriggerCombinationName(
-            triggerGroupName, triggerCombinationNameMap);
+        // Convert to more readable strings (if available)
+        std::string readableTriggerGroupName =
+            Utils::getTriggerCombinationName(triggerGroupName, triggerCombinationNameMap);
 
         std::string readableTriggerName = triggerName;
-        auto triggerNameIt = triggerNameMap.find(triggerName);
-        if (triggerNameIt != triggerNameMap.end()) {
-            readableTriggerName = triggerNameIt->second;
+        auto it_nameMap = triggerNameMap.find(triggerName);
+        if (it_nameMap != triggerNameMap.end()) {
+            readableTriggerName = it_nameMap->second;
         }
 
-        // Define output directory (one level up from the mass window directories)
+        std::cout << "\n[DEBUG] Processing Purity Plot #" << plotCounter << ":\n"
+                  << "         GroupName='"       << readableTriggerGroupName << "'\n"
+                  << "         Trigger='"          << readableTriggerName      << "'\n"
+                  << "         ECore="             << eCore
+                  << ", Chi="                    << chi
+                  << ", Asymmetry="             << asym << "\n"
+                  << "         isoMin="            << isoMin
+                  << ", isoMax="                << isoMax << "\n"
+                  << "         showerCutLabel='"   << showerCutLabel << "'\n"
+                  << "         #IsoDataPoints="    << isoDataList.size() << "\n";
+
+        // ---------------------------------------------------------------------
+        // Create the base directory:
+        //   <basePlotDirectory>/<triggerGroupName>/E..._Chi..._Asym.../isolationEnergies
+        // Then add a subdirectory for the showerCutLabel
+        // ---------------------------------------------------------------------
         std::ostringstream dirStream;
         dirStream << basePlotDirectory << "/" << triggerGroupName
-                  << "/E" << Utils::formatToThreeSigFigs(eCore)
+                  << "/E"   << Utils::formatToThreeSigFigs(eCore)
                   << "_Chi" << Utils::formatToThreeSigFigs(chi)
-                  << "_Asym" << Utils::formatToThreeSigFigs(asym)
+                  << "_Asym"<< Utils::formatToThreeSigFigs(asym)
                   << "/isolationEnergies";
-        std::string dirPath = dirStream.str();
-        gSystem->mkdir(dirPath.c_str(), true);
-        
-        std::cout << BOLD << MAGENTA << "[PROCESSING PLOT " << plotCounter << "]" << RESET
-                  << " TriggerGroup: " << readableTriggerGroupName
-                  << ", Trigger: " << readableTriggerName
-                  << ", ECore: " << eCore
-                  << ", Chi: " << chi
-                  << ", Asymmetry: " << asym
-                  << std::endl;
+        std::string mainDirPath = dirStream.str();
+        gSystem->mkdir(mainDirPath.c_str(), true);
 
+        // Next level: withShowerShapeCuts / withoutShowerShapeCuts folder
+        std::string showerCutDir = mainDirPath + "/" + showerCutLabel;
+        gSystem->mkdir(showerCutDir.c_str(), true);
 
-        // Create a TCanvas
-        TCanvas canvas("canvas", "Isolation Purity", 800, 600);
+        // ---------------------------------------------------------------------
+        // Prepare a TCanvas
+        // ---------------------------------------------------------------------
+        TCanvas canvas("canvas","Isolation Purity",800,600);
 
-        // Prepare bin edges for variable bin widths
+        // ---------------------------------------------------------------------
+        // Prepare pT bin edges
+        // ---------------------------------------------------------------------
         std::vector<double> binEdges;
         for (const auto& bin : pT_bins) {
             if (bin.first >= pTExclusionMax) {
@@ -5863,239 +6257,246 @@ void GenerateIsolationPurityPlots(
             }
             binEdges.push_back(bin.first);
         }
-        // Add the upper edge of the last included bin
+        // Add the upper edge if possible
         if (!binEdges.empty()) {
-            if (pT_bins[binEdges.size() - 1].second < pTExclusionMax) {
-                binEdges.push_back(pT_bins[binEdges.size() - 1].second);
+            double lastSecond = pT_bins[binEdges.size()-1].second;
+            if (lastSecond < pTExclusionMax) {
+                binEdges.push_back(lastSecond);
             } else {
                 binEdges.push_back(pTExclusionMax);
             }
         } else {
-            // No bins to plot
-            std::cerr << "[WARNING] No pT bins to plot. Skipping plot.\n";
+            std::cerr << "[WARNING] No valid pT bins => skipping.\n";
             continue;
         }
 
         int nBins = binEdges.size() - 1;
-        double* binEdgesArray = binEdges.data();
+        if (nBins <= 0) {
+            std::cerr << "[ERROR] Not enough bins => skipping.\n";
+            continue;
+        }
+        double* binArray = &binEdges[0];
 
-        // Create a dummy histogram to set up the axes
-        TH1F* hFrame = new TH1F("hFrame", "", nBins, binEdgesArray);
+        // ---------------------------------------------------------------------
+        // Create dummy hist for axis
+        // ---------------------------------------------------------------------
+        TH1F* hFrame = new TH1F("hFrame","",nBins, binArray);
         hFrame->SetStats(0);
         hFrame->GetXaxis()->SetTitle("Leading Cluster p_{T} [GeV]");
         hFrame->GetYaxis()->SetTitle("#frac{N_{isolated prompt photons}}{N_{all isolated photons}}");
-        hFrame->GetYaxis()->SetRangeUser(0, 1.2);
+        hFrame->GetYaxis()->SetRangeUser(0,1.2);
 
-        // Remove x-axis labels and ticks
+        // Hide default numeric x-axis
         hFrame->GetXaxis()->SetLabelOffset(999);
         hFrame->GetXaxis()->SetTickLength(0);
-
-        // Draw the frame
         hFrame->Draw("AXIS");
 
-        // Create a legend
-        TLegend legend(0.2, 0.75, 0.4, 0.85);
+        // ---------------------------------------------------------------------
+        // A TLegend
+        // ---------------------------------------------------------------------
+        TLegend legend(0.2,0.75,0.4,0.85);
         legend.SetBorderSize(0);
         legend.SetTextSize(0.026);
 
-        // Access triggerColorMap from TriggerConfig namespace
-        const std::map<std::string, int>& triggerColorMap = TriggerConfig::triggerColorMap;
+        // ---------------------------------------------------------------------
+        // We'll collect purity for each pT bin by counting:
+        //   - outsideMassWindow => numerator
+        //   - total => denominator
+        // and skip zero denominators
+        // ---------------------------------------------------------------------
+        std::map<double, std::pair<int,int>> ptCounts;
+        // Key= pT center, Value= <outsideMassCounts, totalIsolatedCounts>
 
-        // Determine marker color based on triggerName
-        int markerColor = kBlack; // Default color
-        auto it_color = triggerColorMap.find(triggerName);
-        if (it_color != triggerColorMap.end()) {
-            markerColor = it_color->second;
-        }
+        // Loop over isoDataList
+        for (auto& isoDataWithPt : isoDataList) {
+            double pTmin = isoDataWithPt.ptMin;
+            double pTmax = isoDataWithPt.ptMax;
+            double pTCenter = 0.5*(pTmin+pTmax);
 
-        // Prepare vectors to collect data
-        std::vector<double> ptCenters;
-        std::vector<double> purities;
-        std::vector<double> errors;
-
-        // Map to hold counts per pT bin
-        std::map<double, std::pair<int, int>> ptBinCounts; // Key: bin center, Value: <outsideMassWindow counts, total isolated counts>
-
-        // Collect data from isoDataList
-        for (const auto& isoDataWithPt : isoDataList) {
-            double ptMin = isoDataWithPt.ptMin;
-            double ptMax = isoDataWithPt.ptMax;
-            double ptCenter = (ptMin + ptMax) / 2.0;
-
-            if (ptCenter >= pTExclusionMax) {
-                std::cout << YELLOW << "[INFO] pT center (" << ptCenter << " GeV) >= pTExclusionMax (" << pTExclusionMax << " GeV). Skipping." << RESET << std::endl;
+            // skip if > pTExclusionMax
+            if (pTCenter >= pTExclusionMax) {
                 continue;
             }
 
-            const DataStructures::IsolationData& isoData = isoDataWithPt.isoData;
+            // retrieve massWindow label from isoData:
+            const auto& isoData = isoDataWithPt.isoData;
+            // increment total
+            ptCounts[pTCenter].second += isoData.isolatedCounts;
 
-            // Accumulate counts
-            auto& counts = ptBinCounts[ptCenter];
-
+            // if outsideMassWindow => numerator
             if (isoData.massWindowLabel == "outsideMassWindow") {
-                counts.first += isoData.isolatedCounts; // outsideMassWindow counts
-                std::cout << GREEN << "[DEBUG] Accumulated outsideMassWindow counts: " << isoData.isolatedCounts << " for pT center: " << ptCenter << " GeV" << RESET << std::endl;
+                ptCounts[pTCenter].first += isoData.isolatedCounts;
             }
-
-            counts.second += isoData.isolatedCounts; // total isolated counts (both mass windows)
-            std::cout << GREEN << "[DEBUG] Accumulated total isolated counts: " << isoData.isolatedCounts << " for pT center: " << ptCenter << " GeV" << RESET << std::endl;
         }
 
-        // Calculate purity and errors
-        for (const auto& [ptCenter, counts] : ptBinCounts) {
-            int outsideCounts = counts.first;
-            int totalIsolatedCounts = counts.second;
+        // Now compute purity & fill vectors
+        std::vector<double> vCenters;
+        std::vector<double> vPurities;
+        std::vector<double> vErrors;
 
-            if (totalIsolatedCounts == 0) {
-                std::cout << YELLOW << "[WARNING] Total isolated counts is zero for pT center: " << ptCenter << " GeV. Skipping purity calculation." << RESET << std::endl;
+        for (auto& kv : ptCounts) {
+            double pTCenter = kv.first;
+            int outsideCt   = kv.second.first;
+            int totalCt     = kv.second.second;
+
+            if (totalCt == 0) {
                 continue;
             }
 
-            double purity = static_cast<double>(outsideCounts) / totalIsolatedCounts;
-            double error = std::sqrt(purity * (1 - purity) / totalIsolatedCounts); // Binomial error
+            double purity = (double) outsideCt / (double) totalCt;
+            double err    = std::sqrt( purity*(1.0 - purity) / (double) totalCt );
 
-            ptCenters.push_back(ptCenter);
-            purities.push_back(purity);
-            errors.push_back(error);
-            
-            std::cout << CYAN << "[CALCULATION] pT center: " << ptCenter << " GeV, Purity: " << purity
-                      << ", Error: " << error << RESET << std::endl;
+            vCenters.push_back(pTCenter);
+            vPurities.push_back(purity);
+            vErrors.push_back(err);
+
+            std::cout << "[DEBUG] pTCenter=" << pTCenter
+                      << ", outside=" << outsideCt
+                      << ", total=" << totalCt
+                      << " => purity=" << purity
+                      << " +/- " << err << "\n";
         }
 
-        if (ptCenters.empty()) {
-            std::cerr << "[WARNING] No valid data points for trigger '" << readableTriggerName << "'. Skipping.\n";
+        if (vCenters.empty()) {
+            std::cerr << "[WARNING] No valid data => skipping.\n";
             delete hFrame;
             continue;
         }
 
-        // Create a TGraphErrors
-        TGraphErrors* graph = new TGraphErrors(ptCenters.size(),
-                                               ptCenters.data(),
-                                               purities.data(),
-                                               nullptr,
-                                               errors.data());
+        // ---------------------------------------------------------------------
+        // Build TGraphErrors
+        // ---------------------------------------------------------------------
+        TGraphErrors* gPurity = new TGraphErrors(vCenters.size(),
+                                                 &vCenters[0],
+                                                 &vPurities[0],
+                                                 nullptr,
+                                                 &vErrors[0]);
+        // figure out color from the triggerName
+        int markerColor = kBlack;
+        auto itColor = TriggerConfig::triggerColorMap.find(triggerName);
+        if (itColor != TriggerConfig::triggerColorMap.end()) {
+            markerColor = itColor->second;
+        }
+        gPurity->SetMarkerStyle(20);
+        gPurity->SetMarkerColor(markerColor);
+        gPurity->SetLineColor(markerColor);
+        gPurity->SetLineWidth(2);
+        gPurity->Draw("P SAME");
 
-        graph->SetMarkerStyle(20);
-        graph->SetMarkerColor(markerColor);
-        graph->SetLineColor(markerColor);
-        graph->SetLineWidth(2);
-
-        // Draw the graph
-        graph->Draw("P SAME");
-        std::cout << GREEN << "[INFO] Plotted Isolation Purity graph for Trigger: " << readableTriggerName << RESET << std::endl;
-        // Add entry to legend
-        legend.AddEntry(graph, readableTriggerName.c_str(), "p");
-
-        // Draw legend
+        legend.AddEntry(gPurity, readableTriggerName.c_str(), "p");
         legend.Draw();
-        std::cout << GREEN << "[INFO] Legend drawn." << RESET << std::endl;
 
-        // Draw custom x-axis ticks and labels
+        // ---------------------------------------------------------------------
+        // Add a dashed line at y=1
+        // ---------------------------------------------------------------------
         double xMin = binEdges.front();
         double xMax = binEdges.back();
-        double yAxisMin = hFrame->GetMinimum();
-        double yAxisMax = hFrame->GetMaximum();
+        TLine lineY1(xMin,1.0, xMax,1.0);
+        lineY1.SetLineStyle(2);
+        lineY1.Draw("SAME");
 
-        TLine* yLine = new TLine(xMin, 1.0, xMax, 1.0);
-        yLine->SetLineColor(kBlack);
-        yLine->SetLineStyle(2); // Dashed
-        yLine->SetLineWidth(2); // Optional: set line width for better visibility
-        yLine->Draw("SAME");
-        std::cout << GREEN << "[INFO] Drawn black dashed line at y = 1.0." << RESET << std::endl;
+        // ---------------------------------------------------------------------
+        // Manual x-axis ticks
+        // ---------------------------------------------------------------------
+        double yMin = hFrame->GetMinimum();
+        double yMax = hFrame->GetMaximum();
+        double tickSize = (yMax-yMin)*0.02;
+        double labelOffset = (yMax-yMin)*0.05;
 
-        
-        double tickSize = (yAxisMax - yAxisMin) * 0.02;
-        double labelOffset = (yAxisMax - yAxisMin) * 0.05;
         TLatex latex;
         latex.SetTextSize(0.035);
-        latex.SetTextAlign(22); // Center alignment
+        latex.SetTextAlign(22);
 
-        // Draw x-axis line
-        TLine xAxisLine(xMin, yAxisMin, xMax, yAxisMin);
+        TLine xAxisLine(xMin,yMin, xMax,yMin);
         xAxisLine.Draw("SAME");
-        std::cout << GREEN << "[DEBUG] X-axis line drawn." << RESET << std::endl;
 
-        // Draw ticks and labels at bin edges
-        for (size_t i = 0; i < binEdges.size(); ++i) {
-            double xPos = binEdges[i];
-            double yPos = yAxisMin;
-
-            // Draw tick
-            TLine* tick = new TLine(xPos, yPos, xPos, yPos - tickSize);
+        for (size_t i=0; i<binEdges.size(); i++) {
+            double bx = binEdges[i];
+            TLine* tick = new TLine(bx,yMin, bx,yMin - tickSize);
             tick->Draw("SAME");
 
-            // Get pT value for label
-            double pTValue = binEdges[i];
-
-            // Format label to show one decimal place
-            std::ostringstream labelStream;
-            labelStream << std::fixed << std::setprecision(1) << pTValue;
-            std::string label = labelStream.str();
-
-            // Draw label
-            latex.DrawLatex(xPos, yPos - labelOffset, label.c_str());
-            std::cout << GREEN << "[DEBUG] Tick and label drawn for pT: " << pTValue << " GeV." << RESET << std::endl;
+            std::ostringstream lb;
+            lb << std::fixed << std::setprecision(1) << bx;
+            latex.DrawLatex(bx, yMin - labelOffset, lb.str().c_str());
         }
 
-        // Redraw the axes to ensure labels are on top
+        // ---------------------------------------------------------------------
+        // Add textual labels
+        // ---------------------------------------------------------------------
         canvas.RedrawAxis();
 
-        // Add labels using TLatex in the top-left corner
-        TLatex labelText;
-        labelText.SetNDC();
-        labelText.SetTextSize(0.024);
-        labelText.SetTextColor(kBlack);
+        TLatex lbl;
+        lbl.SetNDC();
+        lbl.SetTextSize(0.024);
+        lbl.SetTextColor(kBlack);
 
-        double xStart = 0.18; // Starting x-coordinate (left side)
-        double yStartLabel = 0.45; // Starting y-coordinate
-        double yStepLabel = 0.045;  // Vertical spacing between lines
+        double xLbl = 0.18;
+        double yLbl = 0.45;
+        double dy   = 0.045;
 
-        // Prepare label strings
-        std::ostringstream oss;
-        oss << "#font[62]{Trigger Group:} " << readableTriggerGroupName;
-        labelText.DrawLatex(xStart, yStartLabel, oss.str().c_str());
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{TriggerGroup:} " << readableTriggerGroupName;
+            lbl.DrawLatex(xLbl, yLbl, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{Trigger:} " << readableTriggerName;
+            lbl.DrawLatex(xLbl, yLbl - dy, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{ECore #geq} " << eCore << " GeV";
+            lbl.DrawLatex(xLbl, yLbl - 2*dy, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{#chi^{2} <} " << chi;
+            lbl.DrawLatex(xLbl, yLbl - 3*dy, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{Asymmetry <} " << asym;
+            lbl.DrawLatex(xLbl, yLbl - 4*dy, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{#Delta R_{cone} <} 0.3";
+            lbl.DrawLatex(xLbl, yLbl - 5*dy, oss.str().c_str());
+        }
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{E_{T, iso} <} 6 GeV";
+            lbl.DrawLatex(xLbl, yLbl - 6*dy, oss.str().c_str());
+        }
 
-        oss.str("");
-        oss << "#font[62]{Trigger:} " << readableTriggerName;
-        labelText.DrawLatex(xStart, yStartLabel - yStepLabel, oss.str().c_str());
+        // Also note the showerCutLabel somewhere if you want
+        // (e.g. top left or near the folder name):
+        {
+            std::ostringstream oss;
+            oss << "#font[62]{ShowerCut:} " << showerCutLabel;
+            lbl.DrawLatex(xLbl, yLbl - 7*dy, oss.str().c_str());
+        }
 
-        oss.str("");
-        oss << "#font[62]{ECore #geq} " << eCore << " GeV";
-        labelText.DrawLatex(xStart, yStartLabel - 2 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{#chi^{2} <} " << chi;
-        labelText.DrawLatex(xStart, yStartLabel - 3 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{Asymmetry <} " << asym;
-        labelText.DrawLatex(xStart, yStartLabel - 4 * yStepLabel, oss.str().c_str());
-
-        oss.str("");
-        oss << "#font[62]{#Delta R_{cone} <} 0.3";
-        labelText.DrawLatex(xStart, yStartLabel - 5 * yStepLabel, oss.str().c_str());
-        
-        oss.str("");
-        oss << "#font[62]{E_{T, iso} <} 6 GeV";
-        labelText.DrawLatex(xStart, yStartLabel - 6 * yStepLabel, oss.str().c_str());
-
-        // Force canvas update before saving
         canvas.Modified();
         canvas.Update();
-        std::cout << GREEN << "[INFO] Canvas updated." << RESET << std::endl;
 
+        // ---------------------------------------------------------------------
+        // Save the plot
+        // ---------------------------------------------------------------------
+        std::ostringstream outName;
+        outName << showerCutDir
+                << "/IsolationPurity_vs_pT_"
+                << triggerName << ".png";
+        std::string outPath = outName.str();
+        canvas.SaveAs(outPath.c_str());
+        std::cout << "[INFO] Saved => " << outPath << "\n";
 
-        // Save the canvas
-        std::ostringstream outputFilePathStream;
-        outputFilePathStream << dirPath << "/IsolationPurity_vs_pT_" << triggerName << ".png";
-        std::string outputFilePath = outputFilePathStream.str();
-        canvas.SaveAs(outputFilePath.c_str());
-        std::cout << BOLD << BLUE << "[SAVED] Isolation Purity plot saved to: " << outputFilePath << RESET << std::endl;
-
-        // Clean up
         delete hFrame;
-        // Note: The tick lines are managed by ROOT and don't need explicit deletion
+        // The TCanvas destructor will clean up the TLines, TGraph, etc.
     }
+
+    std::cout << "[INFO] Done generating isolation purity plots, with separate subfolders.\n";
 }
 
 // Define CombinedPurityData structure
@@ -6500,6 +6901,7 @@ void ProcessIsolationData(
         isoDataWithPt.isoMax = isoMax;
         isoDataWithPt.triggerName = triggerName;
         
+        isoDataWithPt.isoData    = isoData;
         // Add to the grouped data
         groupedData[groupKey][isoEtRange].push_back(isoDataWithPt);
 
@@ -6916,122 +7318,134 @@ void PlotCombinedHistograms(
     const std::string& outputDirectory,
     const std::vector<std::string>& combinedRootFiles,
     const std::map<std::string, std::vector<int>>& combinationToValidRuns,
-    const std::string& fitFunctionType = "sigmoid", bool fitOnly = false, const std::string& histogramType = "max8x8") {
-    
-    // 1) Determine histogram prefix based on histogramType
+    const std::string& fitFunctionType = "sigmoid",
+    bool fitOnly = true,
+    const std::string& histogramType = "maxEcore")
+{
+    // --------------------------------------------------------------------------
+    // 1) Determine histogram prefix based on histogramType (for photons/minbias)
+    // --------------------------------------------------------------------------
+    std::cout << "[DEBUG] PlotCombinedHistograms() starting...\n";
+    std::cout << "       # of combinedRootFiles = " << combinedRootFiles.size() << "\n";
+    std::cout << "       histogramType = " << histogramType << "\n";
+
     std::string histPrefix;
     std::string xAxisTitle;
     std::string xAxisTitleTurnOn;
+
     if (histogramType == "maxEcore")
     {
-        // Use max Ecore histograms
-        histPrefix = "h_maxEnergyClus_";
-        xAxisTitle = "Maximum Cluster Energy [GeV]";
-        xAxisTitleTurnOn = "Maximum Cluster Energy [GeV]";
+        histPrefix        = "h_maxEnergyClus_";
+        xAxisTitle        = "Maximum Cluster Energy [GeV]";
+        xAxisTitleTurnOn  = "Maximum Cluster Energy [GeV]";
     }
     else
     {
-        // Default behavior: use h8x8 Tower Energy histograms
-        histPrefix = "h8by8TowerEnergySum_";
-        xAxisTitle = "Maximum 8x8 EMCal Tower Energy Sum (EMCal) [GeV]";
-        xAxisTitleTurnOn = "Maximum 8x8 Energy Sum [GeV]";
+        // Default to 8x8 Tower Energy hist
+        histPrefix        = "h8by8TowerEnergySum_";
+        xAxisTitle        = "Maximum 8x8 EMCal Tower Energy Sum [GeV]";
+        xAxisTitleTurnOn  = "Maximum 8x8 Energy Sum [GeV]";
     }
 
+    // Jet triggers always use this, ignoring histogramType:
+    const std::string jetHistPrefix = "h_jet_energy_";
+
+    // --------------------------------------------------------------------------
     // 2) Remove trailing underscore from histPrefix for file naming
+    // --------------------------------------------------------------------------
     std::string histPrefixForFile = histPrefix;
-    if (!histPrefixForFile.empty() && histPrefixForFile.back() == '_')
-    {
+    if (!histPrefixForFile.empty() && histPrefixForFile.back() == '_') {
         histPrefixForFile.pop_back();
     }
 
-    // 3) Pull in triggers, color maps, etc.
-    const std::vector<std::string>& allTriggers = TriggerConfig::allTriggers;
+    // --------------------------------------------------------------------------
+    // 3) Pull in triggers, color maps, etc. from TriggerConfig
+    // --------------------------------------------------------------------------
+    const std::vector<std::string>& allTriggers    = TriggerConfig::allTriggers;
     const std::vector<std::string>& photonTriggers = TriggerConfig::photonTriggers;
-    const auto& triggerColorMap = TriggerConfig::triggerColorMap;
-    const auto& triggerNameMap = TriggerConfig::triggerNameMap;
+    const auto& triggerColorMap   = TriggerConfig::triggerColorMap;
+    const auto& triggerNameMap    = TriggerConfig::triggerNameMap;
 
+    // For storing 99%-efficiency points from the fits
     std::map<std::string, double> triggerEfficiencyPoints;
     std::map<std::string, std::map<std::string, double>> combinationToTriggerEfficiencyPoints;
 
+    // --------------------------------------------------------------------------
     // 4) Base directory for plots
+    // --------------------------------------------------------------------------
     std::string basePlotDirectory = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots";
-    gSystem->mkdir(basePlotDirectory.c_str(), true); // Create if doesn't exist
+    gSystem->mkdir(basePlotDirectory.c_str(), true);
 
+    // --------------------------------------------------------------------------
     // 5) Function to draw run numbers on canvas
+    // --------------------------------------------------------------------------
     auto drawRunNumbersOnCanvas = [](const std::vector<int>& runNumbers, const std::string& firmwareStatus)
     {
-        std::cout << "drawRunNumbersOnCanvas: Number of runs = " << runNumbers.size() << std::endl;
+        std::cout << "[DEBUG] drawRunNumbersOnCanvas: # of runs = " << runNumbers.size() << "\n";
 
         TLatex runNumbersLatex;
         runNumbersLatex.SetNDC();
-        runNumbersLatex.SetTextAlign(13); // Align at top-left
+        runNumbersLatex.SetTextAlign(13); // top-left
         runNumbersLatex.SetTextColor(kBlack);
 
         double xStart, xEnd, yStart, yEnd, textSize;
         double xSpacingFactor, ySpacingFactor;
         int numColumns;
 
-        // Some example-based customizing
-        if (runNumbers.size() == 692)
-        {
+        // Example-based customizing
+        if (runNumbers.size() == 692) {
             numColumns = 27;
-            textSize = 0.012;
-            xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9;  yEnd = 0.45;
+            textSize   = 0.012;
+            xStart     = 0.54; xEnd = 0.93;
+            yStart     = 0.9;  yEnd = 0.45;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.8;
         }
-        else if (runNumbers.size() == 71)
-        {
+        else if (runNumbers.size() == 71) {
             numColumns = 5;
-            textSize = 0.022;
-            xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9;  yEnd = 0.45;
+            textSize   = 0.022;
+            xStart     = 0.54; xEnd = 0.93;
+            yStart     = 0.9;  yEnd = 0.45;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.8;
         }
-        else if (runNumbers.size() == 125)
-        {
+        else if (runNumbers.size() == 125) {
             numColumns = 8;
-            textSize = 0.022;
-            xStart = 0.52; xEnd = 0.93;
-            yStart = 0.9;  yEnd = 0.45;
+            textSize   = 0.022;
+            xStart     = 0.52; xEnd = 0.93;
+            yStart     = 0.9;  yEnd = 0.45;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
-        else if (runNumbers.size() == 54)
-        {
+        else if (runNumbers.size() == 54) {
             numColumns = 3;
-            textSize = 0.025;
-            xStart = 0.57; xEnd = 0.94;
-            yStart = 0.9;  yEnd = 0.42;
+            textSize   = 0.025;
+            xStart     = 0.57; xEnd = 0.94;
+            yStart     = 0.9;  yEnd = 0.42;
             xSpacingFactor = 0.8;
             ySpacingFactor = 0.92;
         }
-        else if (runNumbers.size() == 126)
-        {
+        else if (runNumbers.size() == 126) {
             numColumns = 8;
-            textSize = 0.022;
-            xStart = 0.52; xEnd = 0.93;
-            yStart = 0.9;  yEnd = 0.45;
+            textSize   = 0.022;
+            xStart     = 0.52; xEnd = 0.93;
+            yStart     = 0.9;  yEnd = 0.45;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
-        else if (runNumbers.size() == 146)
-        {
+        else if (runNumbers.size() == 146) {
             numColumns = 8;
-            textSize = 0.018;
-            xStart = 0.54; xEnd = 0.93;
-            yStart = 0.9;  yEnd = 0.5;
+            textSize   = 0.018;
+            xStart     = 0.54; xEnd = 0.93;
+            yStart     = 0.9;  yEnd = 0.5;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
-        else
-        {
+        else {
             numColumns = (runNumbers.size() <= 20) ? 2 : 5;
-            textSize = 0.03;
-            xStart = 0.7; xEnd = 0.9;
-            yStart = 0.85; yEnd = 0.3;
+            textSize   = 0.03;
+            xStart     = 0.7;  xEnd = 0.9;
+            yStart     = 0.85; yEnd = 0.3;
             xSpacingFactor = 1.0;
             ySpacingFactor = 1.0;
         }
@@ -7040,38 +7454,31 @@ void PlotCombinedHistograms(
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
         headerText << runNumbers.size() << " runs";
-        if (!firmwareStatus.empty())
-        {
+        if (!firmwareStatus.empty()) {
             headerText << " (" << firmwareStatus << ")";
         }
         runNumbersLatex.DrawLatex(0.42, 0.9, headerText.str().c_str());
 
-        // Some run-number sets we skip plotting
-        if (runNumbers.size() == 257 || runNumbers.size() == 251 || runNumbers.size() == 102 ||
+        // Some sets we skip
+        if (runNumbers.size() == 646 || runNumbers.size() == 251 || runNumbers.size() == 102 ||
             runNumbers.size() == 101 || runNumbers.size() == 240 || runNumbers.size() == 142 ||
             runNumbers.size() == 440 || runNumbers.size() == 443 || runNumbers.size() == 725 ||
             runNumbers.size() == 100 || runNumbers.size() == 250 || runNumbers.size() == 141 ||
             runNumbers.size() == 254 || runNumbers.size() == 641 || runNumbers.size() == 291 ||
             runNumbers.size() == 326 || runNumbers.size() == 723 || runNumbers.size() == 382 ||
-            runNumbers.size() == 347 || runNumbers.size() == 88)
-        {
-            std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692." << std::endl;
+            runNumbers.size() == 347 || runNumbers.size() == 88  || runNumbers.size() == 644) {
+            std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692.\n";
             return;
         }
 
         runNumbersLatex.SetTextSize(textSize);
 
         int numRows = (runNumbers.size() + numColumns - 1) / numColumns;
-
-        // Grid for run numbers
         std::vector<std::vector<std::string>> grid(numRows, std::vector<std::string>(numColumns, ""));
         int runIndex = 0;
-        for (int col = 0; col < numColumns; ++col)
-        {
-            for (int row = 0; row < numRows; ++row)
-            {
-                if (runIndex < (int)runNumbers.size())
-                {
+        for (int col = 0; col < numColumns; ++col) {
+            for (int row = 0; row < numRows; ++row) {
+                if (runIndex < (int)runNumbers.size()) {
                     grid[row][col] = std::to_string(runNumbers[runIndex]);
                     ++runIndex;
                 }
@@ -7081,13 +7488,10 @@ void PlotCombinedHistograms(
         double xSpacing = xSpacingFactor * (xEnd - xStart) / numColumns;
         double ySpacing = ySpacingFactor * (yStart - yEnd) / (numRows + 1);
 
-        for (int row = 0; row < numRows; ++row)
-        {
+        for (int row = 0; row < numRows; ++row) {
             double yPos = yStart - (row + 1) * ySpacing;
-            for (int col = 0; col < numColumns; ++col)
-            {
-                if (!grid[row][col].empty())
-                {
+            for (int col = 0; col < numColumns; ++col) {
+                if (!grid[row][col].empty()) {
                     double xPos = xStart + col * xSpacing;
                     runNumbersLatex.DrawLatex(xPos, yPos, grid[row][col].c_str());
                 }
@@ -7095,72 +7499,69 @@ void PlotCombinedHistograms(
         }
     };
 
+    // --------------------------------------------------------------------------
     // 6) Loop over each combined ROOT file
+    // --------------------------------------------------------------------------
     for (const auto& rootFileName : combinedRootFiles)
     {
         std::string rootFilePath = outputDirectory + "/" + rootFileName;
+        std::cout << "\n[DEBUG] ------------------------------------------------------\n";
+        std::cout << "[DEBUG] Processing combined ROOT file: " << rootFilePath << "\n";
 
-        // Extract triggers from filename
+        // Extract triggers
         std::vector<std::string> triggers = ExtractTriggersFromFilename(rootFileName, allTriggers);
+        std::cout << "[DEBUG] Extracted triggers => [ ";
+        for (auto& t : triggers) std::cout << t << " ";
+        std::cout << "]\n";
 
-        // Check if we have a firmware tag in the filename
+        // Firmware tag
         std::string firmwareTag;
-        if (Utils::EndsWith(rootFileName, "_beforeTriggerFirmwareUpdate_Combined.root"))
-        {
+        if (Utils::EndsWith(rootFileName, "_beforeTriggerFirmwareUpdate_Combined.root")) {
             firmwareTag = "_beforeTriggerFirmwareUpdate";
         }
-        else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root"))
-        {
+        else if (Utils::EndsWith(rootFileName, "_afterTriggerFirmwareUpdate_Combined.root")) {
             firmwareTag = "_afterTriggerFirmwareUpdate";
         }
 
-        // Firmware status
         std::string firmwareStatus;
-        if (firmwareTag == "_beforeTriggerFirmwareUpdate")
-        {
+        if (firmwareTag == "_beforeTriggerFirmwareUpdate") {
             firmwareStatus = "#bf{Before firmware update at run 47289}";
         }
-        else if (firmwareTag == "_afterTriggerFirmwareUpdate")
-        {
+        else if (firmwareTag == "_afterTriggerFirmwareUpdate") {
             firmwareStatus = "#bf{After firmware update at run 47289}";
         }
-        else
-        {
-            firmwareStatus = "";
-        }
-
-        std::cout << "Processing file: " << rootFileName << std::endl;
-        std::cout << "Triggers found: ";
-        for (const auto& trig : triggers) std::cout << trig << " ";
-        std::cout << std::endl;
 
         // Build combinationName
         std::string combinationName;
-        for (const auto& trig : triggers)
-        {
+        for (const auto& trig : triggers) {
             combinationName += trig + "_";
         }
-        if (!combinationName.empty()) combinationName.pop_back(); // remove trailing underscore
-        combinationName += firmwareTag; // append firmware tag if any
+        if (!combinationName.empty()) combinationName.pop_back();
+        combinationName += firmwareTag;
 
-        // Sanitize for directory
+        // Sanitize
         std::string sanitizedCombinationName = combinationName;
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), '/', '_');
         std::replace(sanitizedCombinationName.begin(), sanitizedCombinationName.end(), ' ', '_');
 
-        // Create subdirectory for plots
+        // Make subdir for plots
         std::string plotDirectory = basePlotDirectory + "/" + sanitizedCombinationName;
         gSystem->mkdir(plotDirectory.c_str(), true);
 
-        // Open the combined ROOT file
+        // ----------------------------------------------------------------------
+        // Open combined root file
+        // ----------------------------------------------------------------------
         TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
-        if (!inputFile || inputFile->IsZombie())
-        {
-            std::cerr << "Error: Could not open file " << rootFilePath << std::endl;
+        if (!inputFile || inputFile->IsZombie()) {
+            std::cerr << "[ERROR] Could not open file => " << rootFilePath << "\n";
+            if (inputFile) { delete inputFile; }
             continue;
         }
+        std::cout << "[DEBUG] Successfully opened => " << rootFilePath << "\n";
 
-        // 7) Overlay the main 8x8 tower hist
+        // ----------------------------------------------------------------------
+        // 7) PHOTON overlay with histPrefix
+        // ----------------------------------------------------------------------
         TCanvas* canvas = new TCanvas("canvas", "Overlay Plot", 800, 600);
         TLegend* legend = new TLegend(0.5, 0.58, 0.8, 0.88);
         legend->SetTextSize(0.028);
@@ -7169,24 +7570,32 @@ void PlotCombinedHistograms(
 
         for (const auto& trigger : triggers)
         {
-            TDirectory* triggerDir = inputFile->GetDirectory(trigger.c_str());
-            if (!triggerDir)
+            // Exclude Jet triggers from this overlay
+            if (trigger == "Jet_8_GeV_plus_MBD_NS_geq_1" ||
+                trigger == "Jet_10_GeV_plus_MBD_NS_geq_1" ||
+                trigger == "Jet_12_GeV_plus_MBD_NS_geq_1")
             {
-                std::cerr << "Trigger directory '" << trigger
-                          << "' not found in file " << rootFileName << std::endl;
                 continue;
             }
+
+            TDirectory* triggerDir = inputFile->GetDirectory(trigger.c_str());
+            if (!triggerDir) {
+                std::cerr << "[WARN] Directory '" << trigger
+                          << "' not found => " << rootFileName << "\n";
+                continue;
+            }
+
             std::string histName = histPrefix + trigger;
             TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
-            if (!hist)
-            {
-                std::cerr << "Warning: Histogram " << histName
-                          << " not found in file " << rootFileName << std::endl;
+            if (!hist) {
+                std::cerr << "[WARN] Hist => " << histName
+                          << " not found => " << rootFileName << "\n";
                 continue;
             }
 
             TH1* histClone = (TH1*)hist->Clone();
             histClone->SetDirectory(0);
+
             int color = kBlack;
             auto itC = triggerColorMap.find(trigger);
             if (itC != triggerColorMap.end()) color = itC->second;
@@ -7197,20 +7606,18 @@ void PlotCombinedHistograms(
             histClone->GetXaxis()->SetTitle(xAxisTitle.c_str());
             histClone->GetYaxis()->SetTitle("Prescaled Counts");
 
-            if (firstDraw)
-            {
+            if (firstDraw) {
                 histClone->Draw("HIST");
                 firstDraw = false;
             }
-            else
-            {
+            else {
                 histClone->Draw("HIST SAME");
             }
 
+            // Legend
             std::string displayTriggerName = trigger;
             auto it_name = triggerNameMap.find(trigger);
-            if (it_name != triggerNameMap.end())
-            {
+            if (it_name != triggerNameMap.end()) {
                 displayTriggerName = it_name->second;
             }
             legend->AddEntry(histClone, displayTriggerName.c_str(), "l");
@@ -7218,15 +7625,11 @@ void PlotCombinedHistograms(
 
         legend->Draw();
 
-        // Optionally draw run numbers
         auto itRunNumbers = combinationToValidRuns.find(combinationName);
-        if (itRunNumbers != combinationToValidRuns.end())
-        {
-            const std::vector<int>& validRuns = itRunNumbers->second;
-            drawRunNumbersOnCanvas(validRuns, firmwareStatus);
+        if (itRunNumbers != combinationToValidRuns.end()) {
+            drawRunNumbersOnCanvas(itRunNumbers->second, firmwareStatus);
         }
-        else
-        {
+        else {
             TLatex text;
             text.SetNDC();
             text.SetTextAlign(13);
@@ -7236,68 +7639,56 @@ void PlotCombinedHistograms(
 
         canvas->Modified();
         canvas->Update();
-
-        std::string outputFileName = plotDirectory + "/" + histPrefixForFile + "_Overlay.png";
-        canvas->SaveAs(outputFileName.c_str());
-        std::cout << "Saved plot to " << outputFileName << std::endl;
+        std::string outFileName = plotDirectory + "/" + histPrefixForFile + "_Overlay.png";
+        canvas->SaveAs(outFileName.c_str());
+        std::cout << "[INFO] Saved overlay => " << outFileName << "\n";
         delete canvas;
 
-        // 8) Photon turn-on block
+        // ----------------------------------------------------------------------
+        // 8) Photon turn-on
+        // ----------------------------------------------------------------------
         std::vector<std::string> photonTriggersInCombination;
-        for (const auto& trig : triggers)
-        {
-            if (std::find(photonTriggers.begin(), photonTriggers.end(), trig) != photonTriggers.end())
-            {
+        for (const auto& trig : triggers) {
+            if (std::find(photonTriggers.begin(), photonTriggers.end(), trig) != photonTriggers.end()) {
                 photonTriggersInCombination.push_back(trig);
             }
         }
-        if (!photonTriggersInCombination.empty())
-        {
+        if (!photonTriggersInCombination.empty()) {
             TDirectory* minbiasDir = inputFile->GetDirectory("MBD_NandS_geq_1");
-            if (!minbiasDir)
-            {
-                std::cerr << "Warning: Minbias directory 'MBD_NandS_geq_1' not found in "
-                          << rootFileName << std::endl;
+            if (!minbiasDir) {
+                std::cerr << "[WARN] MBD_NandS_geq_1 dir missing => " << rootFileName << "\n";
             }
-            else
-            {
+            else {
                 std::string minbiasHistName = histPrefix + "MBD_NandS_geq_1";
                 TH1* minbiasHist = (TH1*)minbiasDir->Get(minbiasHistName.c_str());
-                if (!minbiasHist)
-                {
-                    std::cerr << "Warning: Minbias histogram " << minbiasHistName
-                              << " not found in file " << rootFileName << std::endl;
+                if (!minbiasHist) {
+                    std::cerr << "[WARN] minbias hist => " << minbiasHistName
+                              << " not found => " << rootFileName << "\n";
                 }
-                else
-                {
-                    TCanvas* canvasTurnOn = new TCanvas("canvasTurnOn", "Turn-On Plot", 800, 600);
-                    TLegend* legendTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
-                    legendTurnOn->SetTextSize(0.028);
+                else {
+                    TCanvas* cPhotonTurnOn = new TCanvas("cPhotonTurnOn", "Photon Turn-On", 800,600);
+                    TLegend* legPhotonTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
+                    legPhotonTurnOn->SetTextSize(0.028);
                     bool firstDrawTurnOn = true;
 
-                    for (const auto& photonTrigger : photonTriggersInCombination)
-                    {
-                        TDirectory* photonDir = inputFile->GetDirectory(photonTrigger.c_str());
-                        if (!photonDir)
-                        {
-                            std::cerr << "Warning: Photon trigger directory '"
-                                      << photonTrigger << "' not found in file "
-                                      << rootFileName << std::endl;
+                    for (const auto& photonTrigger : photonTriggersInCombination) {
+                        TDirectory* pDir = inputFile->GetDirectory(photonTrigger.c_str());
+                        if (!pDir) {
+                            std::cerr << "[WARN] Photon trig dir => " << photonTrigger
+                                      << " not found => " << rootFileName << "\n";
                             continue;
                         }
                         std::string photonHistName = histPrefix + photonTrigger;
-                        TH1* photonHist = (TH1*)photonDir->Get(photonHistName.c_str());
-                        if (!photonHist)
-                        {
-                            std::cerr << "Warning: Histogram " << photonHistName
-                                      << " not found in file " << rootFileName << std::endl;
+                        TH1* photonHist = (TH1*)pDir->Get(photonHistName.c_str());
+                        if (!photonHist) {
+                            std::cerr << "[WARN] Hist => " << photonHistName
+                                      << " not found => " << rootFileName << "\n";
                             continue;
                         }
 
-                        std::string ratioHistName = "ratio_" + photonTrigger;
-                        TH1* ratioHist = (TH1*)photonHist->Clone(ratioHistName.c_str());
+                        TH1* ratioHist = (TH1*)photonHist->Clone(("ratio_" + photonTrigger).c_str());
                         ratioHist->SetDirectory(0);
-                        ratioHist->Divide(photonHist, minbiasHist, 1.0, 1.0, "B");
+                        ratioHist->Divide(photonHist, minbiasHist, 1.0,1.0,"B");
 
                         int color = kBlack;
                         auto itColor = triggerColorMap.find(photonTrigger);
@@ -7306,83 +7697,88 @@ void PlotCombinedHistograms(
                         ratioHist->SetMarkerStyle(20);
                         ratioHist->SetMarkerColor(color);
                         ratioHist->SetLineColor(color);
-                        
-                        ratioHist->SetTitle(("Turn-On Curve for " + combinationName).c_str());
+                        ratioHist->SetTitle(("Turn-On for " + combinationName).c_str());
                         ratioHist->GetXaxis()->SetTitle(xAxisTitleTurnOn.c_str());
-                        ratioHist->GetYaxis()->SetTitle("Ratio to MBD NS #geq 1");
+                        ratioHist->GetYaxis()->SetTitle("Ratio to MBD");
                         ratioHist->GetYaxis()->SetRangeUser(0, 2.0);
 
-                        if (firstDrawTurnOn)
-                        {
+                        if (firstDrawTurnOn) {
                             ratioHist->Draw("E1");
                             firstDrawTurnOn = false;
-                        }
-                        else
-                        {
+                        } else {
                             ratioHist->Draw("E1 SAME");
                         }
 
-                        TLine* line = new TLine(ratioHist->GetXaxis()->GetXmin(), 1,
-                                                ratioHist->GetXaxis()->GetXmax(), 1);
+                        TLine* line = new TLine(ratioHist->GetXaxis()->GetXmin(),1,
+                                                ratioHist->GetXaxis()->GetXmax(),1);
                         line->SetLineStyle(1);
                         line->SetLineColor(kBlack);
                         line->Draw("SAME");
 
-                        std::string displayPhotonTriggerName = photonTrigger;
-                        auto it_name = triggerNameMap.find(photonTrigger);
-                        if (it_name != triggerNameMap.end())
-                        {
-                            displayPhotonTriggerName = it_name->second;
+                        // Fit if available
+                        std::string displayPhoton = photonTrigger;
+                        auto it_nm = triggerNameMap.find(photonTrigger);
+                        if (it_nm != triggerNameMap.end()) {
+                            displayPhoton = it_nm->second;
                         }
-
                         std::ostringstream legendEntry;
-                        legendEntry << displayPhotonTriggerName;
+                        legendEntry << displayPhoton;
 
-                        // Attempt to find fit parameters
+                        // Search fit parameters
                         std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
                         auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
-                        if (it_fitParams == TriggerConfig::triggerFitParameters.end())
-                        {
-                            // Try combinationName w/o firmware
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
                             std::string comboNoFirmware = Utils::stripFirmwareTag(combinationName);
                             key = std::make_pair(comboNoFirmware, photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
-                        if (it_fitParams == TriggerConfig::triggerFitParameters.end())
-                        {
-                            // Try empty combination
+                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
                             key = std::make_pair("", photonTrigger);
                             it_fitParams = TriggerConfig::triggerFitParameters.find(key);
                         }
 
-                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end())
-                        {
+                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
                             DataStructures::FitParameters params = it_fitParams->second;
                             TF1* fitFunc = nullptr;
-                            if (fitFunctionType == "sigmoid")
-                            {
-                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
-                                                            params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
-                                                            params.amplitudeMin, params.amplitudeMax,
-                                                            params.slopeMin, params.slopeMax,
-                                                            params.xOffsetMin, params.xOffsetMax);
+                            if (fitFunctionType == "sigmoid") {
+                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(),
+                                                            0.0, 20.0,
+                                                            params.amplitudeEstimate,
+                                                            params.slopeEstimate,
+                                                            params.xOffsetEstimate,
+                                                            params.amplitudeMin,
+                                                            params.amplitudeMax,
+                                                            params.slopeMin,
+                                                            params.slopeMax,
+                                                            params.xOffsetMin,
+                                                            params.xOffsetMax);
                             }
-                            else if (fitFunctionType == "erf")
-                            {
-                                fitFunc = Utils::erfFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
-                                                        params.amplitudeEstimate, params.xOffsetEstimate, params.sigmaEstimate,
-                                                        params.amplitudeMin, params.amplitudeMax,
-                                                        params.xOffsetMin, params.xOffsetMax,
-                                                        params.sigmaMin, params.sigmaMax);
+                            else if (fitFunctionType == "erf") {
+                                fitFunc = Utils::erfFit(("fit_" + photonTrigger).c_str(),
+                                                        0.0, 20.0,
+                                                        params.amplitudeEstimate,
+                                                        params.xOffsetEstimate,
+                                                        params.sigmaEstimate,
+                                                        params.amplitudeMin,
+                                                        params.amplitudeMax,
+                                                        params.xOffsetMin,
+                                                        params.xOffsetMax,
+                                                        params.sigmaMin,
+                                                        params.sigmaMax);
                             }
-                            else
-                            {
+                            else {
                                 // default to sigmoid
-                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(), 0.0, 20.0,
-                                                            params.amplitudeEstimate, params.slopeEstimate, params.xOffsetEstimate,
-                                                            params.amplitudeMin, params.amplitudeMax,
-                                                            params.slopeMin, params.slopeMax,
-                                                            params.xOffsetMin, params.xOffsetMax);
+                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(),
+                                                            0.0, 20.0,
+                                                            params.amplitudeEstimate,
+                                                            params.slopeEstimate,
+                                                            params.xOffsetEstimate,
+                                                            params.amplitudeMin,
+                                                            params.amplitudeMax,
+                                                            params.slopeMin,
+                                                            params.slopeMax,
+                                                            params.xOffsetMin,
+                                                            params.xOffsetMax);
                             }
 
                             fitFunc->SetLineColor(color);
@@ -7390,29 +7786,27 @@ void PlotCombinedHistograms(
                             ratioHist->Fit(fitFunc, "R");
                             fitFunc->Draw("SAME");
 
-                            // Grab fit params
-                            double A = fitFunc->GetParameter(0);
-                            double A_error = fitFunc->GetParError(0);
+                            double A      = fitFunc->GetParameter(0);
+                            double A_error= fitFunc->GetParError(0);
 
-                            double x99 = 0;
-                            double x99_error = 0;
-                            if (fitFunctionType == "sigmoid")
-                            {
-                                double k = fitFunc->GetParameter(1);
-                                double x0 = fitFunc->GetParameter(2);
-                                double k_error = fitFunc->GetParError(1);
-                                double x0_error = fitFunc->GetParError(2);
+                            double x99      = 0;
+                            double x99_error= 0;
+                            if (fitFunctionType == "sigmoid") {
+                                double k      = fitFunc->GetParameter(1);
+                                double x0     = fitFunc->GetParameter(2);
+                                double k_error= fitFunc->GetParError(1);
+                                double x0_error= fitFunc->GetParError(2);
 
                                 x99 = x0 + (std::log(99) / k);
                                 x99_error = std::sqrt((x0_error*x0_error) +
-                                            (std::pow((std::log(99)/(k*k)),2)*k_error*k_error));
-                                std::cout << "Sigmoid Fit for " << photonTrigger
-                                          << ": A="<<A<<" ± "<<A_error << ", k="<<k<<" ± "<<k_error
-                                          << ", x0="<<x0<<" ± "<<x0_error
-                                          << ", x99="<<x99<<" ± "<<x99_error<<" GeV\n";
+                                                      (std::pow((std::log(99)/(k*k)),2)*k_error*k_error));
+                                std::cout << "[FIT] Sigmoid for " << photonTrigger
+                                          << ": A=" << A << " ± " << A_error
+                                          << ", k=" << k << " ± " << k_error
+                                          << ", x0="<< x0 << " ± " << x0_error
+                                          << ", x99="<< x99 << " ± " << x99_error << " GeV\n";
                             }
-                            else if (fitFunctionType == "erf")
-                            {
+                            else if (fitFunctionType == "erf") {
                                 double x0 = fitFunc->GetParameter(1);
                                 double sigma = fitFunc->GetParameter(2);
                                 double x0_error = fitFunc->GetParError(1);
@@ -7420,22 +7814,24 @@ void PlotCombinedHistograms(
                                 double erfInvVal = TMath::ErfInverse(0.98);
                                 x99 = x0 + sqrt(2)*sigma*erfInvVal;
                                 x99_error = std::sqrt(x0_error*x0_error +
-                                            (sqrt(2)*erfInvVal*sigma_error)*(sqrt(2)*erfInvVal*sigma_error));
-                                std::cout << "Erf Fit for " << photonTrigger
-                                          << ": A="<<A<<" ± "<<A_error
-                                          << ", x0="<<x0<<" ± "<<x0_error
-                                          << ", sigma="<<sigma<<" ± "<<sigma_error
-                                          << ", x99="<<x99<<" ± "<<x99_error<<" GeV\n";
+                                    (sqrt(2)*erfInvVal*sigma_error)*
+                                    (sqrt(2)*erfInvVal*sigma_error));
+                                std::cout << "[FIT] Erf for " << photonTrigger
+                                          << ": A=" << A << " ± " << A_error
+                                          << ", x0=" << x0 << " ± " << x0_error
+                                          << ", sigma=" << sigma << " ± " << sigma_error
+                                          << ", x99=" << x99 << " ± " << x99_error << " GeV\n";
                             }
-                            // store
+
                             triggerEfficiencyPoints[photonTrigger] = x99;
                             combinationToTriggerEfficiencyPoints[combinationName][photonTrigger] = x99;
 
-                            legendEntry << ", 99% efficiency = " << std::fixed << std::setprecision(2)
+                            legendEntry << ", 99% eff = "
+                                        << std::fixed << std::setprecision(2)
                                         << x99 << " GeV";
 
-                            if (x99 > ratioHist->GetXaxis()->GetXmin() && x99 < ratioHist->GetXaxis()->GetXmax())
-                            {
+                            if (x99 > ratioHist->GetXaxis()->GetXmin() &&
+                                x99 < ratioHist->GetXaxis()->GetXmax()) {
                                 TLine* verticalLine = new TLine(x99, 0, x99, 1);
                                 verticalLine->SetLineStyle(2);
                                 verticalLine->SetLineColor(color);
@@ -7443,19 +7839,18 @@ void PlotCombinedHistograms(
                                 verticalLine->Draw("SAME");
                             }
                         }
-                        else
-                        {
-                            std::cerr << "No fit parameters found for trigger " << photonTrigger
-                                      << " in combination " << combinationName << std::endl;
+                        else {
+                            std::cerr << "[INFO] No fit parameters found => "
+                                      << photonTrigger
+                                      << " in combination => " << combinationName << "\n";
                         }
 
-                        legendTurnOn->AddEntry(ratioHist, legendEntry.str().c_str(), "p");
-                        std::cout << "Legend Entry Added: " << legendEntry.str() << std::endl;
-                    } // end photon triggers loop
+                        legPhotonTurnOn->AddEntry(ratioHist, legendEntry.str().c_str(), "p");
+                        std::cout << "[DEBUG] Legend Entry Added => " << legendEntry.str() << "\n";
+                    }
 
-                    legendTurnOn->Draw();
+                    legPhotonTurnOn->Draw();
 
-                    // Another small legend for 99% line
                     TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72);
                     legendEfficiencyLine->SetTextSize(0.03);
                     legendEfficiencyLine->SetBorderSize(0);
@@ -7467,9 +7862,8 @@ void PlotCombinedHistograms(
                     legendEfficiencyLine->AddEntry(dummyLine, "99% Efficiency Point", "l");
                     legendEfficiencyLine->Draw();
 
-                    if (!firmwareStatus.empty())
-                    {
-                        canvasTurnOn->cd();
+                    if (!firmwareStatus.empty()) {
+                        cPhotonTurnOn->cd();
                         TLatex firmwareStatusText;
                         firmwareStatusText.SetNDC();
                         firmwareStatusText.SetTextAlign(22);
@@ -7478,25 +7872,23 @@ void PlotCombinedHistograms(
                         firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
                     }
 
-                    canvasTurnOn->Modified();
-                    canvasTurnOn->Update();
+                    cPhotonTurnOn->Modified();
+                    cPhotonTurnOn->Update();
 
                     std::string outputTurnOnFileName = plotDirectory + "/" + histPrefixForFile + "_TurnOn.png";
-                    canvasTurnOn->SaveAs(outputTurnOnFileName.c_str());
-                    std::cout << "Saved turn-on plot to " << outputTurnOnFileName << std::endl;
+                    cPhotonTurnOn->SaveAs(outputTurnOnFileName.c_str());
+                    std::cout << "[INFO] Saved turn-on plot => " << outputTurnOnFileName << "\n";
 
-                    delete canvasTurnOn;
+                    delete cPhotonTurnOn;
                 }
             }
         }
 
-        // ===================== NEW CODE for Jet Triggers =====================
+        // ----------------------------------------------------------------------
+        // 9) Jet triggers => always use h_jet_energy_ prefix
+        // ----------------------------------------------------------------------
         {
-            const std::string jetHistPrefix = "h_jet_energy_";
-            const std::string xAxisTitleJets    = "Max 0.8x0.8 Jet Energy [GeV]";
-            const std::string xAxisTitleTurnOnJ = "Jet Energy [GeV]";
-
-            // Identify jet triggers in combination
+            // Identify jet triggers in this combination
             std::vector<std::string> jetTriggersInCombination;
             for (const auto& trig : triggers)
             {
@@ -7508,184 +7900,331 @@ void PlotCombinedHistograms(
                 }
             }
 
+            // If any jet triggers are present, we do TWO steps:
+            //  (A) Overlay the raw jet-energy distributions
+            //  (B) Make the ratio-based turn-on plot vs. MBD
             if (!jetTriggersInCombination.empty())
             {
-                // We get minbias for jets from directory "MBD_NandS_geq_1" but with "h_jet_energy_MBD_NandS_geq_1"
-                TDirectory* minbiasJetDir = inputFile->GetDirectory("MBD_NandS_geq_1");
-                if (!minbiasJetDir)
+                //----------------------------------------------------------------------
+                // (A) JET RAW OVERLAY (similar to photon overlay)
+                //----------------------------------------------------------------------
                 {
-                    std::cerr << "Warning: MBD_NandS_geq_1 directory not found in "
-                              << rootFileName << " for Jet turn-on.\n";
+                    TCanvas* cJetOverlay = new TCanvas("cJetOverlay", "Jet Energy Overlay", 800, 600);
+                    cJetOverlay->SetLogy();
+
+                    TLegend* legJetOverlay = new TLegend(0.5, 0.58, 0.8, 0.88);
+                    legJetOverlay->SetTextSize(0.028);
+
+                    // Also include MBD for the raw overlay
+                    std::vector<std::string> jetsPlusMBD = jetTriggersInCombination;
+                    jetsPlusMBD.push_back("MBD_NandS_geq_1");
+
+                    // We'll store hist clones to find global maxima
+                    std::vector<TH1*> clonedHists;
+                    double globalMaxBinContent = 0.0;
+                    double globalMaxXValue     = 0.0;
+
+                    // 1) First pass: read & clone => track global maxima for y and x
+                    for (const auto& possibleTrig : jetsPlusMBD)
+                    {
+                        TDirectory* jDir = inputFile->GetDirectory(possibleTrig.c_str());
+                        if (!jDir)
+                        {
+                            std::cerr << "[WARN][JetOverlay] Directory '" << possibleTrig
+                                      << "' not found => " << rootFileName << "\n";
+                            continue;
+                        }
+
+                        // Build histogram name, always h_jet_energy_ for jets/MBD
+                        std::string jetHName = jetHistPrefix + possibleTrig;
+                        TH1* jetHist = (TH1*)jDir->Get(jetHName.c_str());
+                        if (!jetHist)
+                        {
+                            std::cerr << "[WARN][JetOverlay] Hist => " << jetHName
+                                      << " not found => " << rootFileName << "\n";
+                            continue;
+                        }
+
+                        // Clone so we can manipulate
+                        TH1* histClone = (TH1*)jetHist->Clone();
+                        histClone->SetDirectory(nullptr);
+
+                        // find local maxima for Y + furthest non-empty bin for X
+                        double localMax = histClone->GetMaximum();
+                        if (localMax > globalMaxBinContent) {
+                            globalMaxBinContent = localMax;
+                        }
+                        int lastNonEmptyBin = histClone->FindLastBinAbove(0.0);
+                        double maxXval      = histClone->GetXaxis()->GetBinUpEdge(lastNonEmptyBin);
+                        if (maxXval > globalMaxXValue) {
+                            globalMaxXValue = maxXval;
+                        }
+
+                        clonedHists.push_back(histClone);
+                    }
+
+                    // Decide on final X range: at least 50 or largest bin edge
+                    double finalXmax = (globalMaxXValue < 50.0) ? 50.0 : (globalMaxXValue + 2.0);
+
+                    // Decide on final Y range for log scale => ~30% above global max
+                    double finalYmax = globalMaxBinContent * 1.3;
+
+                    // 2) Second pass: draw them
+                    bool firstJetDraw = true;
+                    for (auto* histClone : clonedHists)
+                    {
+                        // Helper to see if 'name' ends with 'suffix'
+                        auto endsWith = [&](const std::string& fullName, const std::string& suffix) {
+                            return (fullName.size() >= suffix.size()) &&
+                                   (0 == fullName.compare(fullName.size() - suffix.size(), suffix.size(), suffix));
+                        };
+
+                        // Figure out which actual trigger name from the histogram name:
+                        std::string hName = histClone->GetName();  // e.g. "h_jet_energy_Jet_8_GeV_plus_MBD_NS_geq_1"
+
+                        // We'll guess a fallback trigger is MBD:
+                        std::string matchedTrigger = "MBD_NandS_geq_1";
+                        // But check if it ends with each possible jet name:
+                        if (endsWith(hName, "Jet_8_GeV_plus_MBD_NS_geq_1"))   matchedTrigger = "Jet_8_GeV_plus_MBD_NS_geq_1";
+                        else if (endsWith(hName, "Jet_10_GeV_plus_MBD_NS_geq_1")) matchedTrigger = "Jet_10_GeV_plus_MBD_NS_geq_1";
+                        else if (endsWith(hName, "Jet_12_GeV_plus_MBD_NS_geq_1")) matchedTrigger = "Jet_12_GeV_plus_MBD_NS_geq_1";
+
+                        // Assign color based on matchedTrigger
+                        int color = kBlack;
+                        auto itCol = triggerColorMap.find(matchedTrigger);
+                        if (itCol != triggerColorMap.end()) color = itCol->second;
+
+                        // Set drawing style
+                        histClone->SetLineColor(color);
+                        histClone->SetLineWidth(2);
+                        histClone->SetTitle(("Jet Overlay for " + combinationName).c_str());
+                        histClone->GetXaxis()->SetTitle("Jet Energy [GeV]");
+                        histClone->GetYaxis()->SetTitle("Prescaled Counts");
+
+                        // Force the X and Y ranges
+                        histClone->GetXaxis()->SetRangeUser(0.0, finalXmax);
+                        histClone->SetMaximum(finalYmax);
+
+                        // Draw
+                        if (firstJetDraw) {
+                            histClone->Draw("HIST");
+                            firstJetDraw = false;
+                        }
+                        else {
+                            histClone->Draw("HIST SAME");
+                        }
+
+                        // Legend label
+                        std::string displayJet = matchedTrigger; // fallback
+                        auto it_nm = triggerNameMap.find(matchedTrigger);
+                        if (it_nm != triggerNameMap.end()) {
+                            displayJet = it_nm->second; // nicer label
+                        }
+                        legJetOverlay->AddEntry(histClone, displayJet.c_str(), "l");
+                    }
+
+                    legJetOverlay->Draw();
+
+                    // Possibly run numbers
+                    auto it_runJetOverlay = combinationToValidRuns.find(combinationName);
+                    if (it_runJetOverlay != combinationToValidRuns.end()) {
+                        drawRunNumbersOnCanvas(it_runJetOverlay->second, firmwareStatus);
+                    }
+
+                    cJetOverlay->Modified();
+                    cJetOverlay->Update();
+
+                    // Save
+                    std::string outJetOverlay = plotDirectory + "/" + jetHistPrefix + "_JetOverlay.png";
+                    cJetOverlay->SaveAs(outJetOverlay.c_str());
+                    std::cout << "[INFO] Saved Jet overlay => " << outJetOverlay << "\n";
+
+                    // Clean up
+                    for (auto* h : clonedHists) delete h;
+                    delete cJetOverlay;
+                }
+
+                //----------------------------------------------------------------------
+                // (B) Jet turn-on ratio vs. MBD
+                //----------------------------------------------------------------------
+                TDirectory* jetMinbiasDir = inputFile->GetDirectory("MBD_NandS_geq_1");
+                if (!jetMinbiasDir)
+                {
+                    std::cerr << "[WARN][Jet] MBD_NandS_geq_1 dir not found => " << rootFileName
+                              << "\n=> skip Jet turn-on\n";
                 }
                 else
                 {
-                    std::string minbiasJetHistName = jetHistPrefix + "MBD_NandS_geq_1";
-                    TH1* minbiasJetHist = (TH1*)minbiasJetDir->Get(minbiasJetHistName.c_str());
-                    if (!minbiasJetHist)
+                    // minbias hist => "h_jet_energy_MBD_NandS_geq_1"
+                    std::string mbJetHistName = jetHistPrefix + "MBD_NandS_geq_1";
+                    TH1* mbJetHist = (TH1*)jetMinbiasDir->Get(mbJetHistName.c_str());
+                    if (!mbJetHist)
                     {
-                        std::cerr << "Warning: histogram " << minbiasJetHistName
-                                  << " not found in " << rootFileName << std::endl;
+                        std::cerr << "[WARN][Jet] Hist => " << mbJetHistName
+                                  << " not found => " << rootFileName
+                                  << "\n=> skip Jet turn-on\n";
                     }
                     else
                     {
-                        // Turn-on canvas for jets
+                        // Ratio-based "Jet Turn-On"
                         TCanvas* cJetTurnOn = new TCanvas("cJetTurnOn", "Jet Turn-On", 800, 600);
                         TLegend* legJetTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
                         legJetTurnOn->SetTextSize(0.028);
-                        bool firstJetDraw = true;
+                        bool firstJet = true;
 
                         for (const auto& jetTrig : jetTriggersInCombination)
                         {
-                            TDirectory* jetDir = inputFile->GetDirectory(jetTrig.c_str());
-                            if (!jetDir)
+                            TDirectory* jDir = inputFile->GetDirectory(jetTrig.c_str());
+                            if (!jDir)
                             {
-                                std::cerr << "Warning: Jet dir '" << jetTrig
-                                          << "' not in file " << rootFileName << "\n";
+                                std::cerr << "[WARN][Jet] Dir => " << jetTrig
+                                          << " missing => " << rootFileName << "\n";
                                 continue;
                             }
+
                             std::string jetHName = jetHistPrefix + jetTrig;
-                            TH1* jetHist = (TH1*)jetDir->Get(jetHName.c_str());
+                            TH1* jetHist = (TH1*)jDir->Get(jetHName.c_str());
                             if (!jetHist)
                             {
-                                std::cerr << "Warning: histogram " << jetHName
-                                          << " not found in " << rootFileName << "\n";
+                                std::cerr << "[WARN][Jet] Hist => " << jetHName
+                                          << " not found => " << rootFileName << "\n";
                                 continue;
                             }
-                            std::string ratioName = "ratioJet_" + jetTrig;
-                            TH1* ratioJetHist = (TH1*)jetHist->Clone(ratioName.c_str());
-                            ratioJetHist->SetDirectory(0);
-                            ratioJetHist->Divide(jetHist, minbiasJetHist, 1.0, 1.0, "B"); // binomial
+
+                            // Clone + ratio vs. MBD
+                            TH1* ratioJet = (TH1*)jetHist->Clone(("ratioJet_" + jetTrig).c_str());
+                            ratioJet->SetDirectory(0);
+                            ratioJet->Divide(jetHist, mbJetHist, 1.0, 1.0, "B");
+                            ratioJet->SetTitle(("Jet Turn-On => " + combinationName).c_str());
+                            ratioJet->GetXaxis()->SetTitle("Jet Energy [GeV]");
+                            ratioJet->GetYaxis()->SetTitle("Ratio to MBD");
+                            ratioJet->GetYaxis()->SetRangeUser(0, 2.0);
 
                             int color = kGray+3;
-                            auto itC = triggerColorMap.find(jetTrig);
-                            if (itC != triggerColorMap.end()) color = itC->second;
+                            auto itCol = triggerColorMap.find(jetTrig);
+                            if (itCol != triggerColorMap.end()) color = itCol->second;
 
-                            ratioJetHist->SetMarkerStyle(20);
-                            ratioJetHist->SetMarkerColor(color);
-                            ratioJetHist->SetLineColor(color);
+                            ratioJet->SetMarkerStyle(20);
+                            ratioJet->SetMarkerColor(color);
+                            ratioJet->SetLineColor(color);
 
-                            ratioJetHist->SetTitle(("Jet Turn-On for " + combinationName).c_str());
-                            ratioJetHist->GetXaxis()->SetTitle(xAxisTitleTurnOnJ.c_str());
-                            ratioJetHist->GetYaxis()->SetTitle("Ratio to MBD NS #geq 1");
-                            ratioJetHist->GetYaxis()->SetRangeUser(0, 2.0);
-
-                            if (firstJetDraw)
+                            if (firstJet)
                             {
-                                ratioJetHist->Draw("E1");
-                                firstJetDraw = false;
+                                ratioJet->Draw("E1");
+                                firstJet = false;
                             }
                             else
                             {
-                                ratioJetHist->Draw("E1 SAME");
+                                ratioJet->Draw("E1 SAME");
                             }
 
-                            // dashed line at y=1
-                            TLine* ln = new TLine(ratioJetHist->GetXaxis()->GetXmin(), 1,
-                                                  ratioJetHist->GetXaxis()->GetXmax(), 1);
+                            // dashed line @ y=1
+                            TLine* ln = new TLine(ratioJet->GetXaxis()->GetXmin(), 1,
+                                                  ratioJet->GetXaxis()->GetXmax(), 1);
                             ln->SetLineStyle(2);
                             ln->SetLineColor(kBlack);
                             ln->Draw("SAME");
 
-                            std::string displayJetName = jetTrig;
-                            auto it_name = triggerNameMap.find(jetTrig);
-                            if (it_name != triggerNameMap.end())
+                            // Legend
+                            std::string displayJet = jetTrig;
+                            auto it_nm = triggerNameMap.find(jetTrig);
+                            if (it_nm != triggerNameMap.end())
                             {
-                                displayJetName = it_name->second;
+                                displayJet = it_nm->second;
                             }
-                            legJetTurnOn->AddEntry(ratioJetHist, displayJetName.c_str(), "p");
-                        } // end for each jet trigger
+                            legJetTurnOn->AddEntry(ratioJet, displayJet.c_str(), "p");
+                        }
+
                         legJetTurnOn->Draw();
 
-                        // Possibly draw run numbers
+                        // Possibly run numbers
                         auto it_runJet = combinationToValidRuns.find(combinationName);
                         if (it_runJet != combinationToValidRuns.end())
                         {
-                            const std::vector<int>& valid = it_runJet->second;
-                            drawRunNumbersOnCanvas(valid, firmwareStatus);
-                        }
-                        else
-                        {
-                            TLatex noRunTex;
-                            noRunTex.SetNDC();
-                            noRunTex.SetTextAlign(13);
-                            noRunTex.SetTextSize(0.03);
-                            noRunTex.DrawLatex(0.15, 0.6, "Run numbers not available (Jet).");
+                            drawRunNumbersOnCanvas(it_runJet->second, firmwareStatus);
                         }
 
                         cJetTurnOn->Modified();
                         cJetTurnOn->Update();
 
+                        // Save
                         std::string outJetTurnOn = plotDirectory + "/" + jetHistPrefix + "_JetTurnOn.png";
                         cJetTurnOn->SaveAs(outJetTurnOn.c_str());
-                        std::cout << "Saved Jet turn-on plot => " << outJetTurnOn << "\n";
                         delete cJetTurnOn;
                     }
-                }
-            }
-        } // End NEW JET block
-
-        // 9) If fitOnly => skip the rest
-        if (fitOnly)
-        {
+                } // end else of MBD directory check
+            } // end if (!jetTriggersInCombination.empty())
+        }
+        // ----------------------------------------------------------------------
+        // 9) If fitOnly => skip rest
+        // ----------------------------------------------------------------------
+        if (fitOnly) {
+            std::cout << "[DEBUG] fitOnly == true => skipping rest.\n";
             inputFile->Close();
             delete inputFile;
 
             auto it_run = combinationToValidRuns.find(combinationName);
-            if (it_run != combinationToValidRuns.end())
-            {
+            if (it_run != combinationToValidRuns.end()) {
                 const std::vector<int>& validRuns = it_run->second;
                 PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers,
                                        validRuns, triggerColorMap, triggerNameMap,
                                        firmwareStatus);
             }
-            else
-            {
-                std::cout << "No valid runs found for combination: " << combinationName << std::endl;
+            else {
+                std::cout << "[DEBUG] No valid runs found for => " << combinationName << "\n";
             }
             continue;
         }
 
-        // 10) Process Invariant Mass
+        // ----------------------------------------------------------------------
+        // 10) Invariant Mass
+        // ----------------------------------------------------------------------
         ProcessInvariantMassHistograms(inputFile, plotDirectory, triggers,
                                        triggerColorMap, combinationName);
 
-        // 11) Process Meson Mass vs Pt
+        // ----------------------------------------------------------------------
+        // 11) Meson Mass vs Pt
+        // ----------------------------------------------------------------------
         ProcessMesonMassVsPt(plotDirectory, combinationName, triggers,
                              triggerEfficiencyPoints, DataStructures::pT_bins);
 
-        // 12) Process Isolation Energy (the call that sometimes segfaults)
-        // -----------------------------------------------------------
-        std::cout << "[DEBUG] About to call ProcessIsolationEnergyHistogramsWithCuts for '"
+        // ----------------------------------------------------------------------
+        // 12) Isolation Energy
+        // ----------------------------------------------------------------------
+        std::cout << "[DEBUG] About to call ProcessIsolationEnergyHistogramsWithCuts => '"
                   << combinationName << "'...\n";
 
-        // You could optionally wrap in try/catch:
         try {
             ProcessIsolationEnergyHistogramsWithCuts(inputFile, plotDirectory,
                                                      triggers, combinationName);
-        } catch (...) {
-            std::cerr << "[FATAL] Exception in ProcessIsolationEnergyHistogramsWithCuts for combination="
+        }
+        catch (...) {
+            std::cerr << "[FATAL] Exception in ProcessIsolationEnergyHistogramsWithCuts for => "
                       << combinationName << "\n";
         }
 
+        // Cleanup
         inputFile->Close();
         delete inputFile;
 
-        // 13) Finally, run-by-run overlays
+        // ----------------------------------------------------------------------
+        // 13) Run-by-run overlays
+        // ----------------------------------------------------------------------
         auto it_run = combinationToValidRuns.find(combinationName);
-        if (it_run != combinationToValidRuns.end())
-        {
+        if (it_run != combinationToValidRuns.end()) {
             const std::vector<int>& validRuns = it_run->second;
             PlotRunByRunHistograms(outputDirectory, plotDirectory, triggers,
                                    validRuns, triggerColorMap, triggerNameMap,
                                    firmwareStatus);
         }
-        else
-        {
-            std::cout << "No valid runs found for combination: " << combinationName << std::endl;
+        else {
+            std::cout << "[DEBUG] No valid runs found for => " << combinationName << "\n";
         }
     } // end for each combinedRootFile
 
-    // 14) Some isolation data final steps
+    // --------------------------------------------------------------------------
+    // 14) Final isolation data steps
+    // --------------------------------------------------------------------------
     std::string csvOutputPath = "/Users/patsfan753/Desktop/isolation_data.csv";
     WriteIsolationDataToCSV(csvOutputPath);
     readDataFromCSV(csvOutputPath, dataMap_inMassWindow, dataMap_outsideMassWindow);
@@ -7711,7 +8250,10 @@ void PlotCombinedHistograms(
         combinationToTriggerEfficiencyPoints,
         true,
         false);
+
+    std::cout << "[DEBUG] PlotCombinedHistograms() completed successfully.\n";
 }
+
 
 
 void AddLabelsToCanvas(
@@ -8106,221 +8648,233 @@ void ProcessAllIsolationEnergies(
     }
 }
 
-/**
- * @brief Overlays the NoShowerShapeCuts vs withShowerShapeCuts histograms for
- *        each shower-shape variable (e.g. E3by7_over_E7by7, w72, etc.) in each
- *        trigger directory of the combined ROOT file. Stores PNG plots under
- *        `plotDirectory/<CombinationName>/showerShapeQA/<TriggerName>`.
- *
- * @param outputDirectory   Path to your combined ROOT files. E.g. ".../output"
- * @param combinedRootFiles List of filenames ending in "_Combined.root", one
- *                          per trigger combination. E.g. {"MBD_NandS_geq_1_Combined.root", ...}
- * @param combinationToValidRuns  Map from "CombinationName" -> vector of runNumbers
- *                                (used here only if you want to label runs; you can skip).
- */
 void ProcessAllShowerShapeQA(
     const std::string& outputDirectory,
     const std::vector<std::string>& combinedRootFiles,
     const std::map<std::string, std::vector<int>>& combinationToValidRuns )
 {
-    // Helper: Check string suffix
+    //--------------------------------------------------------------------------
+    // Helper: check if 'str' ends with 'suffix'
+    //--------------------------------------------------------------------------
     auto endsWith = [](const std::string& str, const std::string& suffix) {
         if (suffix.size() > str.size()) return false;
         return std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
     };
 
-    // Helper: Extract triggers from a combined filename (used in your existing code)
-    // or adapt if you already have an approach for that.
-    auto extractTriggersFromFilename = [&](const std::string& filename) -> std::string {
-        // Typically you'd parse out the combination name from the file name
-        // For example: "MBD_NandS_geq_1_Photon_3_GeV_afterTriggerFirmwareUpdate_Combined.root"
-        // => combinationName = "MBD_NandS_geq_1_Photon_3_GeV_afterTriggerFirmwareUpdate"
-        // For simplicity, just remove "_Combined.root"
-        std::string combo = filename;
-        std::string suffix = "_Combined.root";
-        if (endsWith(combo, suffix)) {
-            combo = combo.substr(0, combo.size() - suffix.size());
+    //--------------------------------------------------------------------------
+    // Helper: extract combination name from file name
+    // e.g. "MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Combined.root"
+    // => "MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1"
+    //--------------------------------------------------------------------------
+    auto extractCombinationName = [&](const std::string& filename) -> std::string {
+        const std::string suffix = "_Combined.root";
+        if (endsWith(filename, suffix)) {
+            return filename.substr(0, filename.size() - suffix.size());
         }
-        return combo; // This is the "combination name"
+        return filename; // fallback if doesn't match
     };
 
-    // Loop over each combined root file
-    for (const auto& rootFileName : combinedRootFiles)
-    {
-        // 1) Identify combination name from filename
-        std::string combinationName = extractTriggersFromFilename(rootFileName);
-        std::string rootFilePath = outputDirectory + "/" + rootFileName;
+    //--------------------------------------------------------------------------
+    // List of known "shower-shape" base names we want to overlay
+    //--------------------------------------------------------------------------
+    std::vector<std::string> showerShapeBases = {
+        "E3by7_over_E7by7",
+        "w72",
+        "E1x1_over_ClusterE",
+        "E1x1_over_E3x3",
+        "E3x2_over_E3x5",
+        "E1by7_over_E7by7",
+        "E3x3_over_ClusterE",
+        "E3x3_over_E3x7",
+        "weta",
+        "wphi"
+    };
 
-        // 2) Build a directory for "showerShapeQA" under
-        //    "somePlotDir/CombinationName/showerShapeQA"
-        //    (You can adapt to your existing scheme if you prefer.)
-        //    If you already have a basePlotDirectory, just adapt this.
-        std::string basePlotDir = "/Users/YourUserName/Desktop/DirectPhotonAna/Plots";
+    //--------------------------------------------------------------------------
+    // For debugging
+    //--------------------------------------------------------------------------
+    std::cout << "[DEBUG] Entering ProcessAllShowerShapeQA() ...\n";
+    std::cout << "        # combinedRootFiles = " << combinedRootFiles.size() << "\n\n";
+
+    //--------------------------------------------------------------------------
+    // We'll define a base directory for the "Plots"
+    //--------------------------------------------------------------------------
+    std::string basePlotDir = "/Users/patsfan753/Desktop/DirectPhotonAna/Plots";
+
+    //--------------------------------------------------------------------------
+    // Loop over each combined root file
+    //--------------------------------------------------------------------------
+    for (const auto& fileName : combinedRootFiles)
+    {
+        // 1) Build the full path + extract combinationName
+        std::string rootFilePath    = outputDirectory + "/" + fileName;
+        std::string combinationName = extractCombinationName(fileName);
+
+        // 2) Make sure we have an output folder for this combination
         std::string comboPlotDir = basePlotDir + "/" + combinationName;
         gSystem->mkdir(comboPlotDir.c_str(), true);
 
         std::string showerQA_Dir = comboPlotDir + "/showerShapeQA";
         gSystem->mkdir(showerQA_Dir.c_str(), true);
 
-        // 3) Open the combined ROOT file
+        // 3) Open the combined file
+        std::cout << "[INFO] Processing combination: " << combinationName
+                  << "\n       => " << rootFilePath << std::endl;
+
         TFile* inputFile = TFile::Open(rootFilePath.c_str(), "READ");
         if (!inputFile || inputFile->IsZombie()) {
-            std::cerr << "[WARN] Could not open combined file: " << rootFilePath << "\n";
+            std::cerr << "[ERROR] Could NOT open file => " << rootFilePath << "\n";
+            if (inputFile) { delete inputFile; }
             continue;
         }
-        std::cout << "\n[INFO] Processing shower-shape QA for: " << combinationName
-                  << "  =>  " << rootFileName << std::endl;
 
-        // 4) Retrieve the top-level directories (which correspond to triggers)
+        // 4) Get top-level directories => triggers
         TList* dirList = inputFile->GetListOfKeys();
         if (!dirList) {
-            std::cerr << "[WARN] No triggers found in " << rootFileName << "\n";
+            std::cerr << "[WARN] No top-level directories found in => "
+                      << fileName << "\n";
             inputFile->Close();
             delete inputFile;
             continue;
         }
 
-        // For each top-level directory => that directory name is a trigger
+        // Optionally we can see if we have runNumbers:
+        // auto itRun = combinationToValidRuns.find(combinationName);
+        // if (itRun != combinationToValidRuns.end()) {
+        //     const std::vector<int>& runNumbers = itRun->second;
+        // }
+
+        // 5) Loop over each TKey => each is presumably a directory for a trigger
         TIter nextDir(dirList);
         TKey* dirKey;
-        while ((dirKey = (TKey*)nextDir()))
-        {
+        while ((dirKey = (TKey*)nextDir())) {
+            // read object
             TObject* dirObj = dirKey->ReadObj();
-            if (!dirObj->InheritsFrom(TDirectory::Class())) {
-                delete dirObj; // skip non-directory
+            if (!dirObj) {
+                std::cerr << "[WARN] dirKey->ReadObj() returned null for key="
+                          << dirKey->GetName() << "\n";
                 continue;
             }
 
-            TDirectory* trigDir = (TDirectory*)dirObj;
-            std::string triggerName = trigDir->GetName();
-            delete dirObj; // we just keep the pointer as trigDir
+            // Check if it is indeed a TDirectory
+            if (!dirObj->InheritsFrom(TDirectory::Class())) {
+                // If it's not a TDirectory, we don't want it for shower-shape QA
+                std::cout << "[DEBUG] Object '" << dirKey->GetName()
+                          << "' is not a TDirectory => skipping.\n";
+                delete dirObj;
+                continue;
+            }
 
-            // Make subfolder for each trigger
+            // If it is a directory:
+            TDirectory* trigDir = dynamic_cast<TDirectory*>(dirObj);
+            if (!trigDir) {
+                std::cerr << "[ERROR] Could not cast object to TDirectory => "
+                          << dirKey->GetName() << "\n";
+                delete dirObj;
+                continue;
+            }
+
+            // We'll keep 'trigDir' around. DO NOT DELETE 'dirObj' here,
+            // or you'll lose 'trigDir'.
+            std::string triggerName = trigDir->GetName();
+            std::cout << "[DEBUG] Found trigger directory => " << triggerName << "\n";
+
+            // Make an output subfolder for each trigger
             std::string trigPlotDir = showerQA_Dir + "/" + triggerName;
             gSystem->mkdir(trigPlotDir.c_str(), true);
 
-            // 5) For each histogram in this directory, identify if it's of the form:
-            //    E3by7_over_E7by7_NoShowerShapeCuts_<triggerName>
-            //    E3by7_over_E7by7_withShowerShapeCuts_<triggerName>
-            //    etc...
-            //
-            //    We'll store them in a map: map<baseName, pair<TH1*, TH1*>> => (NoCut, WithCut)
-            //    Example baseName = "E3by7_over_E7by7".
-            //    Then we overlay these two on the same plot.
-            std::map<std::string, std::pair<TH1*, TH1*>> histPairs; // base -> (noCut, withCut)
+            // 6) For each "shower-shape base" => look up the two hist names
+            for (const auto& base : showerShapeBases) {
 
-            TList* histList = trigDir->GetListOfKeys();
-            if (!histList) continue;
-            TIter nextHist(histList);
-            TKey* histKey;
-            while ((histKey = (TKey*)nextHist()))
-            {
-                TObject* hObj = histKey->ReadObj();
-                if (!hObj->InheritsFrom(TH1::Class())) {
-                    delete hObj;
+                std::string noCutName   = base + "_NoShowerShapeCuts_"   + triggerName;
+                std::string withCutName = base + "_withShowerShapeCuts_" + triggerName;
+
+                TH1* hNoCut   = dynamic_cast<TH1*>(trigDir->Get(noCutName.c_str()));
+                TH1* hWithCut = dynamic_cast<TH1*>(trigDir->Get(withCutName.c_str()));
+
+                if (!hNoCut && !hWithCut) {
+                    // no relevant hists => skip
+                    // std::cout << "[DEBUG] For base='" << base << "', no hist found => skipping.\n";
                     continue;
                 }
-                TH1* h = (TH1*)hObj;
-                std::string hName = h->GetName();
 
-                // We look for "X_NoShowerShapeCuts_<triggerName>"
-                // or        "X_withShowerShapeCuts_<triggerName>"
-                // where X is the prefix (like "E3by7_over_E7by7", "w72", etc.)
-                // We'll do a quick parse.
-                static std::regex reNoCut ("^(.*)_NoShowerShapeCuts_"   + triggerName + "$");
-                static std::regex reWithCut("^(.*)_withShowerShapeCuts_"+ triggerName + "$");
-
-                std::smatch matchRes;
-                if (std::regex_match(hName, matchRes, reNoCut) && matchRes.size()>=2)
-                {
-                    std::string baseName = matchRes[1].str();
-                    histPairs[baseName].first = h; // NoCut hist
-                }
-                else if (std::regex_match(hName, matchRes, reWithCut) && matchRes.size()>=2)
-                {
-                    std::string baseName = matchRes[1].str();
-                    histPairs[baseName].second = h; // WithCut hist
-                }
-                else {
-                    // Not a shower-shape QA we care about
-                    // or doesn't match the naming. Safe to skip.
-                    // We do still delete it if we won't use it:
-                    // but be careful only if we don't keep it in map?
-                    // We'll keep them in the map only if matched.
-                    delete h;
-                }
-            } // end while histKey
-
-            // 6) Now we have a map of baseName -> (noCut, withCut).
-            //    For each baseName, overlay them on the same canvas,
-            //    produce a single .png in trigPlotDir.
-            for (auto& pairEntry : histPairs)
-            {
-                std::string baseName = pairEntry.first;
-                TH1* noCutHist  = pairEntry.second.first;
-                TH1* withCutHist= pairEntry.second.second;
-
-                if (!noCutHist && !withCutHist) {
-                    continue; // nothing to plot
+                if (hNoCut) {
+                    std::cout << "[DEBUG] Found => " << noCutName
+                              << " (#entries=" << hNoCut->GetEntries() << ")\n";
+                } else {
+                    std::cerr << "[WARN] Missing => " << noCutName << "\n";
                 }
 
-                // Make a canvas
-                TCanvas c("c","ShowerShapeOverlay",800,600);
-                TLegend leg(0.58,0.65,0.88,0.82);
+                if (hWithCut) {
+                    std::cout << "[DEBUG] Found => " << withCutName
+                              << " (#entries=" << hWithCut->GetEntries() << ")\n";
+                } else {
+                    std::cerr << "[WARN] Missing => " << withCutName << "\n";
+                }
+
+                // 7) Make a canvas + overlay
+                TCanvas c("c", ("Overlay: " + base).c_str(), 800, 600);
+                TLegend leg(0.58, 0.65, 0.88, 0.82);
                 leg.SetBorderSize(0);
                 leg.SetTextSize(0.04);
 
-                // optional log scale if you want
-                // c.SetLogy();
+                bool drawnSomething = false;
 
-                bool firstDrawn = false;
-                // Draw noCut first
-                if (noCutHist)
-                {
-                    noCutHist->SetLineColor(kBlack);
-                    noCutHist->SetLineWidth(2);
-                    noCutHist->SetStats(false);
+                if (hNoCut) {
+                    hNoCut->SetLineColor(kBlack);
+                    hNoCut->SetLineWidth(2);
+                    hNoCut->SetStats(false);
+                    hNoCut->SetTitle(base.c_str());
 
-                    noCutHist->SetTitle(baseName.c_str());
-                    noCutHist->Draw("HIST");
-                    leg.AddEntry(noCutHist, "NoShowerShapeCuts", "l");
-                    firstDrawn = true;
+                    hNoCut->Draw("HIST");
+                    leg.AddEntry(hNoCut, "NoShowerShapeCuts", "l");
+                    drawnSomething = true;
                 }
-                // Then withCut
-                if (withCutHist)
-                {
-                    withCutHist->SetLineColor(kRed);
-                    withCutHist->SetLineWidth(2);
-                    withCutHist->SetStats(false);
-                    if (!firstDrawn) {
-                        withCutHist->SetTitle(baseName.c_str());
-                        withCutHist->Draw("HIST");
-                        firstDrawn = true;
-                        leg.AddEntry(withCutHist, "withShowerShapeCuts", "l");
+
+                if (hWithCut) {
+                    hWithCut->SetLineColor(kRed);
+                    hWithCut->SetLineWidth(2);
+                    hWithCut->SetStats(false);
+
+                    if (!drawnSomething) {
+                        hWithCut->SetTitle(base.c_str());
+                        hWithCut->Draw("HIST");
+                        leg.AddEntry(hWithCut, "withShowerShapeCuts", "l");
+                        drawnSomething = true;
                     } else {
-                        withCutHist->Draw("HIST SAME");
-                        leg.AddEntry(withCutHist, "withShowerShapeCuts", "l");
+                        hWithCut->Draw("HIST SAME");
+                        leg.AddEntry(hWithCut, "withShowerShapeCuts", "l");
                     }
+                }
+
+                if (!drawnSomething) {
+                    // theoretically won't happen because we continue if both are null
+                    continue;
                 }
 
                 leg.Draw();
                 c.Modified();
                 c.Update();
 
-                // Save as PNG
-                std::string outFile = trigPlotDir + "/" + baseName + "_Overlay.png";
-                c.SaveAs(outFile.c_str());
-                std::cout << "[INFO] Saved " << outFile << std::endl;
+                // 8) Save
+                std::string outName = trigPlotDir + "/" + base + "_Overlay.png";
+                c.SaveAs(outName.c_str());
+                std::cout << "[INFO] => Saved overlay => " << outName << "\n";
             }
 
-        } // end while triggers
+            // We do *not* delete 'trigDir' or 'dirObj' because we want
+            // them to remain valid within the scope of this file read.
 
+        } // end while (dirKey)
+
+        // 9) Close the file
         inputFile->Close();
         delete inputFile;
+    }
 
-    } // end for combinedRootFiles
-    std::cout << "\n[INFO] Finished processing all shower-shape QA.\n";
+    std::cout << "\n[INFO] Finished ProcessAllShowerShapeQA.\n\n";
 }
+
 
 /*
  To process only a specific trigger combination, you can call AnalyzeTriggerGroupings with the desired combination name:
