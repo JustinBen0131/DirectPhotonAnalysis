@@ -64,6 +64,8 @@ public:
 
     /// Turn verbose mode on or off
     void setVerbose(bool v) { verbose = v; }
+    
+    void setRunNumber(int runnumber) { m_runNumber = runnumber; }
 
 
     
@@ -146,6 +148,9 @@ private:
     bool wantSim = false;   // default false
     bool wantData = true;   // default true
     
+    int m_runNumber = -1;
+    std::map<std::string, double> m_scaleFactors;
+    
     TFile *out     = nullptr;  // data
     TFile *outSim  = nullptr;  // sim
 
@@ -157,6 +162,12 @@ private:
     TTree *slimTree      = nullptr;  ///< The "slimtree" TTree
     std::string simInputFileName;    ///< The name of the sim input file
 
+    std::vector<TH1F*> vCombinedIsoNoCuts;
+    std::vector<TH1F*> vCombinedIsoWithCuts;
+    TH1F* hCombinedAllPhoton_without = nullptr;
+    TH1F* hCombinedAllPhoton_with    = nullptr;
+    TH1F* hCombinedPtPhoton_without  = nullptr;
+    TH1F* hCombinedPtPhoton_with     = nullptr;
     
     int getEvent;
     TriggerAnalyzer* trigAna{nullptr};
@@ -206,7 +217,6 @@ private:
     
     std::map<std::string, std::string> triggerNameMap = {
         {"MBD N&S >= 1",          "MBD_NandS_geq_1"},
-        {"Jet 6 GeV + MBD NS >=1","Jet_6_GeV_plus_MBD_NS_geq_1"},
         {"Jet 8 GeV + MBD NS >= 1","Jet_8_GeV_plus_MBD_NS_geq_1"},
         {"Jet 10 GeV + MBD NS >= 1","Jet_10_GeV_plus_MBD_NS_geq_1"},
         {"Jet 12 GeV + MBD NS >= 1","Jet_12_GeV_plus_MBD_NS_geq_1"},
@@ -403,6 +413,28 @@ private:
         const std::pair<float, float>& pT_bin,
         const std::unordered_map<int,bool> &clusterPassedShowerCuts
     );
+    
+    void fillPtBinHistogramsForTrigger(
+        const std::string &firedShortName,
+        const std::pair<float, float> &pT_bin,
+        float mesonMass,
+        size_t clus1,
+        size_t clus2,
+        float pt1,
+        float pt2,
+        float minClusEnergy,
+        float maxChi2,
+        float maxAsym,
+        const std::vector<int>& clusterIDs,
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
+        const std::unordered_map<int,bool>& clusterPassedShowerCuts,
+        bool &filledHistogram,
+        size_t &filledHistogramCount,
+        std::map<std::pair<float, float>, std::map<std::string, TH1*>> &cutHistMap,
+        float defaultPionMass,
+        float defaultPionMassWindow,
+        float defaultEtaMass,
+        float defaultEtaMassWindow);
     
     void fillHistogramsForTriggers(
         float mesonMass,
