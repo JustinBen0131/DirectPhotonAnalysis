@@ -259,11 +259,19 @@ void DrawInvMassCanvasText(double pTmin, double pTmax,
 // MAIN LOGIC
 void analyzeSimulationLocally()
 {
+    bool doInvMass = true;
+    
     std::cout << "[INFO] Starting analyzeSimulationLocally()...\n";
 
     // Input & output
-    std::string inputFile = "/sphenix/user/shuhangli/ppg12/anatreemaker/macro_maketree/sim/run22/photon10/condorout_waveform/caloana0130.root";
-    std::string outDir    = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/SimOut";
+    /*
+     /sphenix/user/shuhangli/ppg12/anatreemaker/macro_maketree/sim/run22/photon10/condorout_waveform/
+     */
+    std::string inputFile = "/Users/patsfan753/Desktop/caloana0130.root";
+    /*
+     /sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/
+     */
+    std::string outDir    = "/Users/patsfan753/Desktop/SimOut";
     ensureOutputDirectory(outDir);
 
     int nBins = (int)pTedges.size() - 1;
@@ -279,9 +287,10 @@ void analyzeSimulationLocally()
         hInvMassLeading[i] = new TH1F(hName.c_str(), hTitle.c_str(), 100, 0., 1.0);
     }
 
-    //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    //  (A) FIRST PASS: fill di-cluster IM distributions
-    //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // (A) FIRST PASS: Fill di-cluster IM distributions using proper TLorentzVectors
+    //                 *only* for pairs passing E>1 GeV and asym<0.5 cuts
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     {
         TFile* fIn = TFile::Open(inputFile.c_str(),"READ");
         if(!fIn || fIn->IsZombie()){
@@ -290,29 +299,29 @@ void analyzeSimulationLocally()
         }
         TTree* slim = (TTree*) fIn->Get("slimtree");
         if(!slim){
-            std::cerr<<"[ERROR] 'slimtree' not found in file. Closing.\n";
+            std::cerr<<"[ERROR] 'slimtree' not found. Closing.\n";
             fIn->Close();
             return;
         }
 
-        slim->SetBranchAddress("ncluster_CLUSTERINFO_CEMC",&ncluster);
-        slim->SetBranchAddress("cluster_Et_CLUSTERINFO_CEMC",  cluster_Et);
-        slim->SetBranchAddress("cluster_E_CLUSTERINFO_CEMC",   cluster_E);
-        slim->SetBranchAddress("cluster_Eta_CLUSTERINFO_CEMC", cluster_Eta);
-        slim->SetBranchAddress("cluster_Phi_CLUSTERINFO_CEMC", cluster_Phi);
+        slim->SetBranchAddress("ncluster_CLUSTERINFO_CEMC",       &ncluster);
+        slim->SetBranchAddress("cluster_Et_CLUSTERINFO_CEMC",     cluster_Et);
+        slim->SetBranchAddress("cluster_E_CLUSTERINFO_CEMC",      cluster_E);
+        slim->SetBranchAddress("cluster_Eta_CLUSTERINFO_CEMC",    cluster_Eta);
+        slim->SetBranchAddress("cluster_Phi_CLUSTERINFO_CEMC",    cluster_Phi);
 
         Long64_t nEntries = slim->GetEntries();
         std::cout << "[INFO] First pass => TTree has " << nEntries << " entries.\n";
 
         for(Long64_t iev=0; iev<nEntries; iev++){
-            if( (iev % 200000 == 0) && iev>0 ) {
-                std::cout << "[DEBUG] First pass: processed " << iev << " / "
-                          << nEntries << " events so far...\n";
+            if( (iev % 200000 == 0) && iev>0 ){
+                std::cout << "[DEBUG] First pass: processed " << iev
+                          << " / " << nEntries << " events...\n";
             }
             slim->GetEntry(iev);
-            if(ncluster<2) continue;
+            if(ncluster < 2) continue;
 
-            // Loop over pairs
+            // Loop over all cluster pairs
             for(int i=0; i<ncluster; i++){
                 for(int j=i+1; j<ncluster; j++){
                     float pt1  = cluster_Et[i];
@@ -324,27 +333,38 @@ void analyzeSimulationLocally()
                     float e1   = cluster_E[i];
                     float e2   = cluster_E[j];
 
-                    // leading cluster
-                    float leadingPt = (pt1>=pt2? pt1 : pt2);
-                    int binL = findPtBin(leadingPt);
-                    if(binL<0) continue; // out of range
+                    // (1) Energy cut: require each cluster E>1 GeV
+                    if(e1 < 1.0 || e2 < 1.0) continue;
 
-                    TLorentzVector v1,v2;
+                    // (2) Asymmetry cut: (|E1-E2|)/(E1+E2) < 0.5
+                    float sumE = e1 + e2;
+                    if(sumE < 1e-6) continue;  // avoid div-by-zero
+                    float asym = std::fabs(e1 - e2)/sumE;
+                    if(asym > 0.5) continue;
+
+                    // leading cluster => find pT bin
+                    float leadingPt = (pt1 >= pt2 ? pt1 : pt2);
+                    int binIdx = findPtBin(leadingPt);
+                    if(binIdx < 0) continue; // out of range
+
+                    // Build Lorentz vectors
+                    TLorentzVector v1, v2;
                     v1.SetPtEtaPhiE(pt1, eta1, phi1, e1);
                     v2.SetPtEtaPhiE(pt2, eta2, phi2, e2);
-                    float m = (v1+v2).M();
 
-                    hInvMassLeading[binL]->Fill(m);
+                    float invMass = (v1 + v2).M();
+                    hInvMassLeading[binIdx]->Fill(invMass);
                 }
             }
         }
         fIn->Close();
-        std::cout << "[INFO] Done filling di-cluster IM distributions.\n";
+        std::cout << "[INFO] Done filling di-cluster IM distributions (E>1GeV, asym<0.5).\n";
     }
 
-    //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    //  (B) FIT each IM distribution => store results
-    //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // (B) FIT each IM distribution => store results,
+    //     then output each individually AND on a single multi‐pad canvas
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     std::vector<FitResultData> fitParams(nBins);
     for(int ib=0; ib<nBins; ib++){
         fitParams[ib].binIndex = ib;
@@ -356,67 +376,97 @@ void analyzeSimulationLocally()
         fitParams[ib].sigmaEta = 0.;
     }
 
-    std::cout << "[INFO] Now performing fits for each pT bin...\n";
+    std::cout << "[INFO] Now performing fits for each pT bin and producing plots...\n";
+
+    // Create big canvas with sub‐pads for all bins, e.g. 3 wide x N rows
+    int nCols = 3;
+    int nRows = (nBins + nCols - 1) / nCols;
+    TCanvas cAll("cAll","Invariant Mass Distributions by pT Bin",1200,800);
+    cAll.Divide(nCols, nRows);
+
     for(int i=0; i<nBins; i++){
         TH1F* hist = hInvMassLeading[i];
         if(!hist){
-            std::cout << "[WARN] hist pointer is null for bin " << i << std::endl;
+            std::cout << "[WARN] null hist pointer for bin " << i << std::endl;
             continue;
         }
-        if(hist->GetEntries()<10){
-            std::cout << "[WARN] histogram " << hist->GetName() << " has < 10 entries; skipping fit.\n";
+        if(hist->GetEntries() < 10){
+            std::cout << "[WARN] " << hist->GetName()
+                      << " has <10 entries => skipping fit.\n";
             continue;
         }
 
+        // Fit
         TF1 *totalF=nullptr, *gaussPi0=nullptr, *gaussEta=nullptr, *polyF=nullptr;
         double fStart=0., fEnd=1.;
-        TFitResultPtr r = PerformFitting(hist, totalF, gaussPi0, gaussEta, polyF, fStart, fEnd);
+        TFitResultPtr fitRes = PerformFitting(hist, totalF, gaussPi0, gaussEta, polyF, fStart, fEnd);
 
+        // Extract parameters
         double mp0 = totalF->GetParameter(1);
         double sp0 = totalF->GetParameter(2);
         double met = totalF->GetParameter(4);
         double set = totalF->GetParameter(5);
-
         fitParams[i].meanPi0  = mp0;
         fitParams[i].sigmaPi0 = sp0;
         fitParams[i].meanEta  = met;
         fitParams[i].sigmaEta = set;
 
-        // Draw & save
-        TCanvas cFit(Form("cInvMassBin%d", i),
-                     Form("InvMass Leading pT= %.1f-%.1f GeV", pTedges[i], pTedges[i+1]),
+        // (i) Save an individual plot for this bin
+        TCanvas cInd(Form("cInvMassBin%d", i),
+                     Form("InvMass Leading pT = %.1f-%.1f GeV", pTedges[i], pTedges[i+1]),
                      800,600);
         hist->Draw("E");
-        if(gaussPi0) gaussPi0->Draw("same");
-        if(gaussEta) gaussEta->Draw("same");
-        if(polyF)    polyF->Draw("same");
-        if(totalF)   totalF->Draw("same");
-
+        if(gaussPi0) gaussPi0->Draw("SAME");
+        if(gaussEta) gaussEta->Draw("SAME");
+        if(polyF)    polyF->Draw("SAME");
+        if(totalF)   totalF->Draw("SAME");
         DrawInvMassCanvasText(pTedges[i], pTedges[i+1], mp0, sp0, met, set);
 
         std::string outName = Form("%s/InvMassLeading_%.1fto%.1f.png",
                                    outDir.c_str(), pTedges[i], pTedges[i+1]);
-        cFit.SaveAs(outName.c_str());
-        std::cout<<"[INFO] Saved fit-plot: "<< outName <<std::endl;
+        cInd.SaveAs(outName.c_str());
+        std::cout << "[INFO] Saved bin " << i
+                  << " => " << outName << std::endl;
+
+        // (ii) Also put this histogram on the multi‐pad canvas
+        cAll.cd(i+1);
+        hist->Draw("E");
+        if(gaussPi0) gaussPi0->Draw("SAME");
+        if(gaussEta) gaussEta->Draw("SAME");
+        if(polyF)    polyF->Draw("SAME");
+        if(totalF)   totalF->Draw("SAME");
+        DrawInvMassCanvasText(pTedges[i], pTedges[i+1], mp0, sp0, met, set);
     }
 
-    // Optionally write these fit results to CSV
+    // Save the multi‐bin figure
+    std::string outMulti = outDir + "/InvMassLeading_AllBins.png";
+    cAll.SaveAs(outMulti.c_str());
+    std::cout << "[INFO] Saved multi‐bin IM plot: " << outMulti << std::endl;
+
+    // Optionally write final fit results to CSV
     {
         std::string csvName = outDir + "/InvMassFitResults.csv";
         std::ofstream ofs(csvName);
         if(!ofs.good()){
-            std::cerr<<"[WARNING] Could not write CSV to "<<csvName<<"\n";
+            std::cerr<<"[WARNING] Could not open CSV file: "<<csvName<<"\n";
         } else {
-            ofs<<"BinIndex,pTmin,pTmax,meanPi0,sigmaPi0,meanEta,sigmaEta\n";
-            for(auto &fp : fitParams){
-                ofs<<fp.binIndex<<","
-                   <<fp.pTmin<<","<<fp.pTmax<<","
-                   <<fp.meanPi0<<","<<fp.sigmaPi0<<","
-                   <<fp.meanEta<<","<<fp.sigmaEta<<"\n";
+            ofs << "BinIndex,pTmin,pTmax,meanPi0,sigmaPi0,meanEta,sigmaEta\n";
+            for(auto &fp : fitParams) {
+                ofs << fp.binIndex << ","
+                    << fp.pTmin << "," << fp.pTmax << ","
+                    << fp.meanPi0 << "," << fp.sigmaPi0 << ","
+                    << fp.meanEta << "," << fp.sigmaEta << "\n";
             }
             ofs.close();
-            std::cout<<"[INFO] Wrote fit results to "<<csvName<<"\n";
+            std::cout << "[INFO] Wrote fit results to " << csvName << std::endl;
         }
+    }
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    
+    if(doInvMass) {
+        std::cout << "[INFO] doInvMass flag is true. Skipping second pass and further analysis.\n";
+        return;
     }
 
     //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -673,14 +723,46 @@ void analyzeSimulationLocally()
 
     // (1) fraction of pi0/eta (truth) AND fraction from IM approach
     {
-        TCanvas cFrac("cFrac","Fraction: truth vs. mass-window",800,600);
-        cFrac.SetLeftMargin(0.15);
-        cFrac.SetBottomMargin(0.15);
+        // First, build the ratio arrays:
+        std::vector<double> vRatio(nBins, 0.0);
+        std::vector<double> vErrRatio(nBins, 0.0);
+
+        for (int i = 0; i < nBins; i++) {
+            double x = vFracIM[i];
+            double ex = vErrFracIM[i];
+            double y = vFracTruth[i];
+            double ey = vErrFracTruth[i];
+            if (y > 1e-12) {
+                vRatio[i] = x / y;
+                // standard propagation of errors for ratio = x/y
+                // ratioErr = ratio * sqrt( (ex/x)^2 + (ey/y)^2 )
+                double relErrSq = 0.0;
+                if (x > 1e-12) relErrSq += std::pow(ex/x, 2);
+                relErrSq += std::pow(ey/y, 2);
+                vErrRatio[i] = vRatio[i] * std::sqrt(relErrSq);
+            } else {
+                vRatio[i]     = 0.0;
+                vErrRatio[i]  = 0.0;
+            }
+        }
+
+        // Create a taller canvas for main plot + ratio subplot
+        TCanvas cFrac("cFrac","Fraction: truth vs. mass-window + ratio",800,800);
+
+        // Top pad (70% height) for the overlayed fraction TGraphs
+        TPad* padTop = new TPad("padTop","padTop", 0.0, 0.3, 1.0, 1.0);
+        padTop->SetBottomMargin(0.02); // reduce gap
+        padTop->Draw();
+        padTop->cd();
+
+        // Decide log scale or not
+        bool useLogYFrac = (maxFrac < 0.02);
+        if (useLogYFrac) padTop->SetLogy();
 
         TGraphErrors* grFracTruth = new TGraphErrors(nBins,
                                                      &vBinCenterFrac[0], &vFracTruth[0],
                                                      nullptr, &vErrFracTruth[0]);
-        grFracTruth->SetTitle("Fraction of #pi^{0}/#eta (truth) vs. IM-flag; p_{T} (GeV); fraction");
+        grFracTruth->SetTitle("");
         grFracTruth->SetMarkerStyle(20);
         grFracTruth->SetMarkerColor(kBlue+2);
         grFracTruth->SetLineColor(kBlue+2);
@@ -692,31 +774,71 @@ void analyzeSimulationLocally()
         grFracIM->SetMarkerColor(kOrange+1);
         grFracIM->SetLineColor(kOrange+1);
 
-        bool useLogYFrac = (maxFrac<0.02);
-        if(useLogYFrac){
-            cFrac.SetLogy();
-            double minY=1e-7;
-            if(maxFrac>1e-10) minY=1e-4*maxFrac;
-            grFracTruth->GetYaxis()->SetRangeUser(minY, 1.5*maxFrac);
-        } else {
-            grFracTruth->GetYaxis()->SetRangeUser(0., 1.2*maxFrac);
-        }
-        grFracTruth->GetXaxis()->SetRangeUser(pTedges.front()-0.5,
-                                              pTedges.back()+0.5);
-
+        // Draw the "Truth" first
         grFracTruth->Draw("AP");
+        grFracTruth->GetHistogram()->GetXaxis()->SetRangeUser(pTedges.front()-0.5,
+                                                              pTedges.back() + 0.5);
+        grFracTruth->GetHistogram()->GetYaxis()->SetTitle("fraction");
+        grFracTruth->GetHistogram()->SetTitle("Fraction of #pi^{0}/#eta (truth) vs. IM-flag");
+        double minY = 1e-4 * maxFrac, maxY = 1.5 * maxFrac;
+        if (minY < 1e-7) minY = 1e-7;
+        if (!useLogYFrac) {
+            grFracTruth->GetHistogram()->GetYaxis()->SetRangeUser(0., 1.2 * maxFrac);
+        } else {
+            grFracTruth->GetHistogram()->GetYaxis()->SetRangeUser(minY, maxY);
+        }
+
+        // Overplot the "IM flagged"
         grFracIM->Draw("P SAME");
 
-        TLegend leg(0.50, 0.70, 0.88, 0.88);
+        // Legend
+        TLegend leg(0.55, 0.75, 0.88, 0.88);
         leg.SetBorderSize(0);
         leg.SetFillStyle(0);
         leg.AddEntry(grFracTruth, "Truth #pi^{0}/#eta fraction", "pl");
-        leg.AddEntry(grFracIM, "Mass-window fraction (IM flagged)", "pl");
+        leg.AddEntry(grFracIM,    "Mass-window fraction (IM flagged)", "pl");
         leg.Draw();
 
-        std::string outFracPng = outDir + "/FractionPi0EtaVsPt_overlayIM.png";
-        cFrac.SaveAs(outFracPng.c_str());
-        std::cout << "[INFO] Saved overlap fraction plot: " << outFracPng << std::endl;
+        cFrac.cd(); // return to main canvas
+
+        // Bottom pad (30% height) for ratio
+        TPad* padBot = new TPad("padBot","padBot", 0.0, 0.0, 1.0, 0.3);
+        padBot->SetTopMargin(0.02);
+        padBot->SetBottomMargin(0.25);
+        padBot->Draw();
+        padBot->cd();
+
+        TGraphErrors* grRatio = new TGraphErrors(nBins,
+                                                 &vBinCenterFrac[0], &vRatio[0],
+                                                 nullptr, &vErrRatio[0]);
+        grRatio->SetMarkerStyle(20);
+        grRatio->SetMarkerColor(kBlack);
+        grRatio->SetLineColor(kBlack);
+        grRatio->SetTitle(""); // We’ll set axis labels directly
+        grRatio->Draw("AP");
+
+        grRatio->GetHistogram()->GetXaxis()->SetRangeUser(pTedges.front()-0.5,
+                                                          pTedges.back() + 0.5);
+        grRatio->GetHistogram()->GetXaxis()->SetTitle("p_{T} (GeV)");
+        grRatio->GetHistogram()->GetXaxis()->SetTitleSize(0.1);
+        grRatio->GetHistogram()->GetXaxis()->SetLabelSize(0.08);
+        grRatio->GetHistogram()->GetYaxis()->SetTitle("IM / Truth");
+        grRatio->GetHistogram()->GetYaxis()->SetTitleSize(0.1);
+        grRatio->GetHistogram()->GetYaxis()->SetLabelSize(0.08);
+
+        // Set ratio y-range (optional)
+        grRatio->GetHistogram()->GetYaxis()->SetRangeUser(0., 1.2);
+
+        // optional horizontal line at ratio=1
+        TLine* line1 = new TLine(pTedges.front()-0.5, 1.0, pTedges.back()+0.5, 1.0);
+        line1->SetLineColor(kGray+2);
+        line1->SetLineStyle(2);
+        line1->Draw("SAME");
+
+        // Finally save
+        cFrac.SaveAs((outDir + "/FractionPi0EtaVsPt_overlayIM.png").c_str());
+        std::cout << "[INFO] Saved overlap fraction + ratio plot: "
+                  << outDir + "/FractionPi0EtaVsPt_overlayIM.png" << std::endl;
     }
 
     // (2) original vs enhanced purity
