@@ -48,6 +48,32 @@
 #include <globalvertex/GlobalVertex.h>
 #include <globalvertex/GlobalVertexMap.h>
 
+#include <g4main/PHG4TruthInfoContainer.h>
+#include <g4main/PHG4Particle.h>
+#include <g4main/PHG4VtxPoint.h>
+#include <g4main/PHG4Shower.h>
+// caloEvalStack for cluster to truth matching
+#include <g4eval/CaloEvalStack.h>
+#include <g4eval/CaloRawClusterEval.h>
+
+#include <mbd/MbdGeom.h>
+#include <mbd/MbdPmtContainer.h>
+#include <mbd/MbdPmtHit.h>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#include <phhepmc/PHHepMCGenEvent.h>
+#include <phhepmc/PHHepMCGenEventMap.h>
+#include <ffaobjects/RunHeader.h>
+
+#include <HepMC/GenEvent.h>
+#include <HepMC/GenVertex.h> // for GenVertex, GenVertex::part...
+#pragma GCC diagnostic pop
+
+#include <jetbase/Jetv1.h>
+#include <jetbase/Jetv2.h>
+#include <jetbase/JetContainer.h>
+
 #include <filesystem>
 #include <fstream>
 #include <locale>
@@ -185,6 +211,72 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
     }
 
     return true;
+}
+
+float caloTreeGen::getScaledownFactor(const std::string &dbTriggerName)
+{
+  // Make sure we have a valid run number
+  if (m_runNumber <= 0)
+  {
+    std::cerr << "[getScaledownFactor] Error: m_runNumber = " << m_runNumber
+              << " is not valid. Returning -1.\n";
+    return -1.f;
+  }
+
+  // Connect to the DB
+  TSQLServer* db = TSQLServer::Connect("pgsql://sphnxdaqdbreplica:5432/daq","phnxro","");
+  if (!db || db->IsZombie())
+  {
+    std::cerr << "[getScaledownFactor] DB connection failed for run " << m_runNumber << std::endl;
+    if (db) delete db;
+    return -1.f;
+  }
+
+  // Build a query for exactly one trigger in one run
+  // We'll just take the first matching row if multiple exist
+  // Note the single quotes around %s => we must be sure dbTriggerName has no quotes inside
+  char query[1024];
+  snprintf(query, sizeof(query),
+           "SELECT s.live, s.scaled "
+           "FROM gl1_scalers s "
+           "JOIN gl1_triggernames t "
+           "   ON (s.index = t.index "
+           "       AND s.runnumber BETWEEN t.runnumber AND t.runnumber_last) "
+           "WHERE s.runnumber=%d "
+           "  AND t.triggername='%s' "
+           "ORDER BY s.index;",
+           m_runNumber, dbTriggerName.c_str());
+
+  TSQLResult* res = db->Query(query);
+  if (!res)
+  {
+    std::cerr << "[getScaledownFactor] Query failed (null result). Returning -1.\n";
+    delete db;
+    return -1.f;
+  }
+
+  float scaleVal = -1.f;  // default if not found
+  // Read the first matching row, if any
+  if (auto row = res->Next())
+  {
+    // The query returns "live" in field 0, "scaled" in field 1
+    const char* liveStr   = row->GetField(0);
+    const char* scaledStr = row->GetField(1);
+
+    if (liveStr && scaledStr)
+    {
+      double live   = std::atof(liveStr);
+      double scaled = std::atof(scaledStr);
+      if (scaled > 0.0) scaleVal = float(live / scaled);
+    }
+    delete row;
+  }
+
+  delete res;
+  delete db;
+
+  // scaleVal remains -1 if nothing matched or scaled<=0
+  return scaleVal;
 }
 
 //____________________________________________________________________________..
@@ -525,6 +617,85 @@ void caloTreeGen::createHistos_Data() {
                             "E_{3x3}/E_{3x7} (With Cuts);E_{3x3}/E_{3x7};Counts",
                             100, 0.0, 1.2);
         
+        // (1) E3by7 / E7by7 histograms
+        qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
+                            "E_{3x7}/E_{7x7} (No Cuts);E_{3x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+        qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E3by7_over_E7by7_withShowerShapeCuts_" + triggerName,
+                            "E_{3x7}/E_{7x7} (With Cuts);E_{3x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+
+        // (2) w72 histograms
+        qaHistograms["w72_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("w72_NoShowerShapeCuts_" + triggerName,
+                            "w_{72} (No Cuts);w_{72};Counts",
+                            100, 0.0, 10.0);
+        qaHistograms["w72_withShowerShapeCuts_" + triggerName] =
+            createHistogram("w72_withShowerShapeCuts_" + triggerName,
+                            "w_{72} (With Cuts);w_{72};Counts",
+                            100, 0.0, 10.0);
+
+        // (3) E1x1 / ClusterE histograms
+        qaHistograms["E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{cluster} (No Cuts);E_{1x1}/E_{cluster};Counts",
+                            100, 0.0, 1.2);
+        qaHistograms["E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{cluster} (With Cuts);E_{1x1}/E_{cluster};Counts",
+                            100, 0.0, 1.2);
+
+        // (4) E1x1 / E3x3 histograms
+        qaHistograms["E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{3x3} (No Cuts);E_{1x1}/E_{3x3};Counts",
+                            100, 0.0, 1.2);
+        qaHistograms["E1x1_over_E3x3_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1x1_over_E3x3_withShowerShapeCuts_" + triggerName,
+                            "E_{1x1}/E_{3x3} (With Cuts);E_{1x1}/E_{3x3};Counts",
+                            100, 0.0, 1.2);
+
+        // (5) E3x2 / E3x5 histograms
+        qaHistograms["E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName,
+                            "E_{3x2}/E_{3x5} (No Cuts);E_{3x2}/E_{3x5};Counts",
+                            100, 0.0, 1.2);
+        qaHistograms["E3x2_over_E3x5_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E3x2_over_E3x5_withShowerShapeCuts_" + triggerName,
+                            "E_{3x2}/E_{3x5} (With Cuts);E_{3x2}/E_{3x5};Counts",
+                            100, 0.0, 1.2);
+
+        // (6) E1x7 / E7x7 histograms
+        qaHistograms["E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
+                            "E_{1x7}/E_{7x7} (No Cuts);E_{1x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+        qaHistograms["E1by7_over_E7by7_withShowerShapeCuts_" + triggerName] =
+            createHistogram("E1by7_over_E7by7_withShowerShapeCuts_" + triggerName,
+                            "E_{1x7}/E_{7x7} (With Cuts);E_{1x7}/E_{7x7};Counts",
+                            100, 0.0, 1.2);
+
+        // (7) weta histograms
+        qaHistograms["weta_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("weta_NoShowerShapeCuts_" + triggerName,
+                            "w_{eta} (No Cuts);w_{eta};Counts",
+                            100, 0.0, 2.0);
+        qaHistograms["weta_withShowerShapeCuts_" + triggerName] =
+            createHistogram("weta_withShowerShapeCuts_" + triggerName,
+                            "w_{eta} (With Cuts);w_{eta};Counts",
+                            100, 0.0, 2.0);
+
+        // (8) wphi histograms
+        qaHistograms["wphi_NoShowerShapeCuts_" + triggerName] =
+            createHistogram("wphi_NoShowerShapeCuts_" + triggerName,
+                            "w_{phi} (No Cuts);w_{phi};Counts",
+                            100, 0.0, 2.0);
+        qaHistograms["wphi_withShowerShapeCuts_" + triggerName] =
+            createHistogram("wphi_withShowerShapeCuts_" + triggerName,
+                            "w_{phi} (With Cuts);w_{phi};Counts",
+                            100, 0.0, 2.0);
         /*
          HCal QA
          */
@@ -556,98 +727,6 @@ void caloTreeGen::createHistos_Data() {
             ("Trigger Count for Index " + triggerName + "; Count; Entries").c_str(),
             1, 0, 1 // Single bin to count occurrences
         );
-        
-        /*
-         Shower Shape QA
-         */
-        
-        //E3x7/E7x7
-        qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName] = createHistogram("E3by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
-                            "E3x7/E7x7 (No Cuts);E_{3x7}/E_{7x7};Counts",
-                             100, 0.0, 1.2);
-
-        qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + triggerName] = createHistogram("E3by7_over_E7by7_withShowerShapeCuts_" + triggerName,
-                            "E3x7/E7x7 (With ShowerShape Cuts);E_{3x7}/E_{7x7};Counts",
-                             100, 0.0, 1.2);
-        
-        //w7x2
-        qaHistograms["w72_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("w72_NoShowerShapeCuts_" + triggerName,
-                            "w_{72} (No Cuts);w_{72};Counts",
-                             100, 0.0, 2.0);  // choose x-range as needed
-
-        qaHistograms["w72_withShowerShapeCuts_" + triggerName] =
-            createHistogram("w72_withShowerShapeCuts_" + triggerName,
-                            "w_{72} (With ShowerShape Cuts);w_{72};Counts",
-                             100, 0.0, 2.0);
-        
-        // E1x1 / Ecluster
-        qaHistograms["E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("E1x1_over_ClusterE_NoShowerShapeCuts_" + triggerName,
-                            "E_{1x1}/E_{cluster} (No Cuts);E_{1x1}/E;Counts",
-                             100, 0.0, 1.2);
-
-        qaHistograms["E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName] =
-            createHistogram("E1x1_over_ClusterE_withShowerShapeCuts_" + triggerName,
-                            "E_{1x1}/E_{cluster} (With Cuts);E_{1x1}/E;Counts",
-                             100, 0.0, 1.2);
-
-        // E1x1 / E3x3
-        qaHistograms["E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("E1x1_over_E3x3_NoShowerShapeCuts_" + triggerName,
-                            "E_{1x1}/E_{3x3} (No Cuts);E_{1x1}/E_{3x3};Counts",
-                             100, 0.0, 1.2);
-
-        qaHistograms["E1x1_over_E3x3_withShowerShapeCuts_" + triggerName] =
-            createHistogram("E1x1_over_E3x3_withShowerShapeCuts_" + triggerName,
-                            "E_{1x1}/E_{3x3} (With Cuts);E_{1x1}/E_{3x3};Counts",
-                             100, 0.0, 1.2);
-
-        
-        // E1x7 / E7x7
-        qaHistograms["E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("E1by7_over_E7by7_NoShowerShapeCuts_" + triggerName,
-                            "E_{1x7}/E_{7x7} (No Cuts);E_{1x7}/E_{7x7};Counts",
-                            100, 0.0, 1.2);
-
-        qaHistograms["E1by7_over_E7by7_withShowerShapeCuts_" + triggerName] =
-            createHistogram("E1by7_over_E7by7_withShowerShapeCuts_" + triggerName,
-                            "E_{1x7}/E_{7x7} (With Cuts);E_{1x7}/E_{7x7};Counts",
-                            100, 0.0, 1.2);
-        
-        // E3x2 / E3x5
-        qaHistograms["E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("E3x2_over_E3x5_NoShowerShapeCuts_" + triggerName,
-                            "E_{3x2}/E_{3x5} (No Cuts);E_{3x2}/E_{3x5};Counts",
-                            100, 0.0, 1.2);
-
-        qaHistograms["E3x2_over_E3x5_withShowerShapeCuts_" + triggerName] =
-            createHistogram("E3x2_over_E3x5_withShowerShapeCuts_" + triggerName,
-                            "E_{3x2}/E_{3x5} (With Cuts);E_{3x2}/E_{3x5};Counts",
-                            100, 0.0, 1.2);
-        
-        // w_eta histograms
-        qaHistograms["weta_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("weta_NoShowerShapeCuts_" + triggerName,
-                            "w_{#eta} (No Cuts);w_{#eta};Counts",
-                            100, 0.0, 0.1);  // Example bin range: 0.0 to 0.1
-
-        qaHistograms["weta_withShowerShapeCuts_" + triggerName] =
-            createHistogram("weta_withShowerShapeCuts_" + triggerName,
-                            "w_{#eta} (With Cuts);w_{#eta};Counts",
-                            100, 0.0, 0.1);
-
-        // w_phi histograms
-        qaHistograms["wphi_NoShowerShapeCuts_" + triggerName] =
-            createHistogram("wphi_NoShowerShapeCuts_" + triggerName,
-                            "w_{#phi} (No Cuts);w_{#phi};Counts",
-                            100, 0.0, 0.1);
-
-        qaHistograms["wphi_withShowerShapeCuts_" + triggerName] =
-            createHistogram("wphi_withShowerShapeCuts_" + triggerName,
-                            "w_{#phi} (With Cuts);w_{#phi};Counts",
-                            100, 0.0, 0.1);
-
         
         std::map<std::pair<float, float>, std::map<std::string, TObject*>>& qaIsolationHistograms = qaIsolationHistogramsByTriggerAndPt[triggerName];
 
@@ -843,30 +922,128 @@ void caloTreeGen::createHistos_Data() {
 
                             
                             // Create the histogram for all photons from pi0 decays
-                            std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusE) +
+                            std::string allPhotonHistName_baseName = "allPhotonCount_E" + formatFloatForFilename(minClusE) +
                                                             "_Chi" + formatFloatForFilename(maxChi2) +
                                                             "_Asym" + formatFloatForFilename(maxAsym) +
                                                             massWindowLabel +
                                                             "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                            "_" + triggerName;
+                                                            "_";
                             
-                            TH1F* allPhotonHist = new TH1F(allPhotonHistName.c_str(), "All Photon Count; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                            std::string allPhotonHistName_withoutShowerShapeCutName = allPhotonHistName_baseName + "withoutShowerShapeCuts_" + triggerName;
+                            TH1F* allPhotonHistName_withoutShowerShapeCut = new TH1F(allPhotonHistName_withoutShowerShapeCutName.c_str(),
+                            "All Photon Count (without Shower Shape Cuts); pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                            
+                            std::string allPhotonHistName_withShowerShapeCutName = allPhotonHistName_baseName + "withShowerShapeCuts_" + triggerName;
+                            TH1F* allPhotonHistName_withShowerShapeCut = new TH1F(allPhotonHistName_withShowerShapeCutName.c_str(),
+                            "All Photon Count (with Shower Shape Cuts); pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
 
                             // Create histogram for the pT distribution of all photons
-                            std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusE) +
+                            std::string ptPhotonHistName_baseName = "ptPhoton_E" + formatFloatForFilename(minClusE) +
                                                            "_Chi" + formatFloatForFilename(maxChi2) +
                                                            "_Asym" + formatFloatForFilename(maxAsym) +
                                                            massWindowLabel +
                                                            "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
-                                                           "_" + triggerName;
-
-                            TH1F* ptPhotonHist = new TH1F(ptPhotonHistName.c_str(), "pT of Photons; pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+                                                           "_";
+                            std::string ptPhotonHistName_withoutShowerShapeCutName = ptPhotonHistName_baseName + "withoutShowerShapeCuts_" + triggerName;
+                            TH1F* ptPhotonHistName_withoutShowerShapeCut = new TH1F(ptPhotonHistName_withoutShowerShapeCutName.c_str(),
+                            "Photon pT (without Shower Shape Cuts); pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
                             
-                            // Store these histograms in the massAndIsolationHistograms structure
-                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName] = allPhotonHist;
-                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName] = ptPhotonHist;
+                            std::string ptPhotonHistName_withShowerShapeCutName = ptPhotonHistName_baseName + "withShowerShapeCuts_" + triggerName;
+                            TH1F* ptPhotonHistName_withShowerShapeCut = new TH1F(ptPhotonHistName_withShowerShapeCutName.c_str(),
+                            "Photon pT (with Shower Shape Cuts); pT [GeV]; Count", 100, pT_bin.first, pT_bin.second);
+
+                            /*
+                             Histos for total photon count in/outside mass window
+                             */
+                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName_withoutShowerShapeCutName] = allPhotonHistName_withoutShowerShapeCut;
+                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][allPhotonHistName_withShowerShapeCutName] = allPhotonHistName_withShowerShapeCut;
+
+                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName_withShowerShapeCutName] =  ptPhotonHistName_withShowerShapeCut;
+                            massAndIsolationHistograms[triggerName][std::make_tuple(maxAsym, maxChi2, minClusE)][pT_bin][ptPhotonHistName_withoutShowerShapeCutName] = ptPhotonHistName_withoutShowerShapeCut;
                             
                         }
+                    }
+                }
+            }
+        }
+    }
+    for (float maxAsym : asymmetry_values) {
+        for (float maxChi2 : clus_chi_values) {
+            for (float minClusE : clus_Energy_values) {
+                for (const auto& pT_bin : pT_bins) {
+                    std::string allPhotonHistName_base = "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+                                                         "_Chi" + formatFloatForFilename(maxChi2) +
+                                                         "_Asym" + formatFloatForFilename(maxAsym) +
+                                                         massWindowLabel +
+                                                         "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                         "_";
+                    std::string allPhotonHistName_without = allPhotonHistName_base + "withoutShowerShapeCuts_COMBINED";
+                    hCombinedAllPhoton_without = new TH1F(
+                        allPhotonHistName_without.c_str(),
+                        "All Photon Count (without Shower Shape Cuts); pT [GeV]; Count",
+                        100, pT_bin.first, pT_bin.second
+                    );
+                    std::string allPhotonHistName_with = allPhotonHistName_base + "withShowerShapeCuts_COMBINED";
+                    hCombinedAllPhoton_with = new TH1F(
+                        allPhotonHistName_with.c_str(),
+                        "All Photon Count (with Shower Shape Cuts); pT [GeV]; Count",
+                        100, pT_bin.first, pT_bin.second
+                    );
+
+                    // And for the pt distribution of all photons:
+                    std::string ptPhotonHistName_base = "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
+                                                        "_Chi" + formatFloatForFilename(maxChi2) +
+                                                        "_Asym" + formatFloatForFilename(maxAsym) +
+                                                        massWindowLabel +
+                                                        "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                                        "_";
+                    std::string ptPhotonHistName_without = ptPhotonHistName_base + "withoutShowerShapeCuts_COMBINED";
+                    hCombinedPtPhoton_without = new TH1F(
+                        ptPhotonHistName_without.c_str(),
+                        "Photon pT (without Shower Shape Cuts); pT [GeV]; Count",
+                        100, pT_bin.first, pT_bin.second
+                    );
+                    std::string ptPhotonHistName_with = ptPhotonHistName_base + "withShowerShapeCuts_COMBINED";
+                    hCombinedPtPhoton_with = new TH1F(
+                        ptPhotonHistName_with.c_str(),
+                        "Photon pT (with Shower Shape Cuts); pT [GeV]; Count",
+                        100, pT_bin.first, pT_bin.second
+                    );
+                    // Loop over all defined isolation Et ranges:
+                    for (const auto& isoRange : isoEtRanges)
+                    {
+                        float isoMin = isoRange.first;
+                        float isoMax = isoRange.second;
+
+                        // Build a base name exactly as before, but without a variable trigger name.
+                        std::string baseName = "isolatedPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+                                               "_Chi" + formatFloatForFilename(maxChi2) +
+                                               "_Asym" + formatFloatForFilename(maxAsym) +
+                                               massWindowLabel +
+                                               "_isoEt_" + formatFloatForFilename(isoMin) + "to" + formatFloatForFilename(isoMax) +
+                                               "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
+                                               "_"; // trailing underscore
+
+                        // Create the "withoutShowerShapeCuts" version
+                        std::string noCutHistName = baseName + "withoutShowerShapeCuts_COMBINED";
+                        TH1F* hist_noCuts = new TH1F(
+                            noCutHistName.c_str(),
+                            "Isolated Photon Count (No ShowerShapeCuts); pT [GeV]; Count",
+                            100, pT_bin.first, pT_bin.second
+                        );
+
+                        // Create the "withShowerShapeCuts" version
+                        std::string withCutHistName = baseName + "withShowerShapeCuts_COMBINED";
+                        TH1F* hist_withCuts = new TH1F(
+                            withCutHistName.c_str(),
+                            "Isolated Photon Count (With ShowerShapeCuts); pT [GeV]; Count",
+                            100, pT_bin.first, pT_bin.second
+                        );
+
+                        // Store them in your combined histogram vectors.
+                        // (If you want one per iso range, they will be appended in order.)
+                        vCombinedIsoNoCuts.push_back(hist_noCuts);
+                        vCombinedIsoWithCuts.push_back(hist_withCuts);
                     }
                 }
             }
@@ -2318,6 +2495,248 @@ void caloTreeGen::processIsolationRanges(
     } // end isoRange loop
 }
 
+// Helper function: fills all histograms for one trigger in one pT bin.
+void caloTreeGen::fillPtBinHistogramsForTrigger(
+    const std::string &firedShortName,
+    const std::pair<float, float> &pT_bin,
+    float mesonMass,
+    size_t clus1,
+    size_t clus2,
+    float pt1,
+    float pt2,
+    float minClusEnergy,
+    float maxChi2,
+    float maxAsym,
+    const std::vector<int>& clusterIDs,
+    const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
+    const std::unordered_map<int,bool>& clusterPassedShowerCuts,
+    bool &filledHistogram,
+    size_t &filledHistogramCount,
+    std::map<std::pair<float, float>, std::map<std::string, TH1*>> &cutHistMap,
+    // Default mass parameters:
+    float defaultPionMass,
+    float defaultPionMassWindow,
+    float defaultEtaMass,
+    float defaultEtaMassWindow)
+{
+    float pT_min = pT_bin.first;
+    float pT_max = pT_bin.second;
+    if (verbose) {
+        std::cout << "Processing pT bin: " << pT_min << " to " << pT_max << std::endl;
+    }
+    
+    // Process only if at least one photon falls in this pT bin.
+    if ((pt1 >= pT_min && pt1 < pT_max) || (pt2 >= pT_min && pt2 < pT_max)) {
+        if (verbose) {
+            std::cout << "Cluster pt1: " << pt1 << ", pt2: " << pt2 << std::endl;
+            std::cout << "At least one cluster is within the pT bin." << std::endl;
+        }
+        
+        // --- 1. Fill the invariant mass histogram for this pT bin ---
+        std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusEnergy) +
+                                      "_Chi" + formatFloatForFilename(maxChi2) +
+                                      "_Asym" + formatFloatForFilename(maxAsym) +
+                                      "_pT_" + formatFloatForFilename(pT_min) + "to" +
+                                      formatFloatForFilename(pT_max) +
+                                      "_" + firedShortName;
+        TH1F* invMassHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][invMassHistName]);
+        if (invMassHist) {
+            invMassHist->Fill(mesonMass);
+            if (verbose) {
+                std::cout << "Filled invariant mass histogram " << invMassHistName
+                          << " with meson mass " << mesonMass << std::endl;
+            }
+        }
+        
+        // --- 2. Initialize mass windows using defaults (±3σ) ---
+        float pionMass = defaultPionMass;
+        float pionMassWindow = defaultPionMassWindow * 3;
+        float etaMass = defaultEtaMass;
+        float etaMassWindow = defaultEtaMassWindow * 3;
+        
+        if (verbose) {
+            std::cout << "Initialized with default mass values (using ±3σ range):" << std::endl;
+            std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
+            std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
+        }
+        
+        // Look up a custom mass window if available.
+        auto massWindowKey = std::make_tuple(firedShortName, minClusEnergy, maxChi2, maxAsym, pT_min, pT_max);
+        if (!mesonMassWindowsMap.empty() && mesonMassWindowsMap.count(massWindowKey)) {
+            const MesonMassWindow& massWindow = mesonMassWindowsMap[massWindowKey];
+            if (verbose) {
+                std::cout << "Mass window found in map for trigger " << firedShortName << ":" << std::endl;
+                std::cout << " - Mean Pi0: " << massWindow.meanPi0 << ", Sigma Pi0: " << massWindow.sigmaPi0 << std::endl;
+                std::cout << " - Mean Eta: " << massWindow.meanEta << ", Sigma Eta: " << massWindow.sigmaEta << std::endl;
+            }
+            // Apply custom mass window if in valid range.
+            if ((massWindow.meanPi0 >= 0.12 && massWindow.meanPi0 <= 0.3) &&
+                (massWindow.meanEta >= 0.4 && massWindow.meanEta <= 0.7)) {
+                pionMass = massWindow.meanPi0;
+                pionMassWindow = massWindow.sigmaPi0 * 3;
+                etaMass = massWindow.meanEta;
+                etaMassWindow = massWindow.sigmaEta * 3;
+                if (verbose) {
+                    std::cout << "Custom mass window within valid range; updated mass values to ±3σ:" << std::endl;
+                    std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
+                    std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
+                }
+            } else if (verbose) {
+                std::cout << "Mass window outside valid range; retaining default ±3σ values." << std::endl;
+            }
+        } else if (verbose) {
+            std::cout << "No valid mass window found in map; using default ±3σ values." << std::endl;
+        }
+        
+        // --- 3. Determine whether the meson mass is inside the ±3σ mass window ---
+        bool isInMassWindow = (fabs(mesonMass - pionMass) <= pionMassWindow) ||
+                              (fabs(mesonMass - etaMass) <= etaMassWindow);
+        if (verbose) {
+            std::cout << "Meson mass " << mesonMass << (isInMassWindow ? " is " : " is not ")
+                      << "within the ±3σ mass window." << std::endl;
+        }
+        std::string massWindowLabel = isInMassWindow ? "_inMassWindow" : "_outsideMassWindow";
+        if (verbose) {
+            if (isInMassWindow) {
+                std::cout << "Meson mass " << mesonMass << " is within pion or eta mass window." << std::endl;
+            } else {
+                std::cout << "Meson mass " << mesonMass << " is outside pion and eta mass window." << std::endl;
+            }
+        }
+        
+        // --- 4. Process isolation histograms for each cluster ---
+        for (size_t clusterIndex : {clus1, clus2}) {
+            int clusterID = clusterIDs[clusterIndex];
+            if (verbose) {
+                std::cout << "Processing cluster ID: " << clusterID << std::endl;
+            }
+            processClusterIsolationHistograms(
+                clusterID,
+                mesonMass,
+                minClusEnergy,
+                maxChi2,
+                maxAsym,
+                massWindowLabel,
+                pT_min,
+                pT_max,
+                firedShortName,
+                clusterEtIsoMap_unsubtracted,
+                cutHistMap,
+                filledHistogramCount,
+                filledHistogram,
+                verbose,
+                pionMass,
+                pionMassWindow,
+                etaMass,
+                etaMassWindow,
+                pT_bin
+            );
+        }
+        processIsolationRanges(
+            isoEtRanges,
+            clusterIDs,
+            clus1,
+            clus2,
+            minClusEnergy,
+            maxChi2,
+            maxAsym,
+            massWindowLabel,
+            pT_min,
+            pT_max,
+            firedShortName,
+            clusterEtIsoMap_unsubtracted,
+            cutHistMap,
+            filledHistogram,
+            verbose,
+            pT_bin,
+            clusterPassedShowerCuts
+        );
+        
+        // --- 5. Fill the TOTAL PHOTON COUNT histograms (with and without shower shape cuts) ---
+        {
+            std::string allPhotonBase = "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pT_min) + "to" +
+                formatFloatForFilename(pT_max) + "_";
+            std::string allPhotonHistName_without = allPhotonBase + "withoutShowerShapeCuts_" + firedShortName;
+            std::string allPhotonHistName_with    = allPhotonBase + "withShowerShapeCuts_" + firedShortName;
+            
+            TH1F* allPhotonHist_without = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName_without]);
+            TH1F* allPhotonHist_with    = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName_with]);
+            
+            if (pt1 >= pT_min && pt1 < pT_max) {
+                if (allPhotonHist_without) {
+                    allPhotonHist_without->Fill(1);
+                    filledHistogram = true;
+                }
+                int clusterID1 = clusterIDs[clus1];
+                if (clusterPassedShowerCuts.count(clusterID1) && clusterPassedShowerCuts.at(clusterID1)) {
+                    if (allPhotonHist_with) {
+                        allPhotonHist_with->Fill(1);
+                        filledHistogram = true;
+                    }
+                }
+            }
+            if (pt2 >= pT_min && pt2 < pT_max) {
+                if (allPhotonHist_without) {
+                    allPhotonHist_without->Fill(1);
+                    filledHistogram = true;
+                }
+                int clusterID2 = clusterIDs[clus2];
+                if (clusterPassedShowerCuts.count(clusterID2) && clusterPassedShowerCuts.at(clusterID2)) {
+                    if (allPhotonHist_with) {
+                        allPhotonHist_with->Fill(1);
+                        filledHistogram = true;
+                    }
+                }
+            }
+        }
+        
+        // --- 6. Fill the PHOTON pT DISTRIBUTION histograms (with and without shower shape cuts) ---
+        {
+            std::string ptPhotonBase = "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pT_min) + "to" +
+                formatFloatForFilename(pT_max) + "_";
+            std::string ptPhotonHistName_without = ptPhotonBase + "withoutShowerShapeCuts_" + firedShortName;
+            std::string ptPhotonHistName_with    = ptPhotonBase + "withShowerShapeCuts_" + firedShortName;
+            
+            TH1F* ptPhotonHist_without = dynamic_cast<TH1F*>(cutHistMap[pT_bin][ptPhotonHistName_without]);
+            TH1F* ptPhotonHist_with    = dynamic_cast<TH1F*>(cutHistMap[pT_bin][ptPhotonHistName_with]);
+            
+            if (pt1 >= pT_min && pt1 < pT_max) {
+                if (ptPhotonHist_without) {
+                    ptPhotonHist_without->Fill(pt1);
+                    filledHistogram = true;
+                }
+                int clusterID1 = clusterIDs[clus1];
+                if (clusterPassedShowerCuts.count(clusterID1) && clusterPassedShowerCuts.at(clusterID1)) {
+                    if (ptPhotonHist_with) {
+                        ptPhotonHist_with->Fill(pt1);
+                        filledHistogram = true;
+                    }
+                }
+            }
+            if (pt2 >= pT_min && pt2 < pT_max) {
+                if (ptPhotonHist_without) {
+                    ptPhotonHist_without->Fill(pt2);
+                    filledHistogram = true;
+                }
+                int clusterID2 = clusterIDs[clus2];
+                if (clusterPassedShowerCuts.count(clusterID2) && clusterPassedShowerCuts.at(clusterID2)) {
+                    if (ptPhotonHist_with) {
+                        ptPhotonHist_with->Fill(pt2);
+                        filledHistogram = true;
+                    }
+                }
+            }
+        }
+    } // end if (at least one cluster is in the pT bin)
+}
 
 void caloTreeGen::fillHistogramsForTriggers(
     float mesonMass,
@@ -2330,247 +2749,374 @@ void caloTreeGen::fillHistogramsForTriggers(
     float minClusEnergy,
     float maxChi2,
     float maxAsym,
-    size_t& filledHistogramCount,
+    size_t &filledHistogramCount,
     const std::vector<int>& clusterIDs,
     const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
     const std::vector<std::string>& activeTriggerNames,
-    bool& filledHistogram,
-    const std::unordered_map<int,bool> &clusterPassedShowerCuts) {
-    
-    /*
-     temporary -- next should do the invariant mass analysis in first passs go back through using proper mass window for each pT bin
-     */
+    bool &filledHistogram,
+    const std::unordered_map<int,bool> &clusterPassedShowerCuts)
+{
+    // Default mass parameters.
     const float defaultPionMass = 0.15;
     const float defaultPionMassWindow = 0.02;
     const float defaultEtaMass = 0.59;
     const float defaultEtaMassWindow = 0.05;
     
-    for (const auto& firedShortName : activeTriggerNames) {
+    // Loop over each active trigger.
+    for (const auto &firedShortName : activeTriggerNames) {
         if (verbose) {
             std::cout << "Processing trigger: " << firedShortName << std::endl;
         }
-        /*
-         Filling Histograms outside of pT binning
-         */
-        auto& noPtBinHistMap = massAndIsolationHistogramsNoPtBins[firedShortName];
         
-        std::string invMassHistName_noBinsOfPt_name = "invMass_noPtBins_E" + formatFloatForFilename(minClusEnergy) +
-                               "_Chi" + formatFloatForFilename(maxChi2) +
-                               "_Asym" + formatFloatForFilename(maxAsym) +
-                               "_" + firedShortName;
-        
+        // --- A. Fill histograms that are NOT pT-binned ---
+        auto &noPtBinHistMap = massAndIsolationHistogramsNoPtBins[firedShortName];
+        std::string invMassHistName_noBins = "invMass_noPtBins_E" + formatFloatForFilename(minClusEnergy) +
+                                             "_Chi" + formatFloatForFilename(maxChi2) +
+                                             "_Asym" + formatFloatForFilename(maxAsym) +
+                                             "_" + firedShortName;
         if (verbose) {
-            std::cout << "Attempting to fill histogram: " << invMassHistName_noBinsOfPt_name << std::endl;
+            std::cout << "Attempting to fill histogram: " << invMassHistName_noBins << std::endl;
         }
-
-        // Attempt to find and fill the histogram
-        TH1F* invMassHistName_noBinsOfPt = dynamic_cast<TH1F*>(noPtBinHistMap[invMassHistName_noBinsOfPt_name]);
-
-        if (!invMassHistName_noBinsOfPt) {
-            std::cerr << "Error: Histogram " << invMassHistName_noBinsOfPt_name
-                      << " not found when trying to fill for Trigger: "
-                      << firedShortName << std::endl;
+        TH1F* invMassHist_noBins = dynamic_cast<TH1F*>(noPtBinHistMap[invMassHistName_noBins]);
+        if (!invMassHist_noBins) {
+            std::cerr << "Error: Histogram " << invMassHistName_noBins
+                      << " not found when trying to fill for Trigger: " << firedShortName << std::endl;
             continue;
         }
-        
-        invMassHistName_noBinsOfPt->Fill(mesonMass);
+        invMassHist_noBins->Fill(mesonMass);
         filledHistogramCount++;
-        
         if (verbose) {
-            std::cout << "Filled histogram " << invMassHistName_noBinsOfPt_name << " with meson mass " << mesonMass << std::endl;
+            std::cout << "Filled histogram " << invMassHistName_noBins
+                      << " with meson mass " << mesonMass << std::endl;
         }
         
-        auto& cutHistMap = massAndIsolationHistograms[firedShortName][std::make_tuple(maxAsym, maxChi2, minClusEnergy)];
-
-        for (const auto& pT_bin : pT_bins) {
-            float pT_min = pT_bin.first;
-            float pT_max = pT_bin.second;
-
-            if (verbose) {
-                std::cout << "Processing pT bin: " << pT_min << " to " << pT_max << std::endl;
-            }
-            
-            if ((pt1 >= pT_min && pt1 < pT_max) || (pt2 >= pT_min && pt2 < pT_max)) {
-                if (verbose) {
-                    std::cout << "Cluster pt1: " << pt1 << ", pt2: " << pt2 << std::endl;
-                    std::cout << "At least one cluster is within the pT bin." << std::endl;
-                }
-                // Fill invariant mass histogram for the current pT bin
-                std::string invMassHistName = "invMass_E" + formatFloatForFilename(minClusEnergy) +
-                                              "_Chi" + formatFloatForFilename(maxChi2) +
-                                              "_Asym" + formatFloatForFilename(maxAsym) +
-                                              "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                              "_" + firedShortName;
-
-                TH1F* invMassHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][invMassHistName]);
-                if (invMassHist) {
-                    invMassHist->Fill(mesonMass);
-                    if (verbose) {
-                        std::cout << "Filled invariant mass histogram " << invMassHistName << " with meson mass " << mesonMass << std::endl;
-                    }
-                }
-                
-                // Initialize mass values with defaults, adjusting windows to ±3σ
-                float pionMass = defaultPionMass;
-                float pionMassWindow = defaultPionMassWindow * 3;
-                float etaMass = defaultEtaMass;
-                float etaMassWindow = defaultEtaMassWindow * 3;
-
-                if (verbose) {
-                    std::cout << "Initialized with default mass values (using ±3σ range):" << std::endl;
-                    std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
-                    std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
-                }
-
-                auto massWindowKey = std::make_tuple(firedShortName, minClusEnergy, maxChi2, maxAsym, pT_min, pT_max);
-                if (!mesonMassWindowsMap.empty() && mesonMassWindowsMap.count(massWindowKey)) {
-                    const MesonMassWindow& massWindow = mesonMassWindowsMap[massWindowKey];
-
-                    if (verbose) {
-                        std::cout << "Mass window found in map for trigger " << firedShortName << ":" << std::endl;
-                        std::cout << " - Mean Pi0: " << massWindow.meanPi0 << ", Sigma Pi0: " << massWindow.sigmaPi0 << std::endl;
-                        std::cout << " - Mean Eta: " << massWindow.meanEta << ", Sigma Eta: " << massWindow.sigmaEta << std::endl;
-                    }
-
-                    // Apply custom values if within valid range
-                    if ((massWindow.meanPi0 >= 0.12 && massWindow.meanPi0 <= 0.3) &&
-                        (massWindow.meanEta >= 0.4 && massWindow.meanEta <= 0.7)) {
-                        pionMass = massWindow.meanPi0;
-                        pionMassWindow = massWindow.sigmaPi0 * 3;  // Use ±3σ for custom values
-                        etaMass = massWindow.meanEta;
-                        etaMassWindow = massWindow.sigmaEta * 3;
-
-                        if (verbose) {
-                            std::cout << "Custom mass window within valid range; updated mass values to ±3σ:" << std::endl;
-                            std::cout << " - Pion Mass: " << pionMass << " ± " << pionMassWindow << std::endl;
-                            std::cout << " - Eta Mass: " << etaMass << " ± " << etaMassWindow << std::endl;
-                        }
-                    } else if (verbose) {
-                        std::cout << "Mass window outside valid range; retaining default ±3σ values." << std::endl;
-                    }
-                } else if (verbose) {
-                    std::cout << "No valid mass window found in map; using default ±3σ values." << std::endl;
-                }
-
-                // Determine if meson mass is within the ±3σ mass window
-                bool isInMassWindow = (fabs(mesonMass - pionMass) <= pionMassWindow) ||
-                                      (fabs(mesonMass - etaMass) <= etaMassWindow);
-
-                if (verbose) {
-                    std::cout << "Meson mass " << mesonMass << (isInMassWindow ? " is " : " is not ")
-                              << "within the ±3σ mass window." << std::endl;
-                }
-                
-                std::string massWindowLabel = isInMassWindow ? "_inMassWindow" : "_outsideMassWindow";
-
-                if (verbose) {
-                    if (isInMassWindow) {
-                        std::cout << "Meson mass " << mesonMass << " is within pion or eta mass window." << std::endl;
-                    } else {
-                        std::cout << "Meson mass " << mesonMass << " is outside pion and eta mass window." << std::endl;
-                    }
-                }
-                for (size_t clusterIndex : {clus1, clus2}) {
-                    int clusterID = clusterIDs[clusterIndex];
-                    if (verbose) {
-                        std::cout << "Processing cluster ID: " << clusterID << std::endl;
-                    }
-                    processClusterIsolationHistograms(
-                         clusterID,
-                         mesonMass,
-                         minClusEnergy,
-                         maxChi2,
-                         maxAsym,
-                         massWindowLabel,
-                         pT_min,
-                         pT_max,
-                         firedShortName,
-                         clusterEtIsoMap_unsubtracted,
-                         cutHistMap,
-                         filledHistogramCount,
-                         filledHistogram,
-                         verbose,
-                         pionMass,
-                         pionMassWindow,
-                         etaMass,
-                         etaMassWindow,
-                         pT_bin
-                     );
-                }
-                processIsolationRanges(
-                    isoEtRanges,
-                    clusterIDs,
-                    clus1,
-                    clus2,
-                    minClusEnergy,
-                    maxChi2,
-                    maxAsym,
-                    massWindowLabel,
-                    pT_min,
-                    pT_max,
-                    firedShortName,
-                    clusterEtIsoMap_unsubtracted,
-                    cutHistMap,
-                    filledHistogram,
-                    verbose,
-                    pT_bin,
-                    clusterPassedShowerCuts
-                );
-                // Fill all photons histogram
-                std::string allPhotonHistName = "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
-                                                "_Chi" + formatFloatForFilename(maxChi2) +
-                                                "_Asym" + formatFloatForFilename(maxAsym) +
-                                                massWindowLabel +
-                                                "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                                "_" + firedShortName;
-
-                if (verbose) {
-                    std::cout << "Attempting to fill all photons histogram: " << allPhotonHistName << std::endl;
-                }
-
-                
-                TH1F* allPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][allPhotonHistName]);
-                if (allPhotonHist) {
-                    allPhotonHist->Fill(1);
-                    allPhotonHist->Fill(1); // 1 for each photon
-                    filledHistogram = true;
-                    if (verbose) {
-                        std::cout << "Filled allPhotonHist with 2 entries." << std::endl;
-                    }
-                }
-                
-                // Fill pT distribution histograms
-                std::string ptPhotonHistName = "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
-                                               "_Chi" + formatFloatForFilename(maxChi2) +
-                                               "_Asym" + formatFloatForFilename(maxAsym) +
-                                               massWindowLabel +
-                                               "_pT_" + formatFloatForFilename(pT_min) + "to" + formatFloatForFilename(pT_max) +
-                                               "_" + firedShortName;
-
-                if (verbose) {
-                    std::cout << "Attempting to fill pT photon histogram: " << ptPhotonHistName << std::endl;
-                }
-
-                TH1F* ptPhotonHist = dynamic_cast<TH1F*>(cutHistMap[pT_bin][ptPhotonHistName]);
-                if (ptPhotonHist) {
-                    if (pt1 >= pT_min && pt1 < pT_max) {
-                        ptPhotonHist->Fill(pt1);
-                        filledHistogram = true;
-                        if (verbose) {
-                            std::cout << "Filled ptPhotonHist with pt1: " << pt1 << std::endl;
-                        }
-                    }
-                    if (pt2 >= pT_min && pt2 < pT_max) {
-                        ptPhotonHist->Fill(pt2);
-                        filledHistogram = true;
-                        if (verbose) {
-                            std::cout << "Filled ptPhotonHist with pt2: " << pt2 << std::endl;
-                        }
-                    }
-                }
-            }
+        // --- B. Get the pT-binned histograms for this trigger ---
+        auto &cutHistMap = massAndIsolationHistograms[firedShortName][std::make_tuple(maxAsym, maxChi2, minClusEnergy)];
+        
+        // Loop over each defined pT bin.
+        for (const auto &pT_bin : pT_bins) {
+            fillPtBinHistogramsForTrigger(firedShortName,
+                                          pT_bin,
+                                          mesonMass,
+                                          clus1,
+                                          clus2,
+                                          pt1,
+                                          pt2,
+                                          minClusEnergy,
+                                          maxChi2,
+                                          maxAsym,
+                                          clusterIDs,
+                                          clusterEtIsoMap_unsubtracted,
+                                          clusterPassedShowerCuts,
+                                          filledHistogram,
+                                          filledHistogramCount,
+                                          cutHistMap,
+                                          defaultPionMass,
+                                          defaultPionMassWindow,
+                                          defaultEtaMass,
+                                          defaultEtaMassWindow);
         }
+    } // end loop over triggers
+}
+
+void caloTreeGen::fillCombinedHistogramsForTriggers(
+    float mesonMass,
+    size_t clus1,
+    size_t clus2,
+    float pt1,
+    float pt2,
+    float E1,
+    float E2,
+    float minClusEnergy,
+    float maxChi2,
+    float maxAsym,
+    const std::vector<int>& clusterIDs,
+    const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
+    const std::unordered_map<int, bool> &clusterPassedShowerCuts,
+    const std::vector<std::string> &activeTriggerNames,  // short trigger names that actually fired
+    bool &filledHistogram
+)
+{
+    // ------------------------------------------------------------
+    // 1) Among the photon triggers that fired, find the "lowest prescale factor"
+    //    i.e. the minimal scale returned by getScaledownFactor()
+    // ------------------------------------------------------------
+
+    // The DB trigger names we care about (in any order):
+    static const std::vector<std::string> photonTriggerDBNames = {
+       "MBD N&S >= 1",
+       "Photon 2 GeV+ MBD NS >= 1",
+       "Photon 3 GeV + MBD NS >= 1",
+       "Photon 4 GeV + MBD NS >= 1",
+       "Photon 5 GeV + MBD NS >= 1"
+    };
+
+    float bestScaleValue = std::numeric_limits<float>::max();
+    bool  foundAny       = false;
+
+    for (auto &dbTrigName : photonTriggerDBNames)
+    {
+       // Convert from DB name to shortName:
+       auto it = triggerNameMap.find(dbTrigName);
+       if (it == triggerNameMap.end()) continue;  // not in your map at all
+       const std::string &shortName = it->second;
+
+       // Check if that shortName is in activeTriggerNames
+       bool didFire = (std::find(activeTriggerNames.begin(),
+                                 activeTriggerNames.end(),
+                                 shortName) != activeTriggerNames.end());
+       if (didFire)
+       {
+         // We got a photon trigger that fired => check its scale factor
+         float scaleVal = getScaledownFactor(dbTrigName);
+         if (scaleVal > 0.f && scaleVal < bestScaleValue)
+         {
+            bestScaleValue = scaleVal;
+            foundAny       = true;
+         }
+       }
     }
+
+    if (!foundAny)
+    {
+      // None of the photon triggers fired => we do not fill COMBINED.
+      return;
+    }
+
+    // bestScaleValue is the minimal scale factor among fired triggers
+    float prescaleWeight = bestScaleValue;
+
+    // ------------------------------------------------------------
+    // 2) Now replicate your "fill histograms" logic, referencing
+    //    the *COMBINED* histogram names, but using prescaleWeight
+    // ------------------------------------------------------------
+
+    // If you need the default mass settings:
+    const float defaultPionMass       = 0.15f;
+    const float defaultPionMassWindow = 0.02f;
+    const float defaultEtaMass        = 0.59f;
+    const float defaultEtaMassWindow  = 0.05f;
+
+    // Example: We do the same pT bin loops as normal
+    for (auto &pT_bin : pT_bins)
+    {
+      float pTmin = pT_bin.first;
+      float pTmax = pT_bin.second;
+
+      bool cluster1inBin = (pt1 >= pTmin && pt1 < pTmax);
+      bool cluster2inBin = (pt2 >= pTmin && pt2 < pTmax);
+
+      if (!cluster1inBin && !cluster2inBin)
+      {
+        // No photon in this pT bin => skip
+        continue;
+      }
+
+      // -----------------------------------------------------------------
+      // (A) allPhotonCount: no shape cuts
+      // -----------------------------------------------------------------
+      {
+        // Example name: "allPhotonCount_E<...>_COMBINED"
+        // Build that name the same way you created them in createHistos_Data().
+        std::string histName = buildCombinedHistName(
+           "allPhotonCount",
+           minClusEnergy, maxChi2, maxAsym,
+           /*massWindowLabel*/"",
+           pTmin, pTmax,
+           "withoutShowerShapeCuts_COMBINED"
+        );
+
+        TH1F* hAllPhotonNoCuts = findCombinedHist1D(histName);
+        if (hAllPhotonNoCuts)
+        {
+          // Fill "1" with weight = prescaleWeight
+          // Fill once per cluster that’s in the bin
+          // OR fill only once total? (Your existing logic uses hist->Fill(1) for each cluster in bin.)
+          // We'll do the same approach: fill once per cluster in the bin
+          if (cluster1inBin) {
+             hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
+             filledHistogram = true;
+          }
+          if (cluster2inBin) {
+             hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
+             filledHistogram = true;
+          }
+        }
+      }
+
+      // -----------------------------------------------------------------
+      // (B) allPhotonCount: with shape cuts
+      // -----------------------------------------------------------------
+      {
+        std::string histName = buildCombinedHistName(
+           "allPhotonCount",
+           minClusEnergy, maxChi2, maxAsym,
+           /*massWindowLabel*/"",
+           pTmin, pTmax,
+           "withShowerShapeCuts_COMBINED"
+        );
+
+        TH1F* hAllPhotonWithCuts = findCombinedHist1D(histName);
+        if (hAllPhotonWithCuts)
+        {
+          bool pass1 = false, pass2 = false;
+          if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
+             pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
+          if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
+             pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
+
+          // Fill once per cluster that’s in bin & passes shape cuts
+          if (cluster1inBin && pass1) {
+             hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
+             filledHistogram = true;
+          }
+          if (cluster2inBin && pass2) {
+             hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
+             filledHistogram = true;
+          }
+        }
+      }
+
+      // -----------------------------------------------------------------
+      // (C) pT distribution hist: "ptPhoton_..._COMBINED"
+      // -----------------------------------------------------------------
+      {
+        // no shape cuts
+        std::string histName = buildCombinedHistName(
+           "ptPhoton",
+           minClusEnergy, maxChi2, maxAsym,
+           "",
+           pTmin, pTmax,
+           "withoutShowerShapeCuts_COMBINED"
+        );
+        TH1F* hPtPhotonNoCuts = findCombinedHist1D(histName);
+        if (hPtPhotonNoCuts)
+        {
+          // fill cluster pT
+          if (cluster1inBin) {
+             hPtPhotonNoCuts->Fill(pt1, prescaleWeight);
+             filledHistogram = true;
+          }
+          if (cluster2inBin) {
+             hPtPhotonNoCuts->Fill(pt2, prescaleWeight);
+             filledHistogram = true;
+          }
+        }
+
+        // with shape cuts
+        histName = buildCombinedHistName(
+           "ptPhoton",
+           minClusEnergy, maxChi2, maxAsym,
+           "",
+           pTmin, pTmax,
+           "withShowerShapeCuts_COMBINED"
+        );
+        TH1F* hPtPhotonWithCuts = findCombinedHist1D(histName);
+        if (hPtPhotonWithCuts)
+        {
+          bool pass1 = false, pass2 = false;
+          if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
+             pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
+          if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
+             pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
+
+          if (cluster1inBin && pass1) {
+             hPtPhotonWithCuts->Fill(pt1, prescaleWeight);
+             filledHistogram = true;
+          }
+          if (cluster2inBin && pass2) {
+             hPtPhotonWithCuts->Fill(pt2, prescaleWeight);
+             filledHistogram = true;
+          }
+        }
+      }
+
+      // -----------------------------------------------------------------
+      // (D) Isolated photon counts: replicate your processIsolationRanges
+      //     logic but for combined. For each iso range, fill the
+      //     "isolatedPhotonCount_..._COMBINED" hist with the same approach.
+      // -----------------------------------------------------------------
+      // E.g. you can do:
+
+      for (auto &isoRange : isoEtRanges)
+      {
+        float isoMin = isoRange.first;
+        float isoMax = isoRange.second;
+
+        bool clus1_isolated = false;
+        bool clus2_isolated = false;
+        // check your clusterEtIsoMap_unsubtracted
+        if (clusterEtIsoMap_unsubtracted.count(clusterIDs[clus1]))
+        {
+           float isoVal1 = clusterEtIsoMap_unsubtracted.at(clusterIDs[clus1]).second;
+           clus1_isolated = (isoVal1 >= isoMin && isoVal1 < isoMax);
+        }
+        if (clusterEtIsoMap_unsubtracted.count(clusterIDs[clus2]))
+        {
+           float isoVal2 = clusterEtIsoMap_unsubtracted.at(clusterIDs[clus2]).second;
+           clus2_isolated = (isoVal2 >= isoMin && isoVal2 < isoMax);
+        }
+
+        if (!clus1_isolated && !clus2_isolated) continue;  // skip
+
+        // build histogram names "isolatedPhotonCount_..._COMBINED"
+        // no shape cuts
+        {
+          std::string isoHistName = buildCombinedIsolatedHistName(
+              minClusEnergy, maxChi2, maxAsym,
+              /*massWindowLabel*/"",
+              isoMin, isoMax,
+              pTmin, pTmax,
+              "withoutShowerShapeCuts_COMBINED"
+          );
+          TH1F* hIsoNoCuts = findCombinedHist1D(isoHistName);
+          if (hIsoNoCuts)
+          {
+            // fill once per cluster that’s in the bin & iso
+            if (cluster1inBin && clus1_isolated) {
+               hIsoNoCuts->Fill(1.0, prescaleWeight);
+               filledHistogram = true;
+            }
+            if (cluster2inBin && clus2_isolated) {
+               hIsoNoCuts->Fill(1.0, prescaleWeight);
+               filledHistogram = true;
+            }
+          }
+        }
+
+        // with shape cuts
+        {
+          std::string isoHistName = buildCombinedIsolatedHistName(
+              minClusEnergy, maxChi2, maxAsym,
+              "",
+              isoMin, isoMax,
+              pTmin, pTmax,
+              "withShowerShapeCuts_COMBINED"
+          );
+          TH1F* hIsoWithCuts = findCombinedHist1D(isoHistName);
+          if (hIsoWithCuts)
+          {
+            bool pass1 = false, pass2 = false;
+            if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
+               pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
+            if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
+               pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
+
+            if (cluster1inBin && clus1_isolated && pass1) {
+               hIsoWithCuts->Fill(1.0, prescaleWeight);
+               filledHistogram = true;
+            }
+            if (cluster2inBin && clus2_isolated && pass2) {
+               hIsoWithCuts->Fill(1.0, prescaleWeight);
+               filledHistogram = true;
+            }
+          }
+        }
+      } // end isoRange loop
+
+    } // end loop over pT_bins
+
+    // done
 }
 
 
@@ -2669,6 +3215,24 @@ void caloTreeGen::processClusterInvariantMass(
                             activeTriggerNames,
                             filledHistogram,
                             clusterPassedShowerCuts
+                        );
+                        
+                        fillCombinedHistogramsForTriggers(
+                            mesonMass,
+                            clus1,
+                            clus2,
+                            pt1,
+                            pt2,
+                            E1,
+                            E2,
+                            minClusEnergy,
+                            maxChi2,
+                            maxAsym,
+                            clusterIDs,
+                            clusterEtIsoMap_unsubtracted,
+                            clusterPassedShowerCuts,
+                            activeTriggerNames,
+                            filledHistogram
                         );
                     }
                 }
@@ -3170,41 +3734,6 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
             }
           }
         }
-      
-
-        //----------------------------------------------------------------------
-        // Define pointers to all relevant histograms for this trigger ONCE for shower shape variable filling QA
-        //----------------------------------------------------------------------
-        TH1F* h_noCut_ratio         = (TH1F*) qaHistograms["E3by7_over_E7by7_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_ratio       = (TH1F*) qaHistograms["E3by7_over_E7by7_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_w72           = (TH1F*) qaHistograms["w72_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_w72         = (TH1F*) qaHistograms["w72_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_1x1overE      = (TH1F*) qaHistograms["E1x1_over_ClusterE_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_1x1overE    = (TH1F*) qaHistograms["E1x1_over_ClusterE_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_1x1over3x3    = (TH1F*) qaHistograms["E1x1_over_E3x3_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_1x1over3x3  = (TH1F*) qaHistograms["E1x1_over_E3x3_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_3x2over3x5    = (TH1F*) qaHistograms["E3x2_over_E3x5_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_3x2over3x5  = (TH1F*) qaHistograms["E3x2_over_E3x5_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_1by7over7by7  = (TH1F*) qaHistograms["E1by7_over_E7by7_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_1by7over7by7= (TH1F*) qaHistograms["E1by7_over_E7by7_withShowerShapeCuts_" + firedShortName];
-        
-        TH1F* h_noCut_3x3overE   = (TH1F*) qaHistograms["E3x3_over_ClusterE_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_3x3overE = (TH1F*) qaHistograms["E3x3_over_ClusterE_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_3x3over3x7 = (TH1F*) qaHistograms["E3x3_over_E3x7_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_weta   = (TH1F*) qaHistograms["weta_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_weta = (TH1F*) qaHistograms["weta_withShowerShapeCuts_" + firedShortName];
-
-        TH1F* h_noCut_wphi   = (TH1F*) qaHistograms["wphi_NoShowerShapeCuts_" + firedShortName];
-        TH1F* h_withCut_wphi = (TH1F*) qaHistograms["wphi_withShowerShapeCuts_" + firedShortName];
-
 
         //----------------------------------------------------------------------
         // Now loop over all clusters and fill SHOWER SHAPE histograms
@@ -4000,12 +4529,12 @@ int caloTreeGen::End(PHCompositeNode *topNode)
 
 int caloTreeGen::endData(PHCompositeNode *topNode)
 {
-    // Always announce we’re beginning final steps
+    // 1) Print that we’re beginning final steps
     std::cout << ANSI_COLOR_BLUE_BOLD
               << "caloTreeGen::End(...) => All events have been processed. Beginning final analysis..."
               << ANSI_COLOR_RESET << std::endl;
 
-    // 1) Ensure the output file is open
+    // 2) Ensure the output file is open
     if (!out || !out->IsOpen())
     {
         std::cerr << ANSI_COLOR_RED_BOLD
@@ -4013,63 +4542,48 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
                   << ANSI_COLOR_RESET << std::endl;
         return Fun4AllReturnCodes::ABORTEVENT;
     }
-    out->cd();  // go to the root dir in the output file
+    out->cd();
     gDirectory = out; // explicitly set the global ROOT directory
 
-    // 2) Data structures to keep track of duplicates + final hist list to write
+    // 3) Data structures to keep track of duplicates + final hist list
     std::unordered_set<std::string> usedNames; // tracks histogram names we’ve encountered
     bool foundDuplicate = false;
 
-    // We’ll store all histograms we intend to write in a vector so we can do a progress print
-    // Each entry is: (triggerDirName, histName, pointerToHist)
     struct HistToWrite
     {
       std::string triggerDir;
       std::string histName;
       TObject*    histPtr;
     };
-    std::vector<HistToWrite> finalHistList; // everything we actually want to write
+    std::vector<HistToWrite> finalHistList; // everything we want to write
 
-    // 3) Helper to see if a TH1 is zero‐entry => skip
+    // Helper to see if a TH1 is zero entry
     auto isZeroEntry = [&](TObject* obj)
     {
       TH1* checkHist = dynamic_cast<TH1*>(obj);
-      if (checkHist)
-      {
-        return (checkHist->GetEntries() == 0);
-      }
-      // For non‐TH1 types, you can choose to treat them as never empty or also skip.
-      return false;
+      if (checkHist) return (checkHist->GetEntries() == 0);
+      return false; // for non-TH1
     };
 
-    // 4) "Dry run" collecting histograms from each trigger:
-    //    - We first check if `hTriggerCount_<trigger>` is zero.
-    //    - If so => skip the entire trigger folder quickly.
-    //    - If not zero => we gather all *non-empty* hists, skip duplicates, etc.
+    // 4) Functions to collect histograms from your trigger-based maps
 
-    // This function collects the main QA histograms for a single trigger.
-    // A lambda that collects QA histograms from the "main" trigger map
-    //  but can also handle map<std::string, TH1F*> or TH2F*, etc.
-    auto collectTriggerDir = [&](const std::string& trigName, auto & histMap)
+    // (A) "Main QA" for each trigger
+    auto collectTriggerDir = [&](const std::string& trigName, auto &histMap)
     {
-      // Deduce the map's mapped_type (could be TObject*, TH1F*, etc.)
-      using MMap    = std::remove_reference_t<decltype(histMap)>;
-      using ValuePtr = typename MMap::mapped_type;  // e.g. TH1F*
+      using MMap = std::remove_reference_t<decltype(histMap)>;
+      using ValuePtr = typename MMap::mapped_type;
 
-      // 1) Check if hTriggerCount_<trigName> exists and is >0
+      // Check if hTriggerCount_<trigName> is >0
       std::string trigCountName = "hTriggerCount_" + trigName;
       ValuePtr trigCountObj = nullptr;
       if (auto it = histMap.find(trigCountName); it != histMap.end())
       {
-        trigCountObj = it->second;  // e.g. TH1F*
+        trigCountObj = it->second;
       }
 
-      // If no trigger count histogram or zero entries => skip entire folder
       bool skipEntireTrigger = true;
       if (trigCountObj)
       {
-        // cast from TH1F* (or T*) to TH1*
-        //  (TH1 inherits from TObject, so dynamic_cast is safe)
         TH1* hTrigCount = dynamic_cast<TH1*>(static_cast<TObject*>(trigCountObj));
         if (hTrigCount && hTrigCount->GetEntries() > 0)
         {
@@ -4083,24 +4597,19 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
           std::cout << "[INFO] Skipping entire trigger directory \""
                     << trigName << "\" => hTriggerCount is zero or missing.\n";
         }
-        return; // do not collect anything for this trigger
+        return; // skip
       }
 
-      // 2) Otherwise, gather non-empty histograms, skip duplicates
+      // Otherwise, gather non-empty histograms, skip duplicates
       int countNonEmpty = 0;
       for (auto &kv : histMap)
       {
-        const std::string& hName = kv.first;
-        ValuePtr hObj            = kv.second; // e.g. TH1F* pointer
-
-        // If pointer is null => skip
+        const std::string &hName = kv.first;
+        ValuePtr hObj = kv.second;
         if (!hObj) continue;
-
-        // cast to TH1* for the "get entries" check
         TH1* checkHist = dynamic_cast<TH1*>(static_cast<TObject*>(hObj));
         if (checkHist && checkHist->GetEntries() == 0)
         {
-          // zero‐entry => skip
           if (verbose)
           {
             std::cout << "[INFO] Trigger=" << trigName
@@ -4109,8 +4618,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
           }
           continue;
         }
-
-        // Check duplicates by name
+        // Check duplicates
         if (usedNames.count(hName) > 0)
         {
           std::cerr << ANSI_COLOR_RED_BOLD
@@ -4118,18 +4626,16 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
                     << hName << "\" => aborting."
                     << ANSI_COLOR_RESET << std::endl;
           foundDuplicate = true;
-          return; // immediate stop
+          return;
         }
         usedNames.insert(hName);
-
         countNonEmpty++;
 
-        // We'll store it in finalHistList as a TObject*
         TObject* castObj = static_cast<TObject*>(hObj);
         finalHistList.push_back({ trigName, hName, castObj });
       }
 
-      // If countNonEmpty==0 => everything was zero => skip entire dir
+      // If everything was zero => skip entire dir
       if (countNonEmpty == 0 && verbose)
       {
         std::cout << "[INFO] Trigger \"" << trigName
@@ -4137,20 +4643,16 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
       }
     };
 
-    // For pT maps or cut combos => gather them
+    // (B) pT maps or cut combos => we do not skip the entire trigger
     auto collectTriggerPtMap = [&](const std::string &trigName, auto &ptMap)
     {
-      // outer loop => pT bins or cut combos
-      // we do *not* skip the entire trigger if zero, because it may partially fill some sub-bins
       for (auto &outerKV : ptMap)
       {
-        // outerKV.second => a map<string, TObject*>
-        auto & innerHistMap = outerKV.second;
-        for (auto & kv : innerHistMap)
+        auto &innerHistMap = outerKV.second;
+        for (auto &kv : innerHistMap)
         {
-          const std::string& hName = kv.first;
-          TObject* hObj           = kv.second;
-
+          const std::string &hName = kv.first;
+          TObject* hObj = kv.second;
           if (!hObj || isZeroEntry(hObj))
           {
             if (verbose)
@@ -4171,48 +4673,46 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
             return;
           }
           usedNames.insert(hName);
-          finalHistList.push_back( { trigName, hName, hObj } );
+          finalHistList.push_back({ trigName, hName, hObj });
         }
         if (foundDuplicate) return;
       }
     };
 
-    // 5) Now gather from the main "qaHistogramsByTrigger" maps
-    for (auto & trigKV : qaHistogramsByTrigger)
+    // 5) Gather histograms from each map
+
+    // 5A) from qaHistogramsByTrigger
+    for (auto &trigKV : qaHistogramsByTrigger)
     {
-      if (foundDuplicate) break; // stop if we found a conflict
-      const std::string & shortTriggerName = trigKV.first;
-      auto & histMap = trigKV.second;
+      if (foundDuplicate) break;
+      const std::string &shortTriggerName = trigKV.first;
+      auto &histMap = trigKV.second;
       collectTriggerDir(shortTriggerName, histMap);
     }
-
-    // Then gather from the isolation hist
-    for (auto & trigKV : qaIsolationHistogramsByTriggerAndPt)
+    // 5B) from qaIsolationHistogramsByTriggerAndPt
+    for (auto &trigKV : qaIsolationHistogramsByTriggerAndPt)
     {
       if (foundDuplicate) break;
-      const std::string & shortTriggerName = trigKV.first;
-      auto & ptMap = trigKV.second;
+      const std::string &shortTriggerName = trigKV.first;
+      auto &ptMap = trigKV.second;
       collectTriggerPtMap(shortTriggerName, ptMap);
     }
-
-    // Then from massAndIsolationHistograms
-    for (auto & trigKV : massAndIsolationHistograms)
+    // 5C) from massAndIsolationHistograms
+    for (auto &trigKV : massAndIsolationHistograms)
     {
       if (foundDuplicate) break;
-      const std::string & shortTriggerName = trigKV.first;
-
-      // cut combos => pT bins => hist
-      auto & outerMap = trigKV.second;
-      for (auto & cutKV : outerMap)
+      const std::string &shortTriggerName = trigKV.first;
+      auto &outerMap = trigKV.second;
+      for (auto &cutKV : outerMap)
       {
-        auto & pTHistMap = cutKV.second;
-        for (auto & ptBinKV : pTHistMap)
+        auto &pTHistMap = cutKV.second;
+        for (auto &ptBinKV : pTHistMap)
         {
-          auto & histMap2 = ptBinKV.second;
-          for (auto & kv : histMap2)
+          auto &histMap2 = ptBinKV.second;
+          for (auto &kv : histMap2)
           {
-            const std::string & hName = kv.first;
-            TObject* hObj            = kv.second;
+            const std::string &hName = kv.first;
+            TObject* hObj = kv.second;
             if (!hObj || isZeroEntry(hObj))
             {
               if (verbose)
@@ -4233,24 +4733,68 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
               break;
             }
             usedNames.insert(hName);
-            finalHistList.push_back( { shortTriggerName, hName, hObj } );
+            finalHistList.push_back({ shortTriggerName, hName, hObj });
           }
           if (foundDuplicate) break;
         }
         if (foundDuplicate) break;
       }
     }
-
-    // Then massAndIsolationHistogramsNoPtBins
-    for (auto & trigKV : massAndIsolationHistogramsNoPtBins)
+    // 5D) from massAndIsolationHistogramsNoPtBins
+    for (auto &trigKV : massAndIsolationHistogramsNoPtBins)
     {
       if (foundDuplicate) break;
-      const std::string & shortTriggerName = trigKV.first;
-      auto & histMapNoPt = trigKV.second;
+      const std::string &shortTriggerName = trigKV.first;
+      auto &histMapNoPt = trigKV.second;
       collectTriggerDir(shortTriggerName, histMapNoPt);
     }
 
-    // 6) If found a duplicate => abort now
+    // *** NEW SECTION: Collect the combined (non-trigger dependent) histograms ***
+    // These are stored in member variables such as:
+    // vCombinedIsoNoCuts, vCombinedIsoWithCuts,
+    // hCombinedAllPhoton_without, hCombinedAllPhoton_with,
+    // hCombinedPtPhoton_without, hCombinedPtPhoton_with.
+    //
+    // For each combined histogram, we check that it is non-null and not zero,
+    // then add it to finalHistList:
+    auto addCombinedHist = [&](TH1* histPtr, const std::string &name, const std::string &dirName = "COMBINED")
+    {
+      if (!histPtr) return;
+      if (histPtr->GetEntries() == 0)
+      {
+          if (verbose)
+              std::cout << "[INFO] Combined hist \"" << name << "\" has zero entries; skipping.\n";
+          return;
+      }
+      if (usedNames.count(name) > 0)
+      {
+          std::cerr << ANSI_COLOR_RED_BOLD
+                    << "[ERROR] Duplicate combined histogram name: \"" << name << "\" => aborting.\n"
+                    << ANSI_COLOR_RESET;
+          foundDuplicate = true;
+          return;
+      }
+      usedNames.insert(name);
+      finalHistList.push_back({ dirName, name, histPtr });
+    };
+
+    // Add each combined histogram:
+    for (auto hist : vCombinedIsoNoCuts) {
+        addCombinedHist(hist, hist->GetName(), "COMBINED");
+        if (foundDuplicate) break;
+    }
+    for (auto hist : vCombinedIsoWithCuts) {
+        if (foundDuplicate) break;
+        addCombinedHist(hist, hist->GetName(), "COMBINED");
+    }
+    if (!foundDuplicate) {
+      addCombinedHist(hCombinedAllPhoton_without, hCombinedAllPhoton_without ? hCombinedAllPhoton_without->GetName() : "");
+      addCombinedHist(hCombinedAllPhoton_with,    hCombinedAllPhoton_with ? hCombinedAllPhoton_with->GetName() : "");
+      addCombinedHist(hCombinedPtPhoton_without,  hCombinedPtPhoton_without ? hCombinedPtPhoton_without->GetName() : "");
+      addCombinedHist(hCombinedPtPhoton_with,     hCombinedPtPhoton_with ? hCombinedPtPhoton_with->GetName() : "");
+    }
+
+    // 6) If found a duplicate => abort
     if (foundDuplicate)
     {
       std::cerr << ANSI_COLOR_RED_BOLD
@@ -4260,7 +4804,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
       out->Close();
       delete out;
       out = nullptr;
-      return Fun4AllReturnCodes::ABORTRUN;
+      return Fun4AllReturnCodes::ABORTEVENT;
     }
 
     // 7) We now have finalHistList of all histograms to write => do a progress tracker
@@ -4276,7 +4820,6 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
     for (auto & item : finalHistList)
     {
       hCounter++;
-      // Print progress every 500 if verbose
       if (verbose && (hCounter % 500 == 0))
       {
         std::cout << "[INFO] Wrote " << hCounter
@@ -4284,7 +4827,6 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
                   << " histograms so far...\n";
       }
 
-      // cd to the directory if it exists
       TDirectory* trigDir = out->GetDirectory(item.triggerDir.c_str());
       if (!trigDir)
       {
@@ -4298,7 +4840,6 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
       }
       trigDir->cd();
 
-      // Attempt to write
       if (item.histPtr->Write() == 0)
       {
         std::cerr << ANSI_COLOR_RED_BOLD
@@ -4313,7 +4854,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
       }
     }
 
-    // final progress message
+    // 9) final progress message
     if (verbose)
     {
       std::cout << "[INFO] Done writing all " << hCounter
@@ -4323,7 +4864,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
     // Return to root dir
     out->cd();
 
-    // 9) Now close the file
+    // 10) close file
     std::cout << ANSI_COLOR_BLUE_BOLD
               << "Closing output file and cleaning up..."
               << ANSI_COLOR_RESET << std::endl;
@@ -4352,6 +4893,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
 
     return Fun4AllReturnCodes::EVENT_OK;
 }
+
 
 
 int caloTreeGen::endSim(PHCompositeNode *topNode)
