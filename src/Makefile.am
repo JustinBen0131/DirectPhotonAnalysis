@@ -1,6 +1,6 @@
 AUTOMAKE_OPTIONS = foreign
 
-CINTINCLUDES = -pthread -I$(includedir) -I$(OFFLINE_MAIN)/lib -I$(OFFLINE_MAIN)/include -I$(ROOTSYS)/include -I$(ROOTSYS)/lib/include -I$(OPT_SPHENIX)/include
+CINTINCLUDES = -pthread -I$(includedir) -I$(OFFLINE_MAIN)/lib -isystem $(OFFLINE_MAIN)/include -I$(ROOTSYS)/include -I$(ROOTSYS)/lib/include -I$(OPT_SPHENIX)/include
 
 INCLUDES = $(CINTINCLUDES)
 
