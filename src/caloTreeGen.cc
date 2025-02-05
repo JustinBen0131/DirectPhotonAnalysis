@@ -120,7 +120,6 @@ caloTreeGen::~caloTreeGen() {
 }
 
 
-
 //____________________________________________________________________________..
 bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
     // Set the global locale to classic (C locale)
@@ -577,11 +576,11 @@ void caloTreeGen::createHistos_Data() {
          for photon turn on curve
          */
         qaHistograms["h_maxEnergyClus_" + triggerName] = createHistogram("h_maxEnergyClus_" + triggerName, "Max Cluster Energy; Cluster Energy [GeV]", 40, 0, 20);
-        /*
-         for jet turn on curve
-         */
-        qaHistograms["h_leadingJetET_" + triggerName] = createHistogram("h_leadingJetET_" + triggerName, "Leading Jet E_{T}; Jet E_{T} [GeV]", 50, 0, 50);
-        
+//        /*
+//         for jet turn on curve
+//         */
+//        qaHistograms["h_leadingJetET_" + triggerName] = createHistogram("h_leadingJetET_" + triggerName, "Leading Jet E_{T}; Jet E_{T} [GeV]", 50, 0, 50);
+//        
         qaHistograms["hClusterPt_" + triggerName] = createHistogram("hClusterPt_" + triggerName, "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
         qaHistograms["hVtxZ_" + triggerName] = createHistogram("hVtxZ_" + triggerName, "Z-vertex Distribution; z [cm]", 100, -70, 70);
         qaHistograms["h_ET_" + triggerName] = createHistogram("h_ET_" + triggerName, "Cluster Transverse Energy [GeV]; Energy [GeV]", 100, 0, 100);
@@ -2852,27 +2851,37 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
     float defaultEtaMass,
     float defaultEtaMassWindow)
 {
-    //
-    // --------------------------------------------------
-    // [1] Among photon triggers that fired, find the
-    //     "lowest prescale factor" so we can fill
-    //     the COMBINED hist with that weight.
-    //     Also store whichever shortName gave us
-    //     that best prescale => bestShortName
-    // --------------------------------------------------
-    static const std::vector<std::string> photonTriggerDBNames = {
-       "MBD N&S >= 1",
+    if (verbose)
+    {
+        std::cout << "[fillCombinedHistogramsForTriggers] Starting combined histogram filling." << std::endl;
+        std::cout << "[fillCombinedHistogramsForTriggers] mesonMass=" << mesonMass
+                  << ", clus1=" << clus1 << ", clus2=" << clus2
+                  << ", pt1=" << pt1 << ", pt2=" << pt2
+                  << ", minClusEnergy=" << minClusEnergy
+                  << ", maxChi2=" << maxChi2
+                  << ", maxAsym=" << maxAsym
+                  << std::endl;
+    }
+    // 1) Photon triggers to consider (EXCLUDING MBD-only):
+    static const std::vector<std::string> photonOnlyDBNames = {
        "Photon 2 GeV+ MBD NS >= 1",
        "Photon 3 GeV + MBD NS >= 1",
        "Photon 4 GeV + MBD NS >= 1",
        "Photon 5 GeV + MBD NS >= 1"
     };
 
-    float bestScaleValue   = std::numeric_limits<float>::max();
-    bool  foundAnyTrigger  = false;
-    std::string bestShortName; // whichever shortName gave the minimal scale
+    // 2) Fallback “MBD-only” trigger name:
+    static const std::string mbdDBName = "MBD N&S >= 1";
 
-    for (auto &dbTrigName : photonTriggerDBNames)
+    float bestScaleValue = std::numeric_limits<float>::max();
+    bool  foundPhotonTrigger = false;
+    bool  usedMBDfallback    = false;
+    std::string bestShortName;
+
+    //------------------------------------------------------
+    // FIRST: Attempt to find a "photon" trigger with min prescale
+    //------------------------------------------------------
+    for (auto &dbTrigName : photonOnlyDBNames)
     {
         auto it = triggerNameMap.find(dbTrigName);
         if (it == triggerNameMap.end()) continue;  // not in your map
@@ -2884,25 +2893,69 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                                   candidateShortName) != activeTriggerNames.end());
         if (didFire)
         {
-            float scaleVal = getScaledownFactor(dbTrigName); // e.g. from DB
+            float scaleVal = getScaledownFactor(dbTrigName);
+            // Keep whichever is smallest
             if (scaleVal > 0.f && scaleVal < bestScaleValue)
             {
-                bestScaleValue  = scaleVal;
-                bestShortName   = candidateShortName;
-                foundAnyTrigger = true;
+                bestScaleValue     = scaleVal;
+                bestShortName      = candidateShortName;
+                foundPhotonTrigger = true;
             }
         }
     }
 
-    if (!foundAnyTrigger)
+    //------------------------------------------------------
+    // IF NO photon triggers fired, see if MBD itself fired
+    //------------------------------------------------------
+    if (!foundPhotonTrigger)
     {
-        // none of these photon triggers fired => skip
+        auto mbdIt = triggerNameMap.find(mbdDBName);
+        if (mbdIt != triggerNameMap.end())
+        {
+            const std::string &mbdShortName = mbdIt->second;
+            bool didMBDfire = (std::find(activeTriggerNames.begin(),
+                                         activeTriggerNames.end(),
+                                         mbdShortName) != activeTriggerNames.end());
+            if (didMBDfire)
+            {
+                float scaleVal = getScaledownFactor(mbdDBName);
+                if (scaleVal > 0.f && scaleVal < std::numeric_limits<float>::max())
+                {
+                    bestScaleValue = scaleVal;
+                    bestShortName  = mbdShortName;
+                    usedMBDfallback = true;
+                }
+            }
+        }
+    }
+
+    // If we didn’t find any photon trigger OR MBD fallback => skip
+    if (!foundPhotonTrigger && !usedMBDfallback)
+    {
+        if (verbose)
+        {
+            std::cout << "[fillCombinedHistogramsForTriggers] No photon triggers fired, and MBD did not fire => skipping." << std::endl;
+        }
         return;
     }
 
+    // By here, bestShortName & bestScaleValue are set. The rest is identical:
     float prescaleWeight = bestScaleValue;
+    if (verbose)
+    {
+        if (foundPhotonTrigger)
+        {
+            std::cout << "[fillCombinedHistogramsForTriggers] Found valid PHOTON trigger with shortName='"
+                      << bestShortName << "', prescale=" << prescaleWeight << std::endl;
+        }
+        else
+        {
+            std::cout << "[fillCombinedHistogramsForTriggers] Photon triggers not fired => Using MBD fallback, shortName='"
+                      << bestShortName << "', prescale=" << prescaleWeight << std::endl;
+        }
+    }
 
-
+    
     // Loop over each pT bin
     for (auto &pT_bin : pT_bins)
     {
@@ -2984,116 +3037,131 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
         //     no shape cuts
         // ------------------------------------------------------------------------
         {
-          // e.g. "allPhotonCount_E<...>_Chi<...>_Asym<...>_inMassWindow_pT_<pTmin>to<pTmax>_withoutShowerShapeCuts_COMBINED"
-          std::string histName =
-              "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
-              "_Chi" + formatFloatForFilename(maxChi2) +
-              "_Asym" + formatFloatForFilename(maxAsym) +
-              massWindowLabel +
-              "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-              "_withoutShowerShapeCuts_COMBINED";
-
-          TH1F* hAllPhotonNoCuts =
-              dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-          if (hAllPhotonNoCuts)
-          {
-            if (cluster1inBin)
+            // e.g. "allPhotonCount_E<...>_Chi<...>_Asym<...>_inMassWindow_pT_<pTmin>to<pTmax>_withoutShowerShapeCuts_COMBINED"
+            std::string histName =
+            "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+            "_Chi" + formatFloatForFilename(maxChi2) +
+            "_Asym" + formatFloatForFilename(maxAsym) +
+            massWindowLabel +
+            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+            "_withoutShowerShapeCuts_COMBINED";
+            
+            TH1F* hAllPhotonNoCuts =
+            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+            if (hAllPhotonNoCuts)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
-              {
-                hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
-                filledHistogram = true;
-              }
+                if (cluster1inBin)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
+                    {
+                        hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
+                        filledHistogram = true;
+                    }
+                }
+                if (cluster2inBin)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
+                    {
+                        hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
+                        filledHistogram = true;
+                    }
+                }
             }
-            if (cluster2inBin)
+            else if (verbose)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
-              {
-                hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
-                filledHistogram = true;
-              }
+                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
+                          << histName << std::endl;
             }
-          }
         }
 
         // (B2) "withShowerShapeCuts_COMBINED"
         {
-          std::string histName =
-              "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
-              "_Chi" + formatFloatForFilename(maxChi2) +
-              "_Asym" + formatFloatForFilename(maxAsym) +
-              massWindowLabel +
-              "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-              "_withShowerShapeCuts_COMBINED";
-
-          TH1F* hAllPhotonWithCuts =
-              dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-          if (hAllPhotonWithCuts)
-          {
-            bool pass1 = false, pass2 = false;
-            if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
-               pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
-            if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
-               pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
-
-            if (cluster1inBin && pass1)
+            std::string histName =
+            "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+            "_Chi" + formatFloatForFilename(maxChi2) +
+            "_Asym" + formatFloatForFilename(maxAsym) +
+            massWindowLabel +
+            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+            "_withShowerShapeCuts_COMBINED";
+            
+            TH1F* hAllPhotonWithCuts =
+            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+            if (hAllPhotonWithCuts)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
-              {
-                hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
-                filledHistogram = true;
-              }
+                bool pass1 = false, pass2 = false;
+                if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
+                    pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
+                if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
+                    pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
+                
+                if (cluster1inBin && pass1)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
+                    {
+                        hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
+                        filledHistogram = true;
+                    }
+                }
+                if (cluster2inBin && pass2)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
+                    {
+                        hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
+                        filledHistogram = true;
+                    }
+                }
             }
-            if (cluster2inBin && pass2)
+            else if (verbose)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
-              {
-                hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
-                filledHistogram = true;
-              }
+                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
+                << histName << std::endl;
             }
-          }
         }
 
         // ------------------------------------------------------------------------
         // [C] "ptPhoton_...COMBINED" hist, no shape cuts
         // ------------------------------------------------------------------------
         {
-          std::string histName =
-              "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
-              "_Chi" + formatFloatForFilename(maxChi2) +
-              "_Asym" + formatFloatForFilename(maxAsym) +
-              massWindowLabel +
-              "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-              "_withoutShowerShapeCuts_COMBINED";
-
-          TH1F* hPtNoCuts =
-              dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-          if (hPtNoCuts)
-          {
-            if (cluster1inBin)
+            std::string histName =
+            "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
+            "_Chi" + formatFloatForFilename(maxChi2) +
+            "_Asym" + formatFloatForFilename(maxAsym) +
+            massWindowLabel +
+            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+            "_withoutShowerShapeCuts_COMBINED";
+            
+            TH1F* hPtNoCuts =
+            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+            if (hPtNoCuts)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
-              {
-                hPtNoCuts->Fill(pt1, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
-                filledHistogram = true;
-              }
+                if (cluster1inBin)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
+                    {
+                        hPtNoCuts->Fill(pt1, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
+                        filledHistogram = true;
+                    }
+                }
+                if (cluster2inBin)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
+                    {
+                        hPtNoCuts->Fill(pt2, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
+                        filledHistogram = true;
+                    }
+                }
             }
-            if (cluster2inBin)
+            else if (verbose)
             {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
-              {
-                hPtNoCuts->Fill(pt2, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
-                filledHistogram = true;
-              }
+                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
+                << histName << std::endl;
             }
-          }
         }
 
         // (C2) with shape cuts
@@ -3240,6 +3308,10 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
           }
         } // end isoRange loop
     } // end loop over pT_bins
+    if (verbose)
+    {
+        std::cout << "[fillCombinedHistogramsForTriggers] Finished filling combined histograms successfully." << std::endl;
+    }
 }
 
 
@@ -3500,6 +3572,26 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         }
     }
 
+//    /*
+//     RAW BIT QA SEPERATE FROM OTHER FUNCTIONALITY
+//     */
+//    _gl1_packet = findNode::getClass<Gl1Packet>(topNode, "GL1Packet");
+//    if (_gl1_packet) {
+////        b_gl1_scaledvec = _gl1_packet->lValue(0, "ScaledVector");
+////        b_gl1_livevec = _gl1_packet->lValue(0, "LiveVector");
+//        b_gl1_rawvec = _gl1_packet->lValue(0, "TriggerVector");
+//    }
+////    std::vector<int> activeTriggerBits_scaled = extractTriggerBits(b_gl1_scaledvec, event_count);
+////    std::vector<int> activeTriggerBits_live = extractTriggerBits(b_gl1_scaledvec, event_count);
+//    std::vector<int> activeTriggerBits = extractTriggerBits(b_gl1_rawvec, event_count);
+//    if (verbose) {
+//        for (int bit : activeTriggerBits) {
+//            std::cout << bit << " ";
+//        }
+//    }
+//    std::cout << std::endl;
+
+    
     /*
      Process vertex, tower information, cluster information, outside of loop
      */
@@ -3537,9 +3629,9 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
                           << "z = " << m_vz << std::endl;
             }
             // Apply a cut on the absolute value of the z vertex
-            if (std::abs(m_vz) >= 60) {
+            if (std::abs(m_vz) >= 30) {
                 if (verbose) {
-                    std::cout << "Skipping event: |m_vz| = " << std::abs(m_vz) << " is outside the allowed range of |60 cm|." << std::endl;
+                    std::cout << "Skipping event: |m_vz| = " << std::abs(m_vz) << " is outside the allowed range of |30 cm|." << std::endl;
                 }
                 return Fun4AllReturnCodes::ABORTEVENT; // Skip the rest of the event processing
             }
@@ -3630,14 +3722,14 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     EnergyMaps energyMaps = processEnergyMaps(&m_emcTowE, &m_emciEta, &m_emciPhi, &m_ohcTowE, &m_ohciTowEta, &m_ohciTowPhi,
                       &m_ihcTowE, &m_ihciTowEta, &m_ihciTowPhi, &m_emcal_good, &m_ohc_good, &m_ihc_good, activeTriggerNames);
     
-    // interface to reco jets
-    JetContainer* jets_r04 = findNode::getClass<JetContainer>(topNode, "AntiKt_unsubtracted_r04");
-    if (!jets_r04) {
-        if (verbose) {
-            std::cout << "Aborting run no jet_r04..." << std::endl;
-        }
-        return Fun4AllReturnCodes::ABORTRUN;
-    }
+//    // interface to reco jets
+//    JetContainer* jets_r04 = findNode::getClass<JetContainer>(topNode, "AntiKt_unsubtracted_r04");
+//    if (!jets_r04) {
+//        if (verbose) {
+//            std::cout << "Aborting run no jet_r04..." << std::endl;
+//        }
+//        return Fun4AllReturnCodes::ABORTRUN;
+//    }
     
     if (verbose) {
         std::cout << "Fetching RawClusterContainer..." << std::endl;
@@ -3774,14 +3866,14 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         }
     }
     
-    float max_jet_et = 0.0;
-    
-    for (auto jet : *jets_r04) {
-        Float_t jet_et = jet->get_et();
-        if (jet_et > max_jet_et) {
-            max_jet_et = jet_et; // Update the maximum cluster energy
-        }
-    }
+//    float max_jet_et = 0.0;
+//    
+//    for (auto jet : *jets_r04) {
+//        Float_t jet_et = jet->get_et();
+//        if (jet_et > max_jet_et) {
+//            max_jet_et = jet_et; // Update the maximum cluster energy
+//        }
+//    }
     
     if (verbose) {
         std::cout << "\n--- Cluster Processing Summary ---" << std::endl;
@@ -4267,20 +4359,40 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
         }
         
         // Fill the histogram with the maximum cluster energy core value
-        TH1F* h_leadingJetET = (TH1F*)qaHistograms["h_leadingJetET_" + firedShortName];
+//        TH1F* h_leadingJetET = (TH1F*)qaHistograms["h_leadingJetET_" + firedShortName];
 
-        if (!h_leadingJetET) {
-            std::cerr << "Error: Histogram h_maxEnergyClus_" << firedShortName << " is null and cannot be filled." << std::endl;
-        } else {
-            h_leadingJetET->Fill(max_jet_et);
-            
-            if (verbose) {
-                std::cout << "Filled histogram h_leadingJetET" << firedShortName
-                          << " with value: " << max_jet_et << std::endl;
-            }
-        }
-        
+//        if (!h_leadingJetET) {
+//            std::cerr << "Error: Histogram h_maxEnergyClus_" << firedShortName << " is null and cannot be filled." << std::endl;
+//        } else {
+//            h_leadingJetET->Fill(max_jet_et);
+//            
+//            if (verbose) {
+//                std::cout << "Filled histogram h_leadingJetET" << firedShortName
+//                          << " with value: " << max_jet_et << std::endl;
+//            }
+//        }
     }
+//    for (int triggerIndex : triggerIndices) {
+//        // Check if the current raw trigger bit is active
+//        if (!checkTriggerCondition(activeTriggerBits, triggerIndex)) {
+//            continue;  // Skip if this trigger bit is not active
+//        }
+//        
+//        std::string triggerName;
+//        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
+//            triggerName = activeTriggerNameMap->at(triggerIndex);
+//        } else {
+//            std::cerr << "[ERROR] Trigger index " << triggerIndex << " not found in active trigger map." << std::endl;
+//            continue; // Skip to next triggerIndex
+//        }
+//        // Fill the trigger count histogram to count each time this trigger fires
+//        TH1F* hTriggerCount = (TH1F*)qaHistogramsByTrigger[triggerIndex]["hTriggerCount_" + triggerName];
+//        if (hTriggerCount) {
+//            hTriggerCount->Fill(0.5); // Fill the single bin to count the trigger occurrence
+//        }
+//        
+//    }
+    
     return Fun4AllReturnCodes::EVENT_OK;
 }
 
