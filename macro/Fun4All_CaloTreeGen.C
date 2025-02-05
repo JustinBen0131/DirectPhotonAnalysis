@@ -65,8 +65,8 @@ namespace HIJETS
 
 
 
-static const bool WANT_VERBOSE = true;
-static const bool WANT_MANUAL_EVENT_LIMIT = true;  // or false if you want unlimited
+static const bool WANT_VERBOSE = false;
+static const bool WANT_MANUAL_EVENT_LIMIT = false;  // or false if you want unlimited
 static const int MANUAL_EVENT_LIMIT       = 10000;  // e.g. 5k
 
 /**
