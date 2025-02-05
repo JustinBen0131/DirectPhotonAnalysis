@@ -11,7 +11,6 @@ OUTPUT_DIR = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/pr
 
 TRIGGERS = {
     "MBD N&S >= 1":               "MBD_NandS_geq_1.txt",
-    "Photon 2 GeV+ MBD NS >= 1":  "Photon_2_GeV_plus_MBD_NS_geq_1.txt",
     "Photon 3 GeV + MBD NS >= 1": "Photon_3_GeV_plus_MBD_NS_geq_1.txt",
     "Photon 4 GeV + MBD NS >= 1": "Photon_4_GeV_plus_MBD_NS_geq_1.txt",
     "Photon 5 GeV + MBD NS >= 1": "Photon_5_GeV_plus_MBD_NS_geq_1.txt"
