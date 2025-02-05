@@ -164,6 +164,11 @@ private:
 
     std::vector<TH1F*> vCombinedIsoNoCuts;
     std::vector<TH1F*> vCombinedIsoWithCuts;
+    std::vector<TH1F*> vCombinedAllPhotonNoCuts;
+    std::vector<TH1F*> vCombinedAllPhotonWithCuts;
+    std::vector<TH1F*> vCombinedPtPhotonNoCuts;
+    std::vector<TH1F*> vCombinedPtPhotonWithCuts;
+    
     TH1F* hCombinedAllPhoton_without = nullptr;
     TH1F* hCombinedAllPhoton_with    = nullptr;
     TH1F* hCombinedPtPhoton_without  = nullptr;
