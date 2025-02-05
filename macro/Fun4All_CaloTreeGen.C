@@ -66,8 +66,8 @@ namespace HIJETS
 
 
 static const bool WANT_VERBOSE = true;
-static const bool WANT_MANUAL_EVENT_LIMIT = false;  // or false if you want unlimited
-static const int MANUAL_EVENT_LIMIT       = 8000000;  // e.g. 5k
+static const bool WANT_MANUAL_EVENT_LIMIT = true;  // or false if you want unlimited
+static const int MANUAL_EVENT_LIMIT       = 10000;  // e.g. 5k
 
 /**
  * @brief Macro to run either Data pipeline or Simulation pipeline for caloTreeGen
@@ -148,6 +148,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     }
     std::cout << "[DEBUG] First filename read: " << firstFilename << std::endl;
     
+    int runnumber;
     if (runData)
     {
         // Extract run number from the first filename
@@ -322,6 +323,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
      */
     eval->setWantSim(runSim);
     eval->setWantData(runData);
+    if (runData)
+    {
+        eval->setRunNumber(runnumber);
+    }
     if (runSim)
     {
         if (WANT_VERBOSE) {
