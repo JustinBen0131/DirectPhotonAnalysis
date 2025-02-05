@@ -349,6 +349,7 @@ private:
         bool isAcceptable;
     };
     bool loadMesonMassWindows(const std::string& csvFilePath);
+    float getScaledownFactor(const std::string &dbTriggerName);
     
     void createHistos_Data();
     void createHistos_ForSimulation();
@@ -430,7 +431,7 @@ private:
         const std::unordered_map<int,bool>& clusterPassedShowerCuts,
         bool &filledHistogram,
         size_t &filledHistogramCount,
-        std::map<std::pair<float, float>, std::map<std::string, TH1*>> &cutHistMap,
+        std::map<std::pair<float, float>, std::map<std::string, TObject*>> &cutHistMap,
         float defaultPionMass,
         float defaultPionMassWindow,
         float defaultEtaMass,
@@ -452,8 +453,30 @@ private:
         const std::map<int, std::pair<float, float>>& clusterEtIsoMap,
         const std::vector<std::string>& activeTriggerNames,
         bool& filledHistogram,
-        const std::unordered_map<int,bool> &clusterPassedShowerCuts);
+        const std::unordered_map<int,bool> &clusterPassedShowerCuts,
+        float defaultPionMass,
+        float defaultPionMassWindow,
+        float defaultEtaMass,
+        float defaultEtaMassWindow);
 
+    void fillCombinedHistogramsForTriggers(
+        float mesonMass,
+        size_t clus1, size_t clus2,
+        float pt1, float pt2,
+        float E1, float E2,
+        float minClusEnergy,
+        float maxChi2,
+        float maxAsym,
+        const std::vector<int>& clusterIDs,
+        const std::map<int, std::pair<float, float>>& clusterEtIsoMap_unsubtracted,
+        const std::unordered_map<int, bool> &clusterPassedShowerCuts,
+        const std::vector<std::string> &activeTriggerNames,
+        bool &filledHistogram,
+        float defaultPionMass,
+        float defaultPionMassWindow,
+        float defaultEtaMass,
+        float defaultEtaMassWindow);
+    
     void processClusterInvariantMass(
         const std::vector<float>& clusterE,
         const std::vector<float>& clusterPt,
