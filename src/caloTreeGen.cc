@@ -1038,11 +1038,32 @@ void caloTreeGen::createHistos_Data() {
             }
         }
     }
-    for (float maxAsym : asymmetry_values) {
-        for (float maxChi2 : clus_chi_values) {
-            for (float minClusE : clus_Energy_values) {
-                for (const auto& pT_bin : pT_bins) {
-                    for (const std::string& massWindowLabel : {IN_MASS_WINDOW_LABEL, OUTSIDE_MASS_WINDOW_LABEL}) {
+    out->cd();
+    TDirectory* combinedDir = out->mkdir("COMBINED");
+    if (!combinedDir)
+    {
+      std::cerr << "[ERROR] Could not create 'COMBINED' directory." << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    if (verbose)
+    {
+      std::cout << "[INFO] Created a directory named 'COMBINED' in the output file.\n";
+    }
+    out->cd();
+    
+    /*
+     COMBINED HISTOS
+    */
+    for (float maxAsym : asymmetry_values)
+    {
+        for (float maxChi2 : clus_chi_values)
+        {
+            for (float minClusE : clus_Energy_values)
+            {
+                for (const auto& pT_bin : pT_bins)
+                {
+                    for (const std::string& massWindowLabel : {IN_MASS_WINDOW_LABEL, OUTSIDE_MASS_WINDOW_LABEL})
+                    {
                         std::string allPhotonHistName_base = "allPhotonCount_E" + formatFloatForFilename(minClusE) +
                                                              "_Chi" + formatFloatForFilename(maxChi2) +
                                                              "_Asym" + formatFloatForFilename(maxAsym) +
@@ -1050,37 +1071,46 @@ void caloTreeGen::createHistos_Data() {
                                                              "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
                                                              "_";
                         std::string allPhotonHistName_without = allPhotonHistName_base + "withoutShowerShapeCuts_COMBINED";
-                        hCombinedAllPhoton_without = new TH1F(
+                        TH1F* localAllPhotonNoCuts = new TH1F(
                             allPhotonHistName_without.c_str(),
                             "All Photon Count (without Shower Shape Cuts); pT [GeV]; Count",
                             100, pT_bin.first, pT_bin.second
                         );
+                        // Push into our new vector
+                        vCombinedAllPhotonNoCuts.push_back(localAllPhotonNoCuts);
+
                         std::string allPhotonHistName_with = allPhotonHistName_base + "withShowerShapeCuts_COMBINED";
-                        hCombinedAllPhoton_with = new TH1F(
+                        TH1F* localAllPhotonWithCuts = new TH1F(
                             allPhotonHistName_with.c_str(),
                             "All Photon Count (with Shower Shape Cuts); pT [GeV]; Count",
                             100, pT_bin.first, pT_bin.second
                         );
+                        vCombinedAllPhotonWithCuts.push_back(localAllPhotonWithCuts);
 
-                        // And for the pt distribution of all photons:
+                        // Now the pT distribution of all photons:
                         std::string ptPhotonHistName_base = "ptPhoton_E" + formatFloatForFilename(minClusE) +
                                                             "_Chi" + formatFloatForFilename(maxChi2) +
                                                             "_Asym" + formatFloatForFilename(maxAsym) +
                                                             massWindowLabel +
                                                             "_pT_" + formatFloatForFilename(pT_bin.first) + "to" + formatFloatForFilename(pT_bin.second) +
                                                             "_";
+
                         std::string ptPhotonHistName_without = ptPhotonHistName_base + "withoutShowerShapeCuts_COMBINED";
-                        hCombinedPtPhoton_without = new TH1F(
+                        TH1F* localPtPhotonNoCuts = new TH1F(
                             ptPhotonHistName_without.c_str(),
                             "Photon pT (without Shower Shape Cuts); pT [GeV]; Count",
                             100, pT_bin.first, pT_bin.second
                         );
+                        vCombinedPtPhotonNoCuts.push_back(localPtPhotonNoCuts);
+
                         std::string ptPhotonHistName_with = ptPhotonHistName_base + "withShowerShapeCuts_COMBINED";
-                        hCombinedPtPhoton_with = new TH1F(
+                        TH1F* localPtPhotonWithCuts = new TH1F(
                             ptPhotonHistName_with.c_str(),
                             "Photon pT (with Shower Shape Cuts); pT [GeV]; Count",
                             100, pT_bin.first, pT_bin.second
                         );
+                        vCombinedPtPhotonWithCuts.push_back(localPtPhotonWithCuts);
+
                         // Loop over all defined isolation Et ranges:
                         for (const auto& isoRange : isoEtRanges)
                         {
@@ -3083,8 +3113,6 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                        << photonTrig << "' due to invalid prescale (" << scaleVal << ")" << std::endl;
         }
     }
-
-
     if (!foundPhotonTrigger)
     {
         bool didMBDfire = (std::find(activeTriggerNames.begin(),
@@ -3151,7 +3179,6 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
         }
     }
     
-    // Loop over each pT bin
     for (auto &pT_bin : pT_bins)
     {
         float pTmin = pT_bin.first;
@@ -3170,8 +3197,6 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
         float etaMass       = defaultEtaMass;
         float etaSigma      = defaultEtaMassWindow;
 
-        // see if there's a custom mass window for (bestShortName, minClusEnergy, etc.)
-        // same pattern as fillPtBinHistogramsForTrigger
         auto massWindowKey = std::make_tuple(
             bestShortName, // "lowest prescale" shortName
             minClusEnergy,
@@ -3214,11 +3239,9 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
             std::cout << "[COMBINED] No custom mass window found => using default ±3σ\n";
         }
 
-        // multiply by 3 for ±3σ
         float pionMassWindow = pionSigma * 3.0f;
         float etaMassWindow  = etaSigma  * 3.0f;
 
-        // Check if meson is inside or outside
         bool inPion = (std::fabs(mesonMass - pionMass) <= pionMassWindow);
         bool inEta  = (std::fabs(mesonMass - etaMass)  <= etaMassWindow);
         bool isInMassWindow = (inPion || inEta);
@@ -3228,27 +3251,52 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                                       : "_outsideMassWindow");
 
         // ------------------------------------------------------------------------
-        // [B] Build & fill "allPhotonCount_...COMBINED" hists
-        //     no shape cuts
+        // [B] "allPhotonCount_...COMBINED" (no shape cuts)
         // ------------------------------------------------------------------------
         {
-            // e.g. "allPhotonCount_E<...>_Chi<...>_Asym<...>_inMassWindow_pT_<pTmin>to<pTmax>_withoutShowerShapeCuts_COMBINED"
             std::string histName =
-            "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
-            "_Chi" + formatFloatForFilename(maxChi2) +
-            "_Asym" + formatFloatForFilename(maxAsym) +
-            massWindowLabel +
-            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-            "_withoutShowerShapeCuts_COMBINED";
-            
-            TH1F* hAllPhotonNoCuts =
-            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-            if (hAllPhotonNoCuts)
+                "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+                "_withoutShowerShapeCuts_COMBINED";
+
+            if (verbose)
             {
+                std::cout << "[COMBINED] Attempting to retrieve histogram (no shape cuts): "
+                          << histName << std::endl;
+            }
+
+            TH1F* hAllPhotonNoCuts =
+                dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
+            if (!hAllPhotonNoCuts)
+            {
+                if (verbose)
+                {
+                    std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] "
+                              << "Could not find histogram: " << histName << std::endl;
+                }
+            }
+            else
+            {
+                if (verbose)
+                {
+                    std::cout << "[COMBINED] Successfully retrieved histogram: "
+                              << histName << ". Now checking cluster fill conditions..." << std::endl;
+                }
+
                 if (cluster1inBin)
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for clusterIDs[clus1]=" << clusterIDs[clus1]
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
                         filledHistogram = true;
@@ -3258,43 +3306,74 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for clusterIDs[clus2]=" << clusterIDs[clus2]
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hAllPhotonNoCuts->Fill(1.0, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
                         filledHistogram = true;
                     }
                 }
             }
-            else if (verbose)
-            {
-                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
-                          << histName << std::endl;
-            }
         }
 
-        // (B2) "withShowerShapeCuts_COMBINED"
+        // (B2) "allPhotonCount_...withShowerShapeCuts_COMBINED"
         {
             std::string histName =
-            "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
-            "_Chi" + formatFloatForFilename(maxChi2) +
-            "_Asym" + formatFloatForFilename(maxAsym) +
-            massWindowLabel +
-            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-            "_withShowerShapeCuts_COMBINED";
-            
+                "allPhotonCount_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+                "_withShowerShapeCuts_COMBINED";
+
+            if (verbose)
+            {
+                std::cout << "[COMBINED] Attempting to retrieve histogram (with shape cuts): "
+                          << histName << std::endl;
+            }
+
             TH1F* hAllPhotonWithCuts =
-            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-            if (hAllPhotonWithCuts)
+                dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
+            if (!hAllPhotonWithCuts)
+            {
+                if (verbose)
+                {
+                    std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] "
+                              << "Could not find histogram: " << histName << std::endl;
+                }
+            }
+            else
             {
                 bool pass1 = false, pass2 = false;
                 if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
                     pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
                 if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
                     pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
-                
+
+                if (verbose)
+                {
+                    std::cout << "[COMBINED] Checking shower-shape cuts for clusters: "
+                              << "(clus1=" << clusterIDs[clus1]
+                              << ", pass1=" << pass1
+                              << ") and (clus2=" << clusterIDs[clus2]
+                              << ", pass2=" << pass2 << ")" << std::endl;
+                }
+
                 if (cluster1inBin && pass1)
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for clusterIDs[clus1]=" << clusterIDs[clus1]
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
                         filledHistogram = true;
@@ -3304,16 +3383,17 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for clusterIDs[clus2]=" << clusterIDs[clus2]
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hAllPhotonWithCuts->Fill(1.0, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
                         filledHistogram = true;
                     }
                 }
-            }
-            else if (verbose)
-            {
-                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
-                << histName << std::endl;
             }
         }
 
@@ -3322,21 +3402,42 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
         // ------------------------------------------------------------------------
         {
             std::string histName =
-            "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
-            "_Chi" + formatFloatForFilename(maxChi2) +
-            "_Asym" + formatFloatForFilename(maxAsym) +
-            massWindowLabel +
-            "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-            "_withoutShowerShapeCuts_COMBINED";
-            
+                "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+                "_withoutShowerShapeCuts_COMBINED";
+
+            if (verbose)
+            {
+                std::cout << "[COMBINED] Attempting to retrieve ptPhoton (no cuts) histogram: "
+                          << histName << std::endl;
+            }
+
             TH1F* hPtNoCuts =
-            dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-            if (hPtNoCuts)
+                dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
+            if (!hPtNoCuts)
+            {
+                if (verbose)
+                {
+                    std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] "
+                              << "Could not find histogram: " << histName << std::endl;
+                }
+            }
+            else
             {
                 if (cluster1inBin)
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for cluster1 pT=" << pt1
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hPtNoCuts->Fill(pt1, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
                         filledHistogram = true;
@@ -3346,7 +3447,81 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                 {
                     if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
                     {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " for cluster2 pT=" << pt2
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
                         hPtNoCuts->Fill(pt2, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
+                        filledHistogram = true;
+                    }
+                }
+            }
+        }
+
+        // (C2) with shape cuts
+        {
+            std::string histName =
+                "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
+                "_Chi" + formatFloatForFilename(maxChi2) +
+                "_Asym" + formatFloatForFilename(maxAsym) +
+                massWindowLabel +
+                "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
+                "_withShowerShapeCuts_COMBINED";
+
+            if (verbose)
+            {
+                std::cout << "[COMBINED] Attempting to retrieve ptPhoton (with cuts) histogram: "
+                          << histName << std::endl;
+            }
+
+            TH1F* hPtWithCuts =
+                dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
+            if (hPtWithCuts)
+            {
+                bool pass1 = false, pass2 = false;
+                if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
+                   pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
+                if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
+                   pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
+
+                if (verbose)
+                {
+                    std::cout << "[COMBINED] Checking shape cuts for clusters: (clus1="
+                              << clusterIDs[clus1] << ", pass1=" << pass1
+                              << "), (clus2=" << clusterIDs[clus2]
+                              << ", pass2=" << pass2 << ")" << std::endl;
+                }
+
+                if (cluster1inBin && pass1)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
+                    {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " (with shape cuts) for cluster1 pT=" << pt1
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
+                        hPtWithCuts->Fill(pt1, prescaleWeight);
+                        m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
+                        filledHistogram = true;
+                    }
+                }
+                if (cluster2inBin && pass2)
+                {
+                    if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
+                    {
+                        if (verbose)
+                        {
+                            std::cout << "[COMBINED] Filling " << histName
+                                      << " (with shape cuts) for cluster2 pT=" << pt2
+                                      << ", weight=" << prescaleWeight << std::endl;
+                        }
+                        hPtWithCuts->Fill(pt2, prescaleWeight);
                         m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
                         filledHistogram = true;
                     }
@@ -3354,50 +3529,9 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
             }
             else if (verbose)
             {
-                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
-                << histName << std::endl;
+                std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] "
+                          << "Could not find histogram: " << histName << std::endl;
             }
-        }
-
-        // (C2) with shape cuts
-        {
-          std::string histName =
-              "ptPhoton_E" + formatFloatForFilename(minClusEnergy) +
-              "_Chi" + formatFloatForFilename(maxChi2) +
-              "_Asym" + formatFloatForFilename(maxAsym) +
-              massWindowLabel +
-              "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
-              "_withShowerShapeCuts_COMBINED";
-
-          TH1F* hPtWithCuts =
-              dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
-          if (hPtWithCuts)
-          {
-            bool pass1 = false, pass2 = false;
-            if (clusterPassedShowerCuts.count(clusterIDs[clus1]))
-               pass1 = clusterPassedShowerCuts.at(clusterIDs[clus1]);
-            if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
-               pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
-
-            if (cluster1inBin && pass1)
-            {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
-              {
-                hPtWithCuts->Fill(pt1, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
-                filledHistogram = true;
-              }
-            }
-            if (cluster2inBin && pass2)
-            {
-              if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
-              {
-                hPtWithCuts->Fill(pt2, prescaleWeight);
-                m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
-                filledHistogram = true;
-              }
-            }
-          }
         }
 
         // ------------------------------------------------------------------------
@@ -3435,14 +3569,35 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                 "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
                 "_withoutShowerShapeCuts_COMBINED";
 
+            if (verbose)
+            {
+                std::cout << "[COMBINED] Attempting to retrieve isoPhotonCount (no shape cuts) hist: "
+                          << histName << std::endl;
+            }
+
             TH1F* hIsoNoCuts =
                 dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
             if (hIsoNoCuts)
             {
+              if (verbose)
+              {
+                  std::cout << "[COMBINED] Checking isolation for clus1="
+                            << clusterIDs[clus1] << ", iso1=" << clus1_isolated
+                            << " | clus2=" << clusterIDs[clus2]
+                            << ", iso2=" << clus2_isolated << std::endl;
+              }
+
               if (cluster1inBin && clus1_isolated)
               {
                 if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
                 {
+                  if (verbose)
+                  {
+                      std::cout << "[COMBINED] Filling " << histName
+                                << " for cluster1 (isolated, no shape cuts). Weight="
+                                << prescaleWeight << std::endl;
+                  }
                   hIsoNoCuts->Fill(1.0, prescaleWeight);
                   m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
                   filledHistogram = true;
@@ -3452,11 +3607,22 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
               {
                 if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
                 {
+                  if (verbose)
+                  {
+                      std::cout << "[COMBINED] Filling " << histName
+                                << " for cluster2 (isolated, no shape cuts). Weight="
+                                << prescaleWeight << std::endl;
+                  }
                   hIsoNoCuts->Fill(1.0, prescaleWeight);
                   m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
                   filledHistogram = true;
                 }
               }
+            }
+            else if (verbose)
+            {
+              std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
+                        << histName << std::endl;
             }
           }
 
@@ -3471,8 +3637,15 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                 "_pT_" + formatFloatForFilename(pTmin) + "to" + formatFloatForFilename(pTmax) +
                 "_withShowerShapeCuts_COMBINED";
 
+            if (verbose)
+            {
+                std::cout << "[COMBINED] Attempting to retrieve isoPhotonCount (with shape cuts) hist: "
+                          << histName << std::endl;
+            }
+
             TH1F* hIsoWithCuts =
                 dynamic_cast<TH1F*>( out->Get( histName.c_str() ) );
+
             if (hIsoWithCuts)
             {
               bool pass1 = false, pass2 = false;
@@ -3481,10 +3654,26 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
               if (clusterPassedShowerCuts.count(clusterIDs[clus2]))
                  pass2 = clusterPassedShowerCuts.at(clusterIDs[clus2]);
 
+              if (verbose)
+              {
+                  std::cout << "[COMBINED] Checking isolation & shape for clus1="
+                            << clusterIDs[clus1] << " iso=" << clus1_isolated
+                            << " passShower=" << pass1
+                            << ", clus2=" << clusterIDs[clus2]
+                            << " iso=" << clus2_isolated
+                            << " passShower=" << pass2 << std::endl;
+              }
+
               if (cluster1inBin && clus1_isolated && pass1)
               {
                 if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus1]))
                 {
+                  if (verbose)
+                  {
+                      std::cout << "[COMBINED] Filling " << histName
+                                << " (isolated + shape cuts) for cluster1. Weight="
+                                << prescaleWeight << std::endl;
+                  }
                   hIsoWithCuts->Fill(1.0, prescaleWeight);
                   m_usedClustersThisEvent[histName].insert(clusterIDs[clus1]);
                   filledHistogram = true;
@@ -3494,18 +3683,31 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
               {
                 if (!m_usedClustersThisEvent[histName].count(clusterIDs[clus2]))
                 {
+                  if (verbose)
+                  {
+                      std::cout << "[COMBINED] Filling " << histName
+                                << " (isolated + shape cuts) for cluster2. Weight="
+                                << prescaleWeight << std::endl;
+                  }
                   hIsoWithCuts->Fill(1.0, prescaleWeight);
                   m_usedClustersThisEvent[histName].insert(clusterIDs[clus2]);
                   filledHistogram = true;
                 }
               }
             }
+            else if (verbose)
+            {
+              std::cerr << "[fillCombinedHistogramsForTriggers][WARNING] Could not find histogram: "
+                        << histName << std::endl;
+            }
           }
         } // end isoRange loop
     } // end loop over pT_bins
+
     if (verbose)
     {
-        std::cout << "[fillCombinedHistogramsForTriggers] Finished filling combined histograms successfully." << std::endl;
+        std::cout << "[fillCombinedHistogramsForTriggers] Finished filling combined histograms successfully."
+                  << std::endl;
     }
 }
 
@@ -5251,49 +5453,87 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
       collectTriggerDir(shortTriggerName, histMapNoPt);
     }
 
+
     // *** NEW SECTION: Collect the combined (non-trigger dependent) histograms ***
     // These are stored in member variables such as:
     // vCombinedIsoNoCuts, vCombinedIsoWithCuts,
-    // hCombinedAllPhoton_without, hCombinedAllPhoton_with,
-    // hCombinedPtPhoton_without, hCombinedPtPhoton_with.
+    // vCombinedAllPhotonNoCuts, vCombinedAllPhotonWithCuts,
+    // vCombinedPtPhotonNoCuts, vCombinedPtPhotonWithCuts.
     //
     // For each combined histogram, we check that it is non-null and not zero,
-    // then add it to finalHistList:
+    // then add it to finalHistList.
+
     auto addCombinedHist = [&](TH1* histPtr, const std::string &name, const std::string &dirName = "COMBINED")
     {
-      if (!histPtr) return;
+      if (!histPtr) return;  // skip null pointers
       if (histPtr->GetEntries() == 0)
       {
+          // If histogram has zero entries, skip (with optional message if verbose)
           if (verbose)
-              std::cout << "[INFO] Combined hist \"" << name << "\" has zero entries; skipping.\n";
+          {
+            std::cout << "[INFO] Combined hist \"" << name
+                      << "\" has zero entries; skipping.\n";
+          }
           return;
       }
+      // Check for duplicates
       if (usedNames.count(name) > 0)
       {
           std::cerr << ANSI_COLOR_RED_BOLD
-                    << "[ERROR] Duplicate combined histogram name: \"" << name << "\" => aborting.\n"
+                    << "[ERROR] Duplicate combined histogram name: \"" << name
+                    << "\" => aborting.\n"
                     << ANSI_COLOR_RESET;
           foundDuplicate = true;
           return;
       }
+      // Mark this name as used
       usedNames.insert(name);
+
+      // Add it to the final list
       finalHistList.push_back({ dirName, name, histPtr });
     };
 
-    // Add each combined histogram:
-    for (auto hist : vCombinedIsoNoCuts) {
-        addCombinedHist(hist, hist->GetName(), "COMBINED");
-        if (foundDuplicate) break;
-    }
-    for (auto hist : vCombinedIsoWithCuts) {
+    // 1) Add all the “no shape cuts” iso histograms
+    for (auto hist : vCombinedIsoNoCuts)
+    {
         if (foundDuplicate) break;
         addCombinedHist(hist, hist->GetName(), "COMBINED");
     }
-    if (!foundDuplicate) {
-      addCombinedHist(hCombinedAllPhoton_without, hCombinedAllPhoton_without ? hCombinedAllPhoton_without->GetName() : "");
-      addCombinedHist(hCombinedAllPhoton_with,    hCombinedAllPhoton_with ? hCombinedAllPhoton_with->GetName() : "");
-      addCombinedHist(hCombinedPtPhoton_without,  hCombinedPtPhoton_without ? hCombinedPtPhoton_without->GetName() : "");
-      addCombinedHist(hCombinedPtPhoton_with,     hCombinedPtPhoton_with ? hCombinedPtPhoton_with->GetName() : "");
+
+    // 2) Add all the “with shape cuts” iso histograms
+    for (auto hist : vCombinedIsoWithCuts)
+    {
+        if (foundDuplicate) break;
+        addCombinedHist(hist, hist->GetName(), "COMBINED");
+    }
+
+    // 3) Only if we haven't found a duplicate do we add the all-photon & pT-photon hists
+    if (!foundDuplicate)
+    {
+      // All-Photon, no-shape-cuts
+      for (auto hist : vCombinedAllPhotonNoCuts)
+      {
+          if (foundDuplicate) break;
+          addCombinedHist(hist, hist->GetName(), "COMBINED");
+      }
+      // All-Photon, with-shape-cuts
+      for (auto hist : vCombinedAllPhotonWithCuts)
+      {
+          if (foundDuplicate) break;
+          addCombinedHist(hist, hist->GetName(), "COMBINED");
+      }
+      // pT-Photon, no-shape-cuts
+      for (auto hist : vCombinedPtPhotonNoCuts)
+      {
+          if (foundDuplicate) break;
+          addCombinedHist(hist, hist->GetName(), "COMBINED");
+      }
+      // pT-Photon, with-shape-cuts
+      for (auto hist : vCombinedPtPhotonWithCuts)
+      {
+          if (foundDuplicate) break;
+          addCombinedHist(hist, hist->GetName(), "COMBINED");
+      }
     }
 
     // 6) If found a duplicate => abort
@@ -5318,7 +5558,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
     }
     size_t hCounter = 0;
 
-    // 8) Write them
+    // 8) Actually write them
     for (auto & item : finalHistList)
     {
       hCounter++;
@@ -5329,6 +5569,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
                   << " histograms so far...\n";
       }
 
+      // If triggerDir == "COMBINED", it will do out->GetDirectory("COMBINED")
       TDirectory* trigDir = out->GetDirectory(item.triggerDir.c_str());
       if (!trigDir)
       {
@@ -5340,8 +5581,7 @@ int caloTreeGen::endData(PHCompositeNode *topNode)
         }
         continue;
       }
-      trigDir->cd();
-
+      trigDir->cd();  // <--- ensures we write to "item.triggerDir"
       if (item.histPtr->Write() == 0)
       {
         std::cerr << ANSI_COLOR_RED_BOLD
