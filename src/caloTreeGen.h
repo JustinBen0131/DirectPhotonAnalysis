@@ -140,6 +140,8 @@ public:
     // We'll store confusionMatrix_byPt[ bin ][truthClass][predClass]
     std::map<std::pair<float,float>, std::array<std::array<long long, 2>, 5>> confusionMatrix_byPt;
 
+    float getScaledownFactor(const std::string &textFileName); // short name key
+
 
 private:
     
@@ -195,9 +197,15 @@ private:
         float sigmaEta;
     };
     std::map<std::tuple<std::string, float, float, float, float, float>, MesonMassWindow> mesonMassWindowsMap;
+    
 
     //default settings for setters in Fun4all
     bool verbose = true;
+    std::unordered_map<std::string,
+        std::unordered_map<int, float>> m_map_triggerPrescale;
+
+    // Helper to load from /path/to/preScaleFiles
+    bool loadPrescaleFiles();
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
     std::vector<float> clus_chi_values = {4};
@@ -217,7 +225,6 @@ private:
         {"Jet 8 GeV + MBD NS >= 1","Jet_8_GeV_plus_MBD_NS_geq_1"},
         {"Jet 10 GeV + MBD NS >= 1","Jet_10_GeV_plus_MBD_NS_geq_1"},
         {"Jet 12 GeV + MBD NS >= 1","Jet_12_GeV_plus_MBD_NS_geq_1"},
-        {"Photon 2 GeV+ MBD NS >= 1","Photon_2_GeV_plus_MBD_NS_geq_1"},
         {"Photon 3 GeV + MBD NS >= 1","Photon_3_GeV_plus_MBD_NS_geq_1"},
         {"Photon 4 GeV + MBD NS >= 1","Photon_4_GeV_plus_MBD_NS_geq_1"},
         {"Photon 5 GeV + MBD NS >= 1","Photon_5_GeV_plus_MBD_NS_geq_1"}
@@ -346,7 +353,6 @@ private:
         bool isAcceptable;
     };
     bool loadMesonMassWindows(const std::string& csvFilePath);
-    float getScaledownFactor(const std::string &dbTriggerName);
     
     void createHistos_Data();
     void createHistos_ForSimulation();
