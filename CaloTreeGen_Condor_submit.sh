@@ -26,8 +26,8 @@ run_local_job_data() {
 
   echo "[INFO] Running locally with run number: $runNumber"
 
-  local dst_list="dst_list/dst_calo_run2pp-000${runNumber}.list"
-  local fileList="dst_list/dst_calo_run2pp-${runNumber}_input.list"
+  local dst_list="dst_list/dst_jet_run2pp-000${runNumber}.list"
+  local fileList="dst_list/dst_jet_run2pp-${runNumber}_input.list"
 
   mapfile -t files < "$dst_list"
 
@@ -71,8 +71,8 @@ submit_all_jobs_data() {
   local runNumbers=($(cat RunCondorJobsOnTheseRuns.txt))
   for runNumber in "${runNumbers[@]}"; do
 
-    local dst_list="dst_list/dst_calo_run2pp-000${runNumber}.list"
-    local paired_list="dst_list/dst_calo_run2pp-000${runNumber}_paired.list"
+    local dst_list="dst_list/dst_jet_run2pp-000${runNumber}.list"
+    local paired_list="dst_list/dst_jet_run2pp-000${runNumber}_paired.list"
     if [ ! -f "$dst_list" ]; then
       echo "[ERROR] File not found: $dst_list"
       continue
