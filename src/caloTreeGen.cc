@@ -215,71 +215,126 @@ bool caloTreeGen::loadMesonMassWindows(const std::string& csvFilePath) {
     return true;
 }
 
-float caloTreeGen::getScaledownFactor(const std::string &dbTriggerName)
+bool caloTreeGen::loadPrescaleFiles()
 {
-  // Make sure we have a valid run number
-  if (m_runNumber <= 0)
-  {
-    std::cerr << "[getScaledownFactor] Error: m_runNumber = " << m_runNumber
-              << " is not valid. Returning -1.\n";
-    return -1.f;
-  }
+    // Base directory where the prescale text files are stored.
+    const std::string baseDir = "/sphenix/user/patsfan753/tutorials/tutorials/CaloDataAnaRun24pp/preScaleFiles";
 
-  // Connect to the DB
-  TSQLServer* db = TSQLServer::Connect("pgsql://sphnxdaqdbreplica:5432/daq","phnxro","");
-  if (!db || db->IsZombie())
-  {
-    std::cerr << "[getScaledownFactor] DB connection failed for run " << m_runNumber << std::endl;
-    if (db) delete db;
-    return -1.f;
-  }
+    // List of short names that correspond to the file names (without the .txt extension)
+    // These names must exactly match the names used in the text files.
+    const std::vector<std::string> shortNames = {
+        "MBD_NandS_geq_1",
+        "Photon_3_GeV_plus_MBD_NS_geq_1",
+        "Photon_4_GeV_plus_MBD_NS_geq_1",
+        "Photon_5_GeV_plus_MBD_NS_geq_1"
+    };
 
-  // Build a query for exactly one trigger in one run
-  // We'll just take the first matching row if multiple exist
-  // Note the single quotes around %s => we must be sure dbTriggerName has no quotes inside
-  char query[1024];
-  snprintf(query, sizeof(query),
-           "SELECT s.live, s.scaled "
-           "FROM gl1_scalers s "
-           "JOIN gl1_triggernames t "
-           "   ON (s.index = t.index "
-           "       AND s.runnumber BETWEEN t.runnumber AND t.runnumber_last) "
-           "WHERE s.runnumber=%d "
-           "  AND t.triggername='%s' "
-           "ORDER BY s.index;",
-           m_runNumber, dbTriggerName.c_str());
+    bool success = true;
 
-  TSQLResult* res = db->Query(query);
-  if (!res)
-  {
-    std::cerr << "[getScaledownFactor] Query failed (null result). Returning -1.\n";
-    delete db;
-    return -1.f;
-  }
-
-  float scaleVal = -1.f;  // default if not found
-  // Read the first matching row, if any
-  if (auto row = res->Next())
-  {
-    // The query returns "live" in field 0, "scaled" in field 1
-    const char* liveStr   = row->GetField(0);
-    const char* scaledStr = row->GetField(1);
-
-    if (liveStr && scaledStr)
+    if (verbose)
     {
-      double live   = std::atof(liveStr);
-      double scaled = std::atof(scaledStr);
-      if (scaled > 0.0) scaleVal = float(live / scaled);
+        std::cout << "[loadPrescaleFiles] Starting to load prescale files from " << baseDir << std::endl;
     }
-    delete row;
-  }
 
-  delete res;
-  delete db;
+    // Loop over each shortName (each corresponds to one text file)
+    for (const auto &shortName : shortNames)
+    {
+        std::string filename = shortName + ".txt";
+        std::string fullpath = baseDir + "/" + filename;
+        if (verbose)
+        {
+            std::cout << "[loadPrescaleFiles] Attempting to open file: " << fullpath << std::endl;
+        }
 
-  // scaleVal remains -1 if nothing matched or scaled<=0
-  return scaleVal;
+        std::ifstream infile(fullpath);
+        if (!infile.is_open())
+        {
+            std::cerr << "[loadPrescaleFiles] Could not open file: " << fullpath << std::endl;
+            success = false;
+            continue;
+        }
+        else if (verbose)
+        {
+            std::cout << "[loadPrescaleFiles] Successfully opened file: " << fullpath << std::endl;
+        }
+
+        // Clear any previous entries for this trigger.
+        m_map_triggerPrescale[shortName].clear();
+
+        int lineCount = 0;
+        int entryCount = 0;
+        std::string line;
+        while (std::getline(infile, line))
+        {
+            lineCount++;
+            // Skip blank lines and header lines starting with '#'
+            if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+
+            std::istringstream iss(line);
+            int runNum;
+            float prescaleVal;
+            if (!(iss >> runNum >> prescaleVal))
+            {
+                if (verbose)
+                {
+                    std::cerr << "[loadPrescaleFiles] Parse error in file " << fullpath
+                              << " at line " << lineCount << ": " << line << std::endl;
+                }
+                continue;
+            }
+            m_map_triggerPrescale[shortName][runNum] = prescaleVal;
+            entryCount++;
+        }
+        infile.close();
+
+        if (verbose)
+        {
+            std::cout << "[loadPrescaleFiles] Loaded " << entryCount << " entries for trigger '"
+                      << shortName << "' from file " << filename << std::endl;
+        }
+    }
+
+    if (verbose)
+    {
+        std::cout << "[loadPrescaleFiles] Completed loading prescale files." << std::endl;
+        std::cout << "[loadPrescaleFiles] Dumping prescale map contents:\n" << std::endl;
+
+        // Use i/o manipulators for a simple "table" style
+        for (const auto &triggerEntry : m_map_triggerPrescale)
+        {
+            const std::string &triggerName = triggerEntry.first;
+            const auto &runMap = triggerEntry.second;
+
+            std::cout << "Trigger: " << triggerName
+                      << "  (Total entries: " << runMap.size() << ")\n";
+
+            // Print a header line
+            std::cout << "=========================================================\n"
+                      << std::left
+                      << std::setw(12) << "RunNumber"
+                      << "  "
+                      << std::setw(12) << "Prescale"
+                      << "\n---------------------------------------------------------\n";
+
+            // Now print each run→prescale pair in a neat row
+            for (const auto &entry : runMap)
+            {
+                std::cout << std::left
+                          << std::setw(12) << entry.first  // run number
+                          << "  "
+                          << std::setw(12) << entry.second // prescale factor
+                          << "\n";
+            }
+            std::cout << "=========================================================\n\n";
+        }
+    }
+
+    return success;
 }
+
 
 //____________________________________________________________________________..
 int caloTreeGen::Init(PHCompositeNode *topNode) {
@@ -314,6 +369,12 @@ int caloTreeGen::Init(PHCompositeNode *topNode) {
         } else {
             std::cout << "No CSV file found at " << csvFilePath << ". Skipping meson mass windows loading." << std::endl;
         }
+        
+        if (!loadPrescaleFiles())
+        {
+            std::cerr << "[Init] Warning: Some prescale files not found => some triggers might be absent." << std::endl;
+        }
+
         trigAna = new TriggerAnalyzer();
         
         createHistos_Data();
@@ -2830,6 +2891,93 @@ void caloTreeGen::fillHistogramsForTriggers(
     } // end loop over triggers
 }
 
+// 3) The getScaledownFactor(...) method
+float caloTreeGen::getScaledownFactor(const std::string &shortName)
+{
+    /*
+      We are mapping from shortName => prescale factor in m_map_triggerPrescale.
+      Example usage:
+         shortName = "Photon_5_GeV_plus_MBD_NS_geq_1"
+         => we look in m_map_triggerPrescale["Photon_5_GeV_plus_MBD_NS_geq_1"]
+         => then in that sub-map we look for m_runNumber => (some prescale).
+    */
+
+    // 1) Verify the runNumber is valid
+    if (m_runNumber <= 0)
+    {
+        if (verbose)
+        {
+            std::cerr << "[getScaledownFactor] Error: m_runNumber="
+                      << m_runNumber
+                      << " is not valid. Returning -1.\n";
+        }
+        return -1.f;
+    }
+
+    // 2) (Optional) Print debug info
+    if (verbose)
+    {
+        std::cout << "[getScaledownFactor] Called with shortName='"
+                  << shortName << "' and m_runNumber="
+                  << m_runNumber << std::endl;
+    }
+
+    // 3) Check if we have an entry in our top-level map for "shortName"
+    auto outerIt = m_map_triggerPrescale.find(shortName);
+    if (outerIt == m_map_triggerPrescale.end())
+    {
+        if (verbose)
+        {
+            std::cout << "[getScaledownFactor] No prescale file/entry found "
+                      << "for shortName='" << shortName
+                      << "'. Returning -1.\n";
+        }
+        return -1.f;
+    }
+
+    // 4) Retrieve the sub-map for this shortName
+    auto &subMap = outerIt->second; // key: runNumber, val: prescale
+
+    // 5) Look up the prescale factor for this specific run
+    auto runIt = subMap.find(m_runNumber);
+    if (runIt == subMap.end())
+    {
+        if (verbose)
+        {
+            std::cout << "[getScaledownFactor] No prescale entry for runNumber="
+                      << m_runNumber << " under shortName='" << shortName
+                      << "'. Returning -1.\n";
+        }
+        return -1.f;
+    }
+
+    // 6) If found, check whether prescale is non-positive
+    float scaleVal = runIt->second;
+    if (scaleVal <= 0.f)
+    {
+        if (verbose)
+        {
+            std::cout << "[getScaledownFactor] Found prescale <= 0 ("
+                      << scaleVal << ") for shortName='" << shortName
+                      << "' in run=" << m_runNumber
+                      << ". Treating as invalid => Returning -1.\n";
+        }
+        return -1.f;
+    }
+
+    // 7) By here, scaleVal is > 0 => valid
+    if (verbose)
+    {
+        std::cout << "[getScaledownFactor] Found valid prescale="
+                  << scaleVal << " for shortName='"
+                  << shortName << "' in runNumber="
+                  << m_runNumber << std::endl;
+    }
+
+    return scaleVal;
+}
+
+
 void caloTreeGen::fillCombinedHistogramsForTriggers(
     float mesonMass,
     size_t clus1,
@@ -2862,99 +3010,146 @@ void caloTreeGen::fillCombinedHistogramsForTriggers(
                   << ", maxAsym=" << maxAsym
                   << std::endl;
     }
-    // 1) Photon triggers to consider (EXCLUDING MBD-only):
-    static const std::vector<std::string> photonOnlyDBNames = {
-       "Photon 2 GeV+ MBD NS >= 1",
-       "Photon 3 GeV + MBD NS >= 1",
-       "Photon 4 GeV + MBD NS >= 1",
-       "Photon 5 GeV + MBD NS >= 1"
+
+    // --------------------------------------------------------------
+    // Photon triggers to consider (EXCLUDING MBD-only), using short names
+    // exactly matching your text files, e.g. "Photon_3_GeV_plus_MBD_NS_geq_1"
+    // --------------------------------------------------------------
+    static const std::vector<std::string> photonShortNames = {
+       "Photon_3_GeV_plus_MBD_NS_geq_1",
+       "Photon_4_GeV_plus_MBD_NS_geq_1",
+       "Photon_5_GeV_plus_MBD_NS_geq_1"
     };
 
-    // 2) Fallback “MBD-only” trigger name:
-    static const std::string mbdDBName = "MBD N&S >= 1";
+    // Fallback "MBD-only" short name
+    static const std::string mbdShortName = "MBD_NandS_geq_1";
 
-    float bestScaleValue = std::numeric_limits<float>::max();
-    bool  foundPhotonTrigger = false;
-    bool  usedMBDfallback    = false;
+    // We'll search for the smallest valid prescale among these triggers
+    float bestScaleValue  = std::numeric_limits<float>::max();
+    bool foundPhotonTrigger = false;
+    bool usedMBDfallback    = false;
     std::string bestShortName;
 
-    //------------------------------------------------------
-    // FIRST: Attempt to find a "photon" trigger with min prescale
-    //------------------------------------------------------
-    for (auto &dbTrigName : photonOnlyDBNames)
+    // ------------------------------------------------------
+    // 1) Attempt to find a "photon" trigger with min prescale
+    // ------------------------------------------------------
+    for (const auto &photonTrig : photonShortNames)
     {
-        auto it = triggerNameMap.find(dbTrigName);
-        if (it == triggerNameMap.end()) continue;  // not in your map
-        const std::string &candidateShortName = it->second;
-
         // see if that shortName is in the set of fired triggers
         bool didFire = (std::find(activeTriggerNames.begin(),
                                   activeTriggerNames.end(),
-                                  candidateShortName) != activeTriggerNames.end());
-        if (didFire)
+                                  photonTrig) != activeTriggerNames.end());
+        
+        if (verbose)
         {
-            float scaleVal = getScaledownFactor(dbTrigName);
-            // Keep whichever is smallest
-            if (scaleVal > 0.f && scaleVal < bestScaleValue)
+             std::cout << "[fillCombinedHistogramsForTriggers] Checking trigger '"
+                       << photonTrig << "' in activeTriggerNames: "
+                       << (didFire ? "FOUND" : "NOT FOUND") << std::endl;
+        }
+        
+        if (!didFire)
+        {
+             if (verbose)
+             {
+                 std::cout << "[fillCombinedHistogramsForTriggers] Trigger '"
+                           << photonTrig << "' did not fire; skipping." << std::endl;
+             }
+             continue;
+        }
+
+        // If it did fire, get the prescale from our local map
+        float scaleVal = getScaledownFactor(photonTrig);
+        if (verbose)
+        {
+             std::cout << "[fillCombinedHistogramsForTriggers] For trigger '" << photonTrig
+                       << "', getScaledownFactor() returned " << scaleVal << std::endl;
+        }
+
+        // If scaleVal > 0 => valid prescale. Keep whichever is smallest
+        if (scaleVal > 0.f && scaleVal < bestScaleValue)
+        {
+            bestScaleValue     = scaleVal;
+            bestShortName      = photonTrig;
+            foundPhotonTrigger = true;
+            if (verbose)
             {
-                bestScaleValue     = scaleVal;
-                bestShortName      = candidateShortName;
-                foundPhotonTrigger = true;
+                std::cout << "[fillCombinedHistogramsForTriggers] Accepting trigger '"
+                          << photonTrig << "' with prescale " << scaleVal << std::endl;
             }
+        }
+        else if (verbose)
+        {
+             std::cout << "[fillCombinedHistogramsForTriggers] Rejecting trigger '"
+                       << photonTrig << "' due to invalid prescale (" << scaleVal << ")" << std::endl;
         }
     }
 
-    //------------------------------------------------------
-    // IF NO photon triggers fired, see if MBD itself fired
-    //------------------------------------------------------
+
     if (!foundPhotonTrigger)
     {
-        auto mbdIt = triggerNameMap.find(mbdDBName);
-        if (mbdIt != triggerNameMap.end())
+        bool didMBDfire = (std::find(activeTriggerNames.begin(),
+                                     activeTriggerNames.end(),
+                                     mbdShortName) != activeTriggerNames.end());
+        if (verbose)
         {
-            const std::string &mbdShortName = mbdIt->second;
-            bool didMBDfire = (std::find(activeTriggerNames.begin(),
-                                         activeTriggerNames.end(),
-                                         mbdShortName) != activeTriggerNames.end());
-            if (didMBDfire)
-            {
-                float scaleVal = getScaledownFactor(mbdDBName);
-                if (scaleVal > 0.f && scaleVal < std::numeric_limits<float>::max())
-                {
-                    bestScaleValue = scaleVal;
-                    bestShortName  = mbdShortName;
-                    usedMBDfallback = true;
-                }
-            }
+             std::cout << "[fillCombinedHistogramsForTriggers] Checking fallback trigger '"
+                       << mbdShortName << "' in activeTriggerNames: "
+                       << (didMBDfire ? "FOUND" : "NOT FOUND") << std::endl;
+        }
+        if (didMBDfire)
+        {
+             float scaleVal = getScaledownFactor(mbdShortName);
+             if (verbose)
+             {
+                 std::cout << "[fillCombinedHistogramsForTriggers] For fallback trigger '"
+                           << mbdShortName << "', getScaledownFactor() returned " << scaleVal << std::endl;
+             }
+             if (scaleVal > 0.f && scaleVal < std::numeric_limits<float>::max())
+             {
+                  bestScaleValue = scaleVal;
+                  bestShortName  = mbdShortName;
+                  usedMBDfallback = true;
+                  if (verbose)
+                  {
+                      std::cout << "[fillCombinedHistogramsForTriggers] Accepting fallback trigger '"
+                                << mbdShortName << "' with prescale " << scaleVal << std::endl;
+                  }
+             }
+             else if (verbose)
+             {
+                  std::cout << "[fillCombinedHistogramsForTriggers] Fallback trigger '"
+                            << mbdShortName << "' returned invalid prescale (" << scaleVal << ")" << std::endl;
+             }
         }
     }
 
-    // If we didn’t find any photon trigger OR MBD fallback => skip
+    // ------------------------------------------------------
+    // 3) If neither photon triggers nor fallback produced a valid prescale, skip
+    // ------------------------------------------------------
     if (!foundPhotonTrigger && !usedMBDfallback)
     {
         if (verbose)
         {
-            std::cout << "[fillCombinedHistogramsForTriggers] No photon triggers fired, and MBD did not fire => skipping." << std::endl;
+             std::cout << "[fillCombinedHistogramsForTriggers] No valid photon triggers or fallback trigger found (all scale factors <= 0) => skipping." << std::endl;
         }
         return;
     }
 
-    // By here, bestShortName & bestScaleValue are set. The rest is identical:
+    // We have a valid prescale value.
     float prescaleWeight = bestScaleValue;
     if (verbose)
     {
         if (foundPhotonTrigger)
         {
-            std::cout << "[fillCombinedHistogramsForTriggers] Found valid PHOTON trigger with shortName='"
-                      << bestShortName << "', prescale=" << prescaleWeight << std::endl;
+             std::cout << "[fillCombinedHistogramsForTriggers] Using PHOTON trigger: '"
+                       << bestShortName << "' with prescale " << prescaleWeight << std::endl;
         }
         else
         {
-            std::cout << "[fillCombinedHistogramsForTriggers] Photon triggers not fired => Using MBD fallback, shortName='"
-                      << bestShortName << "', prescale=" << prescaleWeight << std::endl;
+             std::cout << "[fillCombinedHistogramsForTriggers] Using fallback MBD trigger: '"
+                       << bestShortName << "' with prescale " << prescaleWeight << std::endl;
         }
     }
-
     
     // Loop over each pT bin
     for (auto &pT_bin : pT_bins)
