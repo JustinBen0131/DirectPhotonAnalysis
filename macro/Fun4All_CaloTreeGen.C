@@ -148,12 +148,12 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     }
     std::cout << "[DEBUG] First filename read: " << firstFilename << std::endl;
     
-    int runnumber;
+    int runnumber = -1;  // Declare at an outer scope
     if (runData)
     {
         // Extract run number from the first filename
         std::pair<int, int> runseg = Fun4AllUtils::GetRunSegment(firstFilename);
-        int runnumber = runseg.first;
+        runnumber = runseg.first;
         int segnumber = runseg.second;
         if (WANT_VERBOSE) {
             std::cout << "[DEBUG] Extracted run: " << runnumber
@@ -325,6 +325,9 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
     eval->setWantData(runData);
     if (runData)
     {
+        if (WANT_VERBOSE) {
+            std::cout << "[DEBUG] Still using run: " << runnumber << std::endl;
+        }
         eval->setRunNumber(runnumber);
     }
     if (runSim)
