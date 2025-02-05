@@ -141,8 +141,6 @@ public:
     std::map<std::pair<float,float>, std::array<std::array<long long, 2>, 5>> confusionMatrix_byPt;
 
 
-
-    
 private:
     
     bool wantSim = false;   // default false
@@ -202,8 +200,8 @@ private:
     bool verbose = true;
     
     std::vector<float> asymmetry_values = {0.5, 0.7};
-    std::vector<float> clus_chi_values = {2, 3, 4};
-    std::vector<float> clus_Energy_values = {1.0, 1.5};
+    std::vector<float> clus_chi_values = {4};
+    std::vector<float> clus_Energy_values = {1.0, 2.0};
     std::vector<std::pair<float, float>> pT_bins = {
         {2.0, 3.0}, {3.0, 4.0}, {4.0, 5.0}, {5.0, 6.0}, {6.0, 7.0}, {7.0, 8.0}, {8.0, 9.0}, {9.0, 10.0}, {10.0, 12.0}, {12.0, 15.0}, {15, 20}, {20, 30}
     };
@@ -211,8 +209,7 @@ private:
     std::vector<std::pair<float, float>> isoEtRanges = {
         {-100, 6},
         {-100, 10},
-        {-10, 0},
-        {0, 10}
+        {-100, 4}
     };
     
     std::map<std::string, std::string> triggerNameMap = {
@@ -588,6 +585,43 @@ private:
     std::unordered_map<int, bool> clusterPassedShowerCuts;
     
     bool applyShowerShapeCuts(const ShowerShapeVars& s, float clusterEt);
+    
+    
+    /*
+     following two functions are for seperate raw trigger bit QA not using triggerAnalyzer
+     */
+    inline std::vector<int> extractTriggerBits(uint64_t b_gl1_scaledvec, int entry) {
+        std::vector<int> trig_bits;
+        std::bitset<64> bits(b_gl1_scaledvec);
+        if (verbose) {
+            std::cout << "Processing entry " << entry << ", gl1_scaledvec (bits): " << bits.to_string() << std::endl;
+        }
+        
+        for (unsigned int bit = 0; bit < 64; bit++) {
+            if (((b_gl1_scaledvec >> bit) & 0x1U) == 0x1U) {
+                trig_bits.push_back(bit);
+            }
+        }
+        return trig_bits;
+    }
+
+    // Inline function to check trigger condition
+    inline bool checkTriggerCondition(const std::vector<int> &trig_bits, int inputBit) {
+        for (const int &bit : trig_bits) {
+            if (bit == inputBit) {
+                if (verbose) {
+                    std::cout << "  Trigger condition met with bit: " << bit << std::endl;
+                }
+                
+                return true;
+            }
+        }
+        if (verbose) {
+            std::cout << "  No relevant trigger conditions met." << std::endl;
+        }
+        
+        return false;
+    }
 
 };
 
