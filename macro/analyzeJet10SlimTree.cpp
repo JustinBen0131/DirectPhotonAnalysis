@@ -40,6 +40,7 @@
 static const int kMaxClusters   = 200000;
 static const int kMaxParticles  = 200000;
 
+
 // A debug toggle to control how much we print:
 static const bool kDebug = false;   // set to 'true' to see extra debug lines
 
@@ -187,6 +188,48 @@ int findPurityBin(float cPt)
     }
     return -1;
 }
+void buildAndSaveTruthVsRecoIsoPlots(
+    const std::string & outDir,
+    TH2F & h2TruthVsReco_prompt,
+    TH2F & h2TruthVsReco_frag )
+{
+    // 1) A canvas for prompt photons
+    {
+        TCanvas cPrompt("cPrompt","TruthIso vs. RecoIso (Prompt)",800,600);
+        cPrompt.SetGrid();
+        cPrompt.SetLogz(); // optional: sets log scale for better dynamic range
+
+        // Draw the 2D histogram (object, not pointer)
+        h2TruthVsReco_prompt.Draw("COLZ");
+        h2TruthVsReco_prompt.GetXaxis()->SetTitle("Truth iso [GeV]");
+        h2TruthVsReco_prompt.GetYaxis()->SetTitle("Reco iso [GeV]");
+        h2TruthVsReco_prompt.SetTitle("Prompt Photons: Truth vs. Reco Isolation");
+
+        // Save
+        std::string outName = outDir + "/TruthVsRecoIso_Prompt.png";
+        cPrompt.SaveAs(outName.c_str());
+        std::cout << "[INFO] Wrote " << outName << std::endl;
+    }
+
+    // 2) A second canvas for frag photons
+    {
+        TCanvas cFrag("cFrag","TruthIso vs. RecoIso (Frag)",800,600);
+        cFrag.SetGrid();
+        cFrag.SetLogz(); // optional as well
+
+        // Draw the 2D histogram (object, not pointer)
+        h2TruthVsReco_frag.Draw("COLZ");
+        h2TruthVsReco_frag.GetXaxis()->SetTitle("Truth iso [GeV]");
+        h2TruthVsReco_frag.GetYaxis()->SetTitle("Reco iso [GeV]");
+        h2TruthVsReco_frag.SetTitle("Frag Photons: Truth vs. Reco Isolation");
+
+        // Save
+        std::string outName = outDir + "/TruthVsRecoIso_Frag.png";
+        cFrag.SaveAs(outName.c_str());
+        std::cout << "[INFO] Wrote " << outName << std::endl;
+    }
+}
+
 
 // -------------------------------------------------------------------
 // findMatchedPhotonClass => for a cluster with leading PID=22, check
@@ -402,6 +445,20 @@ void analyzeJet10SlimTree()
     slim->SetBranchAddress("cluster_iso_04_emcal_CLUSTERINFO_CEMC", cluster_iso_04_emcal);
     slim->SetBranchAddress("cluster_pid_CLUSTERINFO_CEMC", cluster_pid);
 
+    
+    static TH2F h2TruthVsReco_prompt(
+        "h2TruthVsReco_prompt",
+        "Prompt photons; true iso [GeV]; reco iso [GeV]",
+        60,0,12,  60,0,12
+    );
+
+    static TH2F h2TruthVsReco_frag(
+        "h2TruthVsReco_frag",
+        "Frag photons; true iso [GeV]; reco iso [GeV]",
+        60,0,12,  60,0,12
+    );
+
+    
     // 8) Main loop => fill iso-efficiency + purity + categories
     Long64_t nEntries = slim->GetEntries();
     std::cout << "[INFO] nEntries in TTree: " << nEntries << "\n";
@@ -506,6 +563,79 @@ void analyzeJet10SlimTree()
             else if(pid==111) cat=3; // pi0-led
             else if(pid==221) cat=4; // eta-led
             else              cat=5; // other
+            
+            //-----------------------------------------------------------
+            //  FILL THE 2D HISTOGRAMS FOR RECO vs TRUTH ISOLATION
+            //-----------------------------------------------------------
+            if(cat == 0)
+            {
+                // cat==0 => Prompt
+                // Step 1) find the actual matched photon index (the IP)
+                //         so we can get the 'truth iso' from that photon.
+                //         For example:
+                int bestMatch = -1;
+                float bestDR  = 9999.0;
+                for(int ip=0; ip<nparticles; ip++){
+                    // must be a photon
+                    if(particle_pid[ip]!=22) continue;
+                    // only consider if class=1 (prompt)
+                    if(particle_photonclass[ip] != 1) continue;
+
+                    // check dR < 0.05 etc (like you do in findMatchedPhotonClass)
+                    float dr = deltaR_func(cEta, particle_Eta_[ip], cPhi, particle_Phi_[ip]);
+                    if(dr>0.05) continue;
+
+                    // check E ratio? (like ratio>0.5)
+                    float eTruth = particle_Pt[ip]*std::cosh(particle_Eta_[ip]);
+                    if(eTruth<1e-3) continue;
+                    float ratio = cE/eTruth;
+                    if(ratio<0.5f) continue;
+
+                    if(dr<bestDR){
+                       bestDR = dr;
+                       bestMatch = ip;
+                    }
+                }
+
+                // Step 2) if we found a real match, fill h2TruthVsReco_prompt
+                if(bestMatch >=0){
+                   float truthIso   = particle_truth_iso_04[bestMatch]; // from matched IP
+                   float recoIsoAll = cluster_iso_04[ic];               // your “All” iso
+                   // fill the 2D histogram
+                   h2TruthVsReco_prompt.Fill(truthIso, recoIsoAll);
+                }
+            }
+            else if(cat == 1)
+            {
+                // cat==1 => Frag
+                // We do basically the same thing but photonclass=2, fill h2TruthVsReco_frag
+                int bestMatch = -1;
+                float bestDR  = 9999.0;
+                for(int ip=0; ip<nparticles; ip++){
+                    if(particle_pid[ip]!=22) continue;
+                    if(particle_photonclass[ip] != 2) continue;
+
+                    float dr = deltaR_func(cEta, particle_Eta_[ip], cPhi, particle_Phi_[ip]);
+                    if(dr>0.05) continue;
+
+                    float eTruth = particle_Pt[ip]*std::cosh(particle_Eta_[ip]);
+                    if(eTruth<1e-3) continue;
+                    float ratio = cE/eTruth;
+                    if(ratio<0.5f) continue;
+
+                    if(dr<bestDR){
+                       bestDR = dr;
+                       bestMatch = ip;
+                    }
+                }
+
+                if(bestMatch >=0){
+                   float truthIso   = particle_truth_iso_04[bestMatch];
+                   float recoIsoAll = cluster_iso_04[ic];
+                   h2TruthVsReco_frag.Fill(truthIso, recoIsoAll);
+                }
+            }
+            //-----------------------------------------------------------
 
             catCount[cat][bPur]++;
 
@@ -548,6 +678,8 @@ void analyzeJet10SlimTree()
     fIn->Close();
     // 9) Build iso-efficiency plot
     buildAndSaveIsoEfficiencyPlot_2Classes(outDir);
+    buildAndSaveTruthVsRecoIsoPlots(outDir, h2TruthVsReco_prompt, h2TruthVsReco_frag);
+
 
     // 10) Build prompt-purity plot
     {
@@ -696,8 +828,8 @@ void analyzeJet10SlimTree()
         TLatex latexMC;
         latexMC.SetNDC();
         latexMC.SetTextSize(0.03);
-        latexMC.DrawLatex(0.15,0.8, "Matching: #DeltaR<0.05, E_{reco}/E_{truth}>0.5");
-        latexMC.DrawLatex(0.15,0.73, "Overlaying 1 default + 3 new iso combos");
+        latexMC.DrawLatex(0.5,0.6, "Matching: #DeltaR<0.05, E_{reco}/E_{truth}>0.5");
+        latexMC.DrawLatex(0.5,0.53, "Overlaying 1 default + 3 new iso combos");
 
         // Save
         cPurMulti.SaveAs((outDir+"/PromptPurity_OverlayMultiIso.png").c_str());
@@ -995,21 +1127,14 @@ void analyzeJet10SlimTree()
             // Draw our single TGraph
             grFake->Draw("P SAME");
 
-            // Optionally add a legend or text
-            TLegend legFake(0.55, 0.15, 0.85, 0.35);
-            legFake.SetBorderSize(0);
-            legFake.SetFillStyle(0);
-            legFake.AddEntry(grFake, "#pi^{0}+#eta", "p");
-            legFake.Draw();
-
             // Add text describing the cuts
             TLatex latexFake;
             latexFake.SetNDC();
-            latexFake.SetTextSize(0.032);
+            latexFake.SetTextSize(0.03);
             latexFake.SetTextFont(42);
-            latexFake.DrawLatex(0.20,0.80,
+            latexFake.DrawLatex(0.2,0.2,
                 "Cuts: #DeltaR<0.05, E_{reco}/E_{truth}>0.5, iso_{All}<6, iso_{EM}<4");
-            latexFake.DrawLatex(0.20,0.74,
+            latexFake.DrawLatex(0.2,0.28,
                 "Fake Rate = fraction of (#pi^{0}+#eta) clusters passing 'prompt' ID");
 
             // Save
