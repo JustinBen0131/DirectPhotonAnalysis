@@ -1,19 +1,3 @@
-// analyze_Jet10SlimTree.cpp
-// -------------------------------------------------------------------
-// Single macro that preserves the exact functionality of the original
-// isolation-efficiency code and the prompt-photon purity measurement,
-// and ALSO categorizes each cluster into 6 categories (prompt, frag,
-// decay, pi0-led, eta-led, other) all in ONE TTree loop.
-//
-// Outputs:
-//   1) The iso-efficiency plot (unchanged),
-//   2) The prompt-photon purity plot (unchanged),
-//   3) A NEW single bar chart (pT-independent) that shows the fraction
-//      of all clusters in each of the 6 categories.
-//
-// Run it as: root -b -q analyze_Jet10SlimTree.cpp
-// -------------------------------------------------------------------
-
 #include <TFile.h>
 #include <TTree.h>
 #include <TH1F.h>
