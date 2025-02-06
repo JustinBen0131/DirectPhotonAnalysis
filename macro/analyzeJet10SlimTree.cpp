@@ -1,3 +1,19 @@
+// analyze_Jet10SlimTree.cpp
+// -------------------------------------------------------------------
+// Single macro that preserves the exact functionality of the original
+// isolation-efficiency code and the prompt-photon purity measurement,
+// and ALSO categorizes each cluster into 6 categories (prompt, frag,
+// decay, pi0-led, eta-led, other) all in ONE TTree loop.
+//
+// Outputs:
+//   1) The iso-efficiency plot (unchanged),
+//   2) The prompt-photon purity plot (unchanged),
+//   3) A NEW single bar chart (pT-independent) that shows the fraction
+//      of all clusters in each of the 6 categories.
+//
+// Run it as: root -b -q analyze_Jet10SlimTree.cpp
+// -------------------------------------------------------------------
+
 #include <TFile.h>
 #include <TTree.h>
 #include <TH1F.h>
@@ -41,7 +57,7 @@ float cluster_iso_04_emcal[kMaxClusters];
 
 int   nparticles;
 int   particle_pid[kMaxParticles];
-int   particle_photonclass[kMaxParticles]; // 1=prompt,2=frag,3=decay,4=other
+int   particle_photonclass[kMaxParticles];
 float particle_Pt[kMaxParticles];
 float particle_Eta_[kMaxParticles];
 float particle_Phi_[kMaxParticles];
@@ -68,11 +84,35 @@ static long long nPhotonsInBin[2][10];
 static std::vector<float> pTedges_purEff = {5, 7, 10, 15, 20, 30, 40, 60};
 static int nBins_pur = 0;
 static const int kMaxBinsPur = 50;
+static long long nFakeCount[6][kMaxBinsPur]; // number of clusters that pass "prompt" cuts but are cat=3,4,5
 static long long nTagAll[kMaxBinsPur];
 static long long nTagCorrect[kMaxBinsPur];
 // -- FRAGMENTATION PHOTON PURITY ARRAYS:
 static long long nTagAllFrag[kMaxBinsPur];
 static long long nTagCorrectFrag[kMaxBinsPur];
+static long long nTagAllAlt[3][kMaxBinsPur];
+static long long nTagCorrAlt[3][kMaxBinsPur];
+
+static bool passIsoCombo(float isoAll, float isoEM, int iCombo)
+{
+    // iCombo=0 => isoAll<6 only
+    // iCombo=1 => isoAll<4, isoEM<2
+    // iCombo=2 => isoAll<6, isoEM<2
+    switch(iCombo){
+      case 0: // isoAll<6 only
+        if(isoAll>6.f) return false;
+        return true; // ignoring isoEM
+      case 1: // isoAll<4, isoEM<2
+        if(isoAll>4.f) return false;
+        if(isoEM>2.f)  return false;
+        return true;
+      case 2: // isoAll<6, isoEM<2
+        if(isoAll>6.f) return false;
+        if(isoEM>2.f)  return false;
+        return true;
+    }
+    return false;
+}
 
 // -------------------------------------------------------------------
 // We'll define 6 categories for clusters:
@@ -318,12 +358,16 @@ void analyzeJet10SlimTree()
     std::memset(nTagAll,     0, sizeof(nTagAll));
     std::memset(nTagCorrect, 0, sizeof(nTagCorrect));
     
+    std::memset(nTagAllAlt,  0, sizeof(nTagAllAlt));
+    std::memset(nTagCorrAlt, 0, sizeof(nTagCorrAlt));
+    
     // Also zero out the fragmentation arrays:
     std::memset(nTagAllFrag,     0, sizeof(nTagAllFrag));
     std::memset(nTagCorrectFrag, 0, sizeof(nTagCorrectFrag));
 
     // 5) Initialize counters for the 6-category breakdown
     std::memset(catCount, 0, sizeof(catCount));
+    std::memset(nFakeCount, 0, sizeof(nFakeCount));
 
     // 6) Open input file & retrieve TTree
     TFile* fIn = TFile::Open(inputFile.c_str(),"READ");
@@ -407,17 +451,26 @@ void analyzeJet10SlimTree()
 
             // 1) Prompt purity => same logic as before
             if(bPur>=0){
-                // Tag if passes prompt-candidate cuts
-                bool passCuts = passClusterPromptCuts(isoAll, isoEM);
-                if(passCuts){
-                    nTagAll[bPur]++;
-                    // check if truly matched to prompt photon
-                    int mm= findMatchedPromptPhoton(cEta,cPhi,cE);
-                    if(mm>=0){
-                        nTagCorrect[bPur]++;
-                    }
+              bool passCuts = passClusterPromptCuts(isoAll, isoEM);
+              if(passCuts){
+                 nTagAll[bPur]++;
+                 int mm= findMatchedPromptPhoton(cEta,cPhi,cE);
+                 if(mm>=0) nTagCorrect[bPur]++;
+              }
+
+              // Now do the alt combos in the same pass
+              for(int iC=0; iC<3; iC++){
+                bool passAlt = passIsoCombo(isoAll, isoEM, iC);
+                if(!passAlt) continue;
+                nTagAllAlt[iC][bPur]++;
+                int mm2= findMatchedPromptPhoton(cEta,cPhi,cE);
+                if(mm2>=0){
+                   nTagCorrAlt[iC][bPur]++;
                 }
+              }
             }
+
+            
             // NOW do the same for "frag-candidate" clusters in the same bin
             // We'll reuse the same cluster cuts (isoAll, isoEM) or define a new pass if you want.
             if(bPur >= 0){
@@ -464,6 +517,15 @@ void analyzeJet10SlimTree()
                          <<" => cat="<<cat
                          <<" (0=prompt,1=frag,2=decay,3=pi0,4=eta,5=other)\n";
             }
+            if (bPur >= 0 && (cat == 3 || cat == 4 || cat == 5)) {
+               // This cluster is pi0-led, eta-led, or other
+               // Check if it *fakes* a "prompt candidate"
+               bool passPrompt = passClusterPromptCuts(isoAll, isoEM);
+               if (passPrompt) {
+                   nFakeCount[cat][bPur]++;
+               }
+            }
+
         } // end cluster loop
 
         // Optional summary per event
@@ -482,8 +544,8 @@ void analyzeJet10SlimTree()
             std::cout << "[INFO] Processed " << iEvt << "/" << nEntries << " events...\n";
         }
     } // end event loop
+    // Now that we've read all data from TTree, we can close the file
     fIn->Close();
-
     // 9) Build iso-efficiency plot
     buildAndSaveIsoEfficiencyPlot_2Classes(outDir);
 
@@ -541,6 +603,108 @@ void analyzeJet10SlimTree()
         std::cout<<"[INFO] Wrote Purity plot => "<< outName <<std::endl;
     }
 
+    // Build TGraphs for iC=0..2 and overlay them with your default
+    {
+        const int nCurves= 1 + 3; // 1 default + 3 alt combos
+        // index 0 => default, index 1..3 => alt combos
+
+        std::vector<TGraphErrors*> vecGr(nCurves, nullptr);
+        std::vector<TString> vecLabels{
+          "Default (isoAll<6, isoEM<4)",
+          "isoAll<6 only",
+          "isoAll<4, isoEM<2",
+          "isoAll<6, isoEM<2"
+        };
+        std::vector<Color_t>  vColor { kAzure+2, kRed+1, kGreen+2, kMagenta+1 };
+        std::vector<Style_t>  vMarker{ 20, 21, 22, 23 };
+
+        // (A) Fill TGraph for default (already in nTagAll, nTagCorrect)
+        std::vector<double> vx(nBins_pur,0.), vy(nBins_pur,0.), vey(nBins_pur,0.);
+        double maxPur=0.;
+        for(int ib=0; ib<nBins_pur; ib++){
+           double denom= double(nTagAll[ib]);
+           double num  = double(nTagCorrect[ib]);
+           double pur=0., err=0.;
+           if(denom>0.){
+              pur= num/ denom;
+              err= std::sqrt(pur*(1.-pur)/ denom);
+              if(pur> maxPur) maxPur= pur;
+           }
+           double ptMid= 0.5*( pTedges_purEff[ib] + pTedges_purEff[ib+1] );
+           vx[ib]= ptMid;
+           vy[ib]= pur;
+           vey[ib]= err;
+        }
+        TGraphErrors* grDef= new TGraphErrors(nBins_pur,&vx[0],&vy[0],nullptr,&vey[0]);
+        grDef->SetMarkerStyle(vMarker[0]);
+        grDef->SetMarkerColor(vColor[0]);
+        grDef->SetLineColor(vColor[0]);
+        grDef->SetMarkerSize(1.3);
+        vecGr[0]= grDef;
+
+        // (B) Fill TGraphs for alt combos iC=0..2
+        for(int iC=0; iC<3; iC++){
+           std::vector<double> vxA(nBins_pur,0.), vyA(nBins_pur,0.), veyA(nBins_pur,0.);
+           for(int ib=0; ib<nBins_pur; ib++){
+               double denom= double( nTagAllAlt[iC][ib] );
+               double num  = double( nTagCorrAlt[iC][ib] );
+               double pur=0., err=0.;
+               if(denom>0.){
+                   pur= num / denom;
+                   err= std::sqrt(pur*(1.-pur)/ denom);
+                   if(pur> maxPur) maxPur= pur;
+               }
+               double ptMid= 0.5*( pTedges_purEff[ib] + pTedges_purEff[ib+1] );
+               vxA[ib]= ptMid;
+               vyA[ib]= pur;
+               veyA[ib]= err;
+           }
+           TGraphErrors* grA= new TGraphErrors(nBins_pur,&vxA[0],&vyA[0],nullptr,&veyA[0]);
+           grA->SetMarkerStyle(vMarker[iC+1]);
+           grA->SetMarkerColor(vColor[iC+1]);
+           grA->SetLineColor(vColor[iC+1]);
+           grA->SetMarkerSize(1.3);
+           vecGr[iC+1]= grA;
+        }
+
+        // (C) Draw them all on one canvas
+        double yMax= (maxPur<0.01 ? 0.1 : 1.1* maxPur);
+        if(yMax>1.0) yMax=1.0;
+
+        TCanvas cPurMulti("cPurMulti","Prompt Purity Multi-Cut", 800,600);
+        cPurMulti.SetGrid();
+        TH1F* hFr2= cPurMulti.DrawFrame(pTedges_purEff.front()-0.5, 0.0,
+                                        pTedges_purEff.back()+0.5, yMax);
+        hFr2->SetXTitle("Cluster p_{T} [GeV]");
+        hFr2->SetYTitle("Prompt Photon Purity");
+        hFr2->SetTitle("Overlay: Different Iso Cuts for Prompt Purity");
+
+        for(int iG=0; iG<nCurves; iG++){
+           if(vecGr[iG]) vecGr[iG]->Draw("P SAME");
+        }
+
+        // Legend
+        TLegend legO(0.55, 0.15, 0.85, 0.45);
+        legO.SetBorderSize(0);
+        legO.SetFillStyle(0);
+        for(int iG=0; iG<nCurves; iG++){
+           if(vecGr[iG]) legO.AddEntry(vecGr[iG], vecLabels[iG], "p");
+        }
+        legO.Draw();
+
+        // Some text
+        TLatex latexMC;
+        latexMC.SetNDC();
+        latexMC.SetTextSize(0.03);
+        latexMC.DrawLatex(0.15,0.8, "Matching: #DeltaR<0.05, E_{reco}/E_{truth}>0.5");
+        latexMC.DrawLatex(0.15,0.73, "Overlaying 1 default + 3 new iso combos");
+
+        // Save
+        cPurMulti.SaveAs((outDir+"/PromptPurity_OverlayMultiIso.png").c_str());
+        std::cout<<"[INFO] Wrote overlay multi-iso purity => "
+                 << outDir << "/PromptPurity_OverlayMultiIso.png\n";
+    }
+    
     // === NOW BUILD FRAG PHOTON PURITY ===
     {
         std::vector<double> vBinC_frag(nBins_pur, 0.);
@@ -595,6 +759,7 @@ void analyzeJet10SlimTree()
         cPurFrag.SaveAs(outNameFrag.c_str());
         std::cout<<"[INFO] Wrote frag purity plot => "<< outNameFrag <<std::endl;
     }
+    
     
     // 11) Build the single bar chart for 6 categories => pT-independent
     {
@@ -704,7 +869,7 @@ void analyzeJet10SlimTree()
                                          Form("Cluster Categories: %.0f #leq p_{T} < %.0f GeV",
                                               pTedges_purEff[ib], pTedges_purEff[ib+1]),
                                          6, 0.5, 6.5);
-                hBarBin->SetYTitle("Fraction");
+                hBarBin->SetYTitle("Fraction of clusters in category to all clusters");
                 hBarBin->SetStats(0);
                 // Increase the x-axis label and title sizes:
                 hBarBin->GetXaxis()->SetLabelSize(0.05);   // Increase label size for the x-axis
@@ -759,6 +924,98 @@ void analyzeJet10SlimTree()
                 cCatBin->SaveAs(outBinName.c_str());
                 std::cout<<"[INFO] Wrote bin="<<ib<<" bar chart => "<< outBinName <<"\n";
             }
+        }
+        
+        
+        {
+            // We'll produce a single TGraph for the combined meson categories:
+            // cat=3 => pi0-led, cat=4 => eta-led.
+            // "Fake Rate" = (N_{meson passing prompt cuts}) / (N_{meson total}),
+            // where "meson" means pi0 + eta combined.
+
+            std::vector<double> vx(nBins_pur, 0.);
+            std::vector<double> vy(nBins_pur, 0.);
+            std::vector<double> vex(nBins_pur, 0.);
+            std::vector<double> vey(nBins_pur, 0.);
+
+            double maxFake = 0.0; // track maximum y-value for axis
+
+            // For each pT bin ib, sum pi0-led + eta-led
+            for(int ib=0; ib<nBins_pur; ib++){
+                // Midpoint of [pTedges_purEff[ib], pTedges_purEff[ib+1]]
+                double ptLo  = pTedges_purEff[ib];
+                double ptHi  = pTedges_purEff[ib+1];
+                double ptMid = 0.5*(ptLo + ptHi);
+
+                // Denominator = total (pi0 + eta)
+                long long denom = catCount[3][ib] + catCount[4][ib];
+                // Numerator = total passing prompt cuts from pi0 + eta
+                long long num   = nFakeCount[3][ib] + nFakeCount[4][ib];
+
+                double frate = 0.;
+                double err   = 0.;
+                if(denom > 0){
+                    frate = double(num) / double(denom);
+                    // simple binomial error
+                    err   = std::sqrt(frate*(1.-frate)/ double(denom));
+                    if(frate > maxFake) maxFake = frate;
+                }
+
+                vx[ib]  = ptMid;
+                vy[ib]  = frate;
+                vey[ib] = err;
+            }
+
+            // Build a single TGraphErrors for the combined meson fake rate
+            TGraphErrors* grFake = new TGraphErrors(nBins_pur, &vx[0], &vy[0], &vex[0], &vey[0]);
+            grFake->SetMarkerStyle(21);
+            grFake->SetMarkerSize(1.3);
+            grFake->SetMarkerColor(kOrange+1);
+            grFake->SetLineColor(kOrange+1);
+
+            // Build a canvas
+            TCanvas cFake("cFake","Combined Meson Fake Rate vs pT",800,600);
+            cFake.SetGrid();
+            gStyle->SetOptStat(0);
+
+            // Define x-range from first to last purity bin
+            double xMin = pTedges_purEff.front() - 0.5;
+            double xMax = pTedges_purEff.back()  + 0.5;
+
+            // Set y‐max, but do not exceed 1.0
+            double yMax = (maxFake < 0.01 ? 0.1 : 1.2 * maxFake);
+            if(yMax > 1.0) yMax=1.0;
+
+            // Frame histogram
+            TH1F* hFrFake = cFake.DrawFrame(xMin, 0., xMax, yMax);
+            hFrFake->SetTitle("Meson Fake Rate vs. p_{T} (#pi^{0}+#eta combined)");
+            hFrFake->SetXTitle("Cluster p_{T} [GeV]");
+            hFrFake->SetYTitle("Fake Rate = #frac{N_{(#pi^{0}+#eta) passing}}{N_{(#pi^{0}+#eta) total}}");
+
+            // Draw our single TGraph
+            grFake->Draw("P SAME");
+
+            // Optionally add a legend or text
+            TLegend legFake(0.55, 0.15, 0.85, 0.35);
+            legFake.SetBorderSize(0);
+            legFake.SetFillStyle(0);
+            legFake.AddEntry(grFake, "#pi^{0}+#eta", "p");
+            legFake.Draw();
+
+            // Add text describing the cuts
+            TLatex latexFake;
+            latexFake.SetNDC();
+            latexFake.SetTextSize(0.032);
+            latexFake.SetTextFont(42);
+            latexFake.DrawLatex(0.20,0.80,
+                "Cuts: #DeltaR<0.05, E_{reco}/E_{truth}>0.5, iso_{All}<6, iso_{EM}<4");
+            latexFake.DrawLatex(0.20,0.74,
+                "Fake Rate = fraction of (#pi^{0}+#eta) clusters passing 'prompt' ID");
+
+            // Save
+            std::string outFake = outDir + "/FakeRateVsPt_MesonsCombined.png";
+            cFake.SaveAs(outFake.c_str());
+            std::cout<<"[INFO] Wrote combined meson fake-rate plot => "<< outFake <<std::endl;
         }
     }
 
