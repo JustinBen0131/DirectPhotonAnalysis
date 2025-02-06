@@ -96,11 +96,9 @@ bool validate_root_file(const std::string &filename)
 // ------------------------------------------------------------------------
 static std::map<std::string, std::string> g_dbNameToFolderName = {
     {"MBD N&S >= 1",               "MBD_NandS_geq_1"},
-    {"Jet 6 GeV + MBD NS >=1",     "Jet_6_GeV_plus_MBD_NS_geq_1"},
     {"Jet 8 GeV + MBD NS >= 1",    "Jet_8_GeV_plus_MBD_NS_geq_1"},
     {"Jet 10 GeV + MBD NS >= 1",   "Jet_10_GeV_plus_MBD_NS_geq_1"},
     {"Jet 12 GeV + MBD NS >= 1",   "Jet_12_GeV_plus_MBD_NS_geq_1"},
-    {"Photon 2 GeV+ MBD NS >= 1",  "Photon_2_GeV_plus_MBD_NS_geq_1"},
     {"Photon 3 GeV + MBD NS >= 1", "Photon_3_GeV_plus_MBD_NS_geq_1"},
     {"Photon 4 GeV + MBD NS >= 1", "Photon_4_GeV_plus_MBD_NS_geq_1"},
     {"Photon 5 GeV + MBD NS >= 1", "Photon_5_GeV_plus_MBD_NS_geq_1"}
@@ -208,11 +206,6 @@ int scaleHistogram(TH1 *hist, double factor, const std::string &folder)
     return 0;
 }
 
-// ------------------------------------------------------------------------
-// 5) Recursively copy or scale objects from inputFile => outputFile
-//    preserving directory structure. We'll check the folder name
-//    to decide scaleFactor. If not found => copy directly
-// ------------------------------------------------------------------------
 void copyAndScaleDirectory(TDirectory *sourceDir,
                            TDirectory *destDir,
                            const std::map<std::string, double> &folderScaleMap)
@@ -244,18 +237,22 @@ void copyAndScaleDirectory(TDirectory *sourceDir,
         }
         else if (obj->InheritsFrom("TH1"))
         {
-            TH1 *h = (TH1*)obj;
-            // check if parent's directory name is in scale map
-            // to see if we want to scale
+            TH1 *h = static_cast<TH1*>(obj);
+
+            // Name of the *current* directory we are copying from:
             std::string parentName(sourceDir->GetName());
 
-            auto it = folderScaleMap.find(parentName);
-            if (it != folderScaleMap.end())
+            if (parentName != "COMBINED")
             {
-                double fac = it->second;
-                scaleHistogram(h, fac, parentName);
+                auto it = folderScaleMap.find(parentName);
+                if (it != folderScaleMap.end())
+                {
+                    double fac = it->second;
+                    scaleHistogram(h, fac, parentName);
+                }
             }
-            // write h to dest
+
+            // write histogram to the destination
             destDir->cd();
             h->Write(h->GetName(), TObject::kOverwrite);
         }
