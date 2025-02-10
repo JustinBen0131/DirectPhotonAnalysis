@@ -16,10 +16,7 @@ TRIGGERS = {
     "Photon 5 GeV + MBD NS >= 1": "Photon_5_GeV_plus_MBD_NS_geq_1.txt"
 }
 
-# -----------------------------------------------------------------------------
-# 2) Define a function that queries (live, scaled) for a single runNumber & DB trigger
-#    Emulating your C++ "getScaledownFactor" logic. Returns float prescale, or -1 if not found / scaled=0.
-# -----------------------------------------------------------------------------
+
 def get_prescale(runNumber: int, trigger_db_name: str, verbose: bool=False) -> float:
     """Query the DAQ DB for 'live' and 'scaled' for the given runNumber & trigger,
        return prescale = live/scaled if scaled>0, else -1."""
