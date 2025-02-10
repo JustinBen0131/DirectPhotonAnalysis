@@ -25,8 +25,7 @@ def get_prescale(runNumber: int, trigger_db_name: str, verbose: bool=False) -> f
             print(f"[get_prescale] Error: runNumber={runNumber} is invalid => returning -1.")
         return -1.0
 
-    # Connect to DB
-    # Adjust host/user/pass as needed. The user said "phnxro" with no password, and port=5432, DB=daq
+
     try:
         conn = psycopg2.connect(
             host="sphnxdaqdbreplica",
