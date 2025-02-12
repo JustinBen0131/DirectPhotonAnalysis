@@ -7,15 +7,6 @@
 #include <algorithm>
 #include <cctype>
 
-enum class PlotVariable {
-    Mean,
-    Sigma,
-    MassRatio,
-    Resolution,
-    SignalToBackgroundRatio
-    // Add more as needed
-};
-
 namespace ReferenceData {
     // Define first reference dataset
     const std::vector<double> referencePTGamma = {3.36, 4.39, 5.41, 6.42, 7.43, 8.44, 9.80, 11.83, 14.48};
@@ -37,7 +28,7 @@ namespace DataStructures {
     };
 
     struct CutValues {
-        float clusECore = 0;
+        float clusEnergy = 0;
         float asymmetry = 0;
         float chi = 0;
         std::string triggerName;
@@ -106,73 +97,79 @@ namespace DataStructures {
         double sigmaMax;
     };
 
-    struct IsolatedPhotonLog {
-        std::string triggerGroupName;
-        std::string triggerName;
-        float clusECore;
-        float chi;
-        float asymmetry;
-        float pTMin;
-        float pTMax;
-        float isoMin;
-        float isoMax;
-        int isolatedEntries;
-        std::string massWindowLabel;
-    };
-
     struct TotalPhotonLog {
         std::string triggerGroupName;
         std::string triggerName;
-        float clusECore;
-        float chi;
-        float asymmetry;
-        float pTMin;
-        float pTMax;
-        int totalEntries;
+        float clusEnergy = 0.f;
+        float chi       = 0.f;
+        float asymmetry = 0.f;
+        float pTMin     = -1.f;
+        float pTMax     = -1.f;
+        int totalEntries = 0;
         std::string massWindowLabel;
     };
 
     struct PtWeightingLog {
         std::string triggerGroupName;
         std::string triggerName;
-        float clusECore;
-        float chi;
-        float asymmetry;
-        float pTMin;
-        float pTMax;
-        double weightedAveragePt;
+        float clusEnergy   = 0.f;
+        float chi         = 0.f;
+        float asymmetry   = 0.f;
+        float pTMin       = -1.f;
+        float pTMax       = -1.f;
+        double weightedAveragePt = 0.0;
         std::string massWindowLabel;
     };
 
     struct IsolationData {
-        int isolatedCounts;
-        int totalCounts;
-        double ratio;
-        double error;
-        double weightedPt;
-        double binWidth;
-        double binCenter;
-        double isolatedYield;
-        double isolatedYieldError;
-        std::string massWindowLabel;
+        std::string triggerGroupName;
+        std::string triggerName;
+        
+        float clusEnergy = 0.f;
+        float chi       = 0.f;
+        float asymmetry = 0.f;
+        float pTMin     = -1.f;
+        float pTMax     = -1.f;
+        float isoMin    = 0.f;
+        float isoMax    = 0.f;
+        
+        int isolatedCounts = 0;   // # of isolated photons in this bin
+        int totalCounts    = 0;
+        double ratio  = 0.0;
+        double error  = 0.0;
+
+        double weightedPt         = 0.0;
+        double binWidth           = 0.0;
+        double binCenter          = 0.0;
+        double isolatedYield      = 0.0;
+        double isolatedYieldError = 0.0;
+
+        std::string massWindowLabel;    // "inMassWindow" or "outsideMassWindow"
+        std::string showerCutLabel;     // "withShowerShapeCuts" or "withoutShowerShapeCuts"
     };
 
+
+    // ------------------------------------
+    // The “with Pt” version used when grouping
+    // ------------------------------------
     struct IsolationDataWithPt {
-        float ptMin;
-        float ptMax;
-        double weightedPt;
-        double ratio;
-        double error;
-        double isolatedYield;
-        double isolatedYieldError;
-        float isoMin;
-        float isoMax;
+        float ptMin          = -1.f;
+        float ptMax          = -1.f;
+        double weightedPt    = 0.0;
+        double ratio         = 0.0;
+        double error         = 0.0;
+        double isolatedYield = 0.0;
+        double isolatedYieldError = 0.0;
+        float isoMin         = 0.f;
+        float isoMax         = 0.f;
         std::string triggerName;
-        IsolationData isoData; // Add this line to include isoData as a member
+
+        // The full "raw" data from CSV (includes showerCutLabel, counts, etc.)
+        IsolationData isoData;
     };
 
     struct CutCombinationData {
-        double clusECore;
+        double clusEnergy;
         double chi;
         double asymmetry;
 
@@ -185,6 +182,8 @@ namespace DataStructures {
         std::vector<double> resolutionPi0Errors;
         std::vector<double> signalToBackgroundPi0Ratios;
         std::vector<double> signalToBackgroundPi0Errors;
+        std::vector<double> pi0YieldValues;
+        std::vector<double> pi0YieldErrors;
         std::vector<std::string> triggersUsedPi0;
 
         std::vector<double> pTCentersEta;
@@ -196,6 +195,8 @@ namespace DataStructures {
         std::vector<double> resolutionEtaErrors;
         std::vector<double> signalToBackgroundEtaRatios;
         std::vector<double> signalToBackgroundEtaErrors;
+        std::vector<double> etaYieldValues;
+        std::vector<double> etaYieldErrors;
         std::vector<std::string> triggersUsedEta;
 
         std::set<std::string> triggersInData;
@@ -210,6 +211,9 @@ namespace DataStructures {
         std::map<std::string, std::vector<double>> triggerToResolutionPi0Errors;
         std::map<std::string, std::vector<double>> triggerToSignalToBackgroundPi0Ratios;
         std::map<std::string, std::vector<double>> triggerToSignalToBackgroundPi0Errors;
+        std::map<std::string, std::vector<double>> triggerToPi0YieldValues;
+        std::map<std::string, std::vector<double>> triggerToPi0YieldErrors;
+
 
         std::map<std::string, std::vector<double>> triggerToPtCentersEta;
         std::map<std::string, std::vector<double>> triggerToMeanEtaValues;
@@ -220,6 +224,8 @@ namespace DataStructures {
         std::map<std::string, std::vector<double>> triggerToResolutionEtaErrors;
         std::map<std::string, std::vector<double>> triggerToSignalToBackgroundEtaRatios;
         std::map<std::string, std::vector<double>> triggerToSignalToBackgroundEtaErrors;
+        std::map<std::string, std::vector<double>> triggerToEtaYieldValues;
+        std::map<std::string, std::vector<double>> triggerToEtaYieldErrors;
     };
 
     std::vector<std::pair<double, double>> pT_bins = {
@@ -240,10 +246,10 @@ namespace TriggerConfig {
         "Photon_3_GeV_plus_MBD_NS_geq_1",
         "Photon_4_GeV_plus_MBD_NS_geq_1",
         "Photon_5_GeV_plus_MBD_NS_geq_1",
-//        "Photon_2_GeV",
-//        "Photon_3_GeV",
-//        "Photon_4_GeV",
-//        "Photon_5_GeV"
+        "Jet_8_GeV_plus_MBD_NS_geq_1",
+        "Jet_10_GeV_plus_MBD_NS_geq_1",
+        "Jet_12_GeV_plus_MBD_NS_geq_1"
+
     };
 
     // List of Photon triggers (excluding MBD_NandS_geq_1)
@@ -251,11 +257,7 @@ namespace TriggerConfig {
         "Photon_2_GeV_plus_MBD_NS_geq_1",
         "Photon_3_GeV_plus_MBD_NS_geq_1",
         "Photon_4_GeV_plus_MBD_NS_geq_1",
-        "Photon_5_GeV_plus_MBD_NS_geq_1",
-//        "Photon_2_GeV",
-//        "Photon_3_GeV",
-//        "Photon_4_GeV",
-//        "Photon_5_GeV"
+        "Photon_5_GeV_plus_MBD_NS_geq_1"
     };
 
     // Map of triggers to colors for plotting
@@ -265,10 +267,10 @@ namespace TriggerConfig {
         {"Photon_3_GeV_plus_MBD_NS_geq_1", kBlue},
         {"Photon_4_GeV_plus_MBD_NS_geq_1", kGreen + 2},
         {"Photon_5_GeV_plus_MBD_NS_geq_1", kMagenta},
-//        {"Photon_2_GeV", kRed},
-//        {"Photon_3_GeV", kBlue},
-//        {"Photon_4_GeV", kGreen + 2},
-//        {"Photon_5_GeV", kMagenta}
+        
+        {"Jet_8_GeV_plus_MBD_NS_geq_1", kOrange - 3},
+        {"Jet_10_GeV_plus_MBD_NS_geq_1", kAzure - 4},
+        {"Jet_12_GeV_plus_MBD_NS_geq_1", kPink + 6}
     };
 
     // Map of triggers to human-readable names
@@ -278,11 +280,10 @@ namespace TriggerConfig {
         {"Photon_3_GeV_plus_MBD_NS_geq_1", "Photon 3 GeV + MBD NS #geq 1"},
         {"Photon_4_GeV_plus_MBD_NS_geq_1", "Photon 4 GeV + MBD NS #geq 1"},
         {"Photon_5_GeV_plus_MBD_NS_geq_1", "Photon 5 GeV + MBD NS #geq 1"},
-//        {"Photon_2_GeV", "Photon 2 GeV"},
-//        {"Photon_3_GeV", "Photon 3 GeV"},
-//        {"Photon_4_GeV", "Photon 4 GeV"},
-//        {"Photon_5_GeV", "Photon 5 GeV"}
-        
+        // Jet triggers:
+        {"Jet_8_GeV_plus_MBD_NS_geq_1",  "Jet 8 GeV + MBD NS #geq 1"},
+        {"Jet_10_GeV_plus_MBD_NS_geq_1", "Jet 10 GeV + MBD NS #geq 1"},
+        {"Jet_12_GeV_plus_MBD_NS_geq_1", "Jet 12 GeV + MBD NS #geq 1"}
     };
 
     const std::map<std::pair<float, float>, int> isoEtRangeColorMap = {
@@ -632,6 +633,108 @@ namespace TriggerConfig {
             8.4,   // xOffsetMin
             8.6    // xOffsetMax
         } },
+        
+        { {"MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1_Jet_12_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Jet_8_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.00,  // amplitudeEstimate
+            0.999,   // amplitudeMin
+            1.001,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            10.0,  // xOffsetEstimate
+            9.9,  // xOffsetMin
+            10.1,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1_Jet_12_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Jet_10_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.00,  // amplitudeEstimate
+            0.999,   // amplitudeMin
+            1.001,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            12.0,  // xOffsetEstimate
+            11.9,  // xOffsetMin
+            12.1,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1_Jet_12_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate", "Jet_12_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.00,  // amplitudeEstimate
+            0.999,   // amplitudeMin
+            1.001,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            14.3,  // xOffsetEstimate
+            14.2,  // xOffsetMin
+            14.4,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1", "Jet_8_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.00,  // amplitudeEstimate
+            0.999,   // amplitudeMin
+            1.001,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            10.0,  // xOffsetEstimate
+            9.9,  // xOffsetMin
+            10.1,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        { {"MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_MBD_NS_geq_1", "Jet_10_GeV_plus_MBD_NS_geq_1"}, {
+            // Common parameters
+            1.00,  // amplitudeEstimate
+            0.999,   // amplitudeMin
+            1.001,   // amplitudeMax
+            
+            // Sigmoid function parameters
+            0.52,  // slopeEstimate
+            0.51,  // slopeMin
+            0.53,  // slopeMax
+            
+            12.0,  // xOffsetEstimate
+            11.9,  // xOffsetMin
+            12.1,  // xOffsetMax
+
+            // Error function parameters
+            0.5,   // sigmaEstimate (placeholder value)
+            0.1,   // sigmaMin (placeholder value)
+            1.0    // sigmaMax (placeholder value)
+        } },
+        
         { {"", "Photon_5_GeV_plus_MBD_NS_geq_1"}, {
             1.0,   // amplitudeEstimate
             0.48,  // slopeEstimate
