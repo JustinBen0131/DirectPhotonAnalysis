@@ -641,7 +641,7 @@ void caloTreeGen::createHistos_Data() {
 //         for jet turn on curve
 //         */
 //        qaHistograms["h_leadingJetET_" + triggerName] = createHistogram("h_leadingJetET_" + triggerName, "Leading Jet E_{T}; Jet E_{T} [GeV]", 50, 0, 50);
-//        
+//
         qaHistograms["hClusterPt_" + triggerName] = createHistogram("hClusterPt_" + triggerName, "Cluster pT; Cluster pT [GeV]", 100, 0, 100);
         qaHistograms["hVtxZ_" + triggerName] = createHistogram("hVtxZ_" + triggerName, "Z-vertex Distribution; z [cm]", 100, -70, 70);
         qaHistograms["h_ET_" + triggerName] = createHistogram("h_ET_" + triggerName, "Cluster Transverse Energy [GeV]; Energy [GeV]", 100, 0, 100);
@@ -4047,9 +4047,13 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     /*
      switch to non retowered emcal -- TOWERINFO_CALIB_CEMC OR TOWERINFO_CALIB_CEMC_RETOWER
      */
-    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC"); // RETOWER MADE THE SHOWER PROFILE CLACULATION NOT WORK
-    TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
-    TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
+    //EMCAL
+    TowerInfoContainer* emcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_CEMC");
+    //IHCAL
+    TowerInfoContainer* ihcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALIN");
+    //OHCAL
+    TowerInfoContainer* ohcTowerContainer = findNode::getClass<TowerInfoContainer>(topNode, "TOWERINFO_CALIB_HCALOUT");
+    
     if (!emcTowerContainer && !ihcTowerContainer && !ohcTowerContainer) {
         std::cout << ANSI_COLOR_RED_BOLD << "No tower containers found, skipping tower processing." << ANSI_COLOR_RESET << std::endl;
         return Fun4AllReturnCodes::ABORTEVENT;  // Return if no tower containers
@@ -4264,7 +4268,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     }
     
 //    float max_jet_et = 0.0;
-//    
+//
 //    for (auto jet : *jets_r04) {
 //        Float_t jet_et = jet->get_et();
 //        if (jet_et > max_jet_et) {
@@ -4762,7 +4766,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 //            std::cerr << "Error: Histogram h_maxEnergyClus_" << firedShortName << " is null and cannot be filled." << std::endl;
 //        } else {
 //            h_leadingJetET->Fill(max_jet_et);
-//            
+//
 //            if (verbose) {
 //                std::cout << "Filled histogram h_leadingJetET" << firedShortName
 //                          << " with value: " << max_jet_et << std::endl;
@@ -4774,7 +4778,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 //        if (!checkTriggerCondition(activeTriggerBits, triggerIndex)) {
 //            continue;  // Skip if this trigger bit is not active
 //        }
-//        
+//
 //        std::string triggerName;
 //        if (activeTriggerNameMap && activeTriggerNameMap->find(triggerIndex) != activeTriggerNameMap->end()) {
 //            triggerName = activeTriggerNameMap->at(triggerIndex);
@@ -4787,7 +4791,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
 //        if (hTriggerCount) {
 //            hTriggerCount->Fill(0.5); // Fill the single bin to count the trigger occurrence
 //        }
-//        
+//
 //    }
     
     return Fun4AllReturnCodes::EVENT_OK;
