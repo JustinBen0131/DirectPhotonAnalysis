@@ -7066,6 +7066,40 @@ Double_t logisticFixedOneReparam(Double_t *x, Double_t *p)
     return 1.0 / (1.0 + TMath::Exp(-slope*(x[0] - xOffset)));
 }
 
+Double_t erfTurnOnOneReparam(Double_t *x, Double_t *p)
+{
+    // p[0] = alpha   (log of slope)
+    // p[1] = xOffset (turn-on position)
+
+    double alpha   = p[0];
+    double xOffset = p[1];
+    // slope = e^alpha  (always positive)
+    double slope   = TMath::Exp(alpha);
+
+    // erf-based sigmoid from 0 to 1:
+    // f(x) = 0.5 * (1 + erf( slope*(x - xOffset)/sqrt(2) ))
+    double arg = (x[0] - xOffset) * slope / TMath::Sqrt2();
+    return 0.5 * (1.0 + TMath::Erf(arg));
+}
+
+Double_t gumbelTurnOnOneReparam(Double_t *x, Double_t *p)
+{
+    // p[0] = alpha   (log of slope, unbounded)
+    // p[1] = xOffset (turn-on position)
+
+    double alpha    = p[0];
+    double xOffset  = p[1];
+    // slope = exp(alpha)  (always positive)
+    double slope    = TMath::Exp(alpha);
+
+    // Gumbel CDF shape from 0 to 1:
+    // f(x) = exp( - exp( - slope*(x - xOffset) ) )
+    double z   = slope * (x[0] - xOffset);
+    double val = TMath::Exp( - TMath::Exp(-z) );
+
+    return val;
+}
+
 // Tries to find a ~50% crossing of ratio, and an approximate slope from
 // how quickly the ratio goes from ~0.2 to ~0.8.
 // If it can’t find them well, it falls back on some default values.
@@ -8016,44 +8050,78 @@ void PlotCombinedHistograms(
                             // Build a single legend label (with or without the 99% info)
                             std::string finalLegendText = displayJet;
 
+                            std::string fitMethod = "gumbel"; // or "erf"
                             if (enableFits)
                             {
                                 //--------------------------------------------------------
-                                // (A) FIRST PASS: define the re-parameterized logistic
+                                // (A) FIRST PASS: create the re-parameterized function
                                 //--------------------------------------------------------
-                                TF1* broadFunc = new TF1("broadFunc", logisticFixedOneReparam, 0.0, 50.0, 2);
+                                TF1* broadFunc = nullptr;
+                                if (fitMethod == "erf")
+                                {
+                                    // Use erf
+                                    broadFunc = new TF1("broadFunc", erfTurnOnOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using erfTurnOnOneReparam for first pass\n";
+                                }
+                                else if (fitMethod == "gumbel")
+                                {
+                                    // Use gumbel
+                                    broadFunc = new TF1("broadFunc", gumbelTurnOnOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using gumbelTurnOnOneReparam for first pass\n";
+                                }
+                                else
+                                {
+                                    // Default logistic
+                                    broadFunc = new TF1("broadFunc", logisticFixedOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using logisticFixedOneReparam for first pass\n";
+                                }
+
                                 broadFunc->SetParNames("alpha", "XOffset");
                                 broadFunc->SetLineColor(kGray+2);
 
-                                // Use Minuit2, allow more calls, etc.
+                                // Minimizer options
                                 ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
                                 ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
 
-                                // Step (A1): auto‐estimate alpha, offset from data
+                                // (A1) Estimate alpha, offset from data
                                 double alphaGuess, xOffGuess;
                                 autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
 
-                                // Set those guesses
                                 broadFunc->SetParameter(0, alphaGuess);
                                 broadFunc->SetParameter(1, xOffGuess);
 
-                                // Fit (quietly) from 0..50
+                                // Fit quietly from 0..50
                                 TFitResultPtr firstRes = iterativeFit(ratioJet, broadFunc, "R S Q");
 
-                                // Extract fit results for second pass
+                                // Extract results for second pass
                                 double alphaB = broadFunc->GetParameter(0);
                                 double xOffB  = broadFunc->GetParameter(1);
 
-
                                 //--------------------------------------------------------
-                                // (C) SECOND PASS: refined fit with same function
+                                // (C) SECOND PASS: refined fit with the SAME function
                                 //--------------------------------------------------------
                                 std::string fitName = "fit_JetRatio_" + jetTrig;
-                                TF1* finalFunc = new TF1(fitName.c_str(), logisticFixedOneReparam, 0.0, 50.0, 2);
+                                TF1* finalFunc = nullptr;
+                                if (fitMethod == "erf")
+                                {
+                                    finalFunc = new TF1(fitName.c_str(), erfTurnOnOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using erfTurnOnOneReparam for second pass\n";
+                                }
+                                else if (fitMethod == "gumbel")
+                                {
+                                    finalFunc = new TF1(fitName.c_str(), gumbelTurnOnOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using gumbelTurnOnOneReparam for second pass\n";
+                                }
+                                else
+                                {
+                                    finalFunc = new TF1(fitName.c_str(), logisticFixedOneReparam, 0.0, 50.0, 2);
+                                    std::cout << "[INFO] Using logisticFixedOneReparam for second pass\n";
+                                }
+
                                 finalFunc->SetParNames("alpha", "XOffset");
                                 finalFunc->SetLineColor(color);
 
-                                // Initialize near the first pass
+                                // Initialize from first pass
                                 finalFunc->SetParameter(0, alphaB);
                                 finalFunc->SetParameter(1, xOffB);
 
@@ -8069,11 +8137,30 @@ void PlotCombinedHistograms(
                                 double alphaFinal   = finalFunc->GetParameter(0);
                                 double xOffsetFinal = finalFunc->GetParameter(1);
                                 double slopeFinal   = TMath::Exp(alphaFinal);
-                                double x95 = xOffsetFinal + TMath::Log(19.0)/slopeFinal;
+
+                                double x95 = 0.0;
+                                if (fitMethod == "erf")
+                                {
+                                    // erf => 0.95 => 0.5*(1 + erf(z)) => erf(z)=0.90 => z=ErfInverse(0.90)
+                                    x95 = xOffsetFinal + (TMath::Sqrt2()*TMath::ErfInverse(0.90))/slopeFinal;
+                                }
+                                else if (fitMethod == "gumbel")
+                                {
+                                    // Gumbel => 0.95 = exp(-exp(-z)) => exp(-z)= -ln(0.95) => z= -ln(-ln(0.95)) ~ 2.97
+                                    double z95 = 2.97; // approximate
+                                    x95 = xOffsetFinal + (z95 / slopeFinal);
+                                }
+                                else
+                                {
+                                    // logistic => 0.95 => x95 = xOff + ln(19)/slope
+                                    x95 = xOffsetFinal + TMath::Log(19.0)/slopeFinal;
+                                }
+
                                 combinationToTriggerEfficiencyPoints[combinationName][jetTrig] = x95;
 
-                                // Draw line if in range
-                                if (x95 > 0.0 && x95 < 50.0) {
+                                // Draw vertical line for x95
+                                if (x95 > 0.0 && x95 < 50.0)
+                                {
                                     TLine* verticalLine = new TLine(x95, 0.0, x95, 1.0);
                                     verticalLine->SetLineStyle(2);
                                     verticalLine->SetLineColor(color);
@@ -8084,8 +8171,7 @@ void PlotCombinedHistograms(
                                 // Append label
                                 {
                                     std::ostringstream msg;
-                                    msg << " (95% = " << std::fixed << std::setprecision(2)
-                                        << x95 << " GeV)";
+                                    msg << " (95% = " << std::fixed << std::setprecision(2) << x95 << " GeV)";
                                     finalLegendText += msg.str();
                                 }
 
@@ -8093,15 +8179,19 @@ void PlotCombinedHistograms(
                                 double chi2    = finalResult->Chi2();
                                 double ndf     = finalResult->Ndf();
                                 double chi2NDF = (ndf>0.0)? (chi2/ndf) : 0.0;
+
                                 std::cout << "\n\033[1;31m"
                                           << "============================================================\n"
-                                          << " Final Fit Results for " << jetTrig << " (Plateau=1 Sigmoid)\n"
-                                          << "============================================================\n"
+                                          << " Final Fit Results for " << jetTrig;
+                                if      (fitMethod == "erf")    std::cout << " (Erf-based Turn-On)\n";
+                                else if (fitMethod == "gumbel") std::cout << " (Gumbel-based Turn-On)\n";
+                                else                            std::cout << " (Logistic Turn-On)\n";
+                                std::cout << "============================================================\n"
                                           << "\033[0m";
+
                                 std::cout << std::setw(12) << "chi2/NDF"
-                                          << std::setw(12) << std::fixed << std::setprecision(4)
-                                          << chi2NDF << "\n";
-                                std::cout << "---------------------------------------------\n";
+                                          << std::setw(12) << std::fixed << std::setprecision(4) << chi2NDF
+                                          << "\n---------------------------------------------\n";
                                 std::cout << std::setw(12) << "Parameter"
                                           << std::setw(12) << "Value"
                                           << std::setw(15) << "Error"
@@ -8118,9 +8208,8 @@ void PlotCombinedHistograms(
                                 }
                                 std::cout << "-----------------------------------------\n\n";
 
-                                delete broadFunc; // optional
+                                delete broadFunc; // optional to free memory
                             }
-
 
 
 
