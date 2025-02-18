@@ -7056,49 +7056,56 @@ void estimateSigmoidParameters(TH1* ratioHist,
     // But you could also do a direct bin search for y>=0.95*amplitude if you prefer
 }
 
-Double_t logisticFixedOneReparam(Double_t *x, Double_t *p)
+Double_t logisticFreeAmp(Double_t *x, Double_t *p)
 {
-    // p[0] = alpha   (no explicit limits)
-    // p[1] = xOffset (no explicit limits)
-    double alpha    = p[0];
-    double xOffset  = p[1];
-    double slope    = TMath::Exp(alpha); // always > 0
-    return 1.0 / (1.0 + TMath::Exp(-slope*(x[0] - xOffset)));
+    // p[0] = amp      (asymptotic plateau)
+    // p[1] = alpha    (log of slope)
+    // p[2] = xOffset
+
+    double amp     = p[0];
+    double alpha   = p[1];
+    double xOffset = p[2];
+    double slope   = TMath::Exp(alpha); // always > 0
+
+    // logistic: amp / (1 + e^{-slope*(x - xOffset)})
+    return amp / (1.0 + TMath::Exp(-slope * (x[0] - xOffset)));
 }
 
-Double_t erfTurnOnOneReparam(Double_t *x, Double_t *p)
+Double_t erfFreeAmp(Double_t *x, Double_t *p)
 {
-    // p[0] = alpha   (log of slope)
-    // p[1] = xOffset (turn-on position)
+    // p[0] = amp
+    // p[1] = alpha  (log of slope)
+    // p[2] = xOffset
 
-    double alpha   = p[0];
-    double xOffset = p[1];
-    // slope = e^alpha  (always positive)
+    double amp     = p[0];
+    double alpha   = p[1];
+    double xOffset = p[2];
     double slope   = TMath::Exp(alpha);
 
-    // erf-based sigmoid from 0 to 1:
-    // f(x) = 0.5 * (1 + erf( slope*(x - xOffset)/sqrt(2) ))
-    double arg = (x[0] - xOffset) * slope / TMath::Sqrt2();
-    return 0.5 * (1.0 + TMath::Erf(arg));
+    // erf:  0.5 * amp * [1 + erf( slope*(x - xOffset)/sqrt(2) )]
+    double arg = slope * (x[0] - xOffset) / TMath::Sqrt2();
+    return 0.5 * amp * (1.0 + TMath::Erf(arg));
 }
 
-Double_t gumbelTurnOnOneReparam(Double_t *x, Double_t *p)
+
+Double_t gumbelFreeAmp(Double_t *x, Double_t *p)
 {
-    // p[0] = alpha   (log of slope, unbounded)
-    // p[1] = xOffset (turn-on position)
+    // p[0] = amp
+    // p[1] = alpha   (log of slope)
+    // p[2] = xOffset
 
-    double alpha    = p[0];
-    double xOffset  = p[1];
-    // slope = exp(alpha)  (always positive)
-    double slope    = TMath::Exp(alpha);
+    double amp     = p[0];
+    double alpha   = p[1];
+    double xOffset = p[2];
+    double slope   = TMath::Exp(alpha);
 
-    // Gumbel CDF shape from 0 to 1:
-    // f(x) = exp( - exp( - slope*(x - xOffset) ) )
+    // Gumbel: amp * exp( - exp( - slope*(x - xOffset) ) )
     double z   = slope * (x[0] - xOffset);
-    double val = TMath::Exp( - TMath::Exp(-z) );
-
-    return val;
+    double val = TMath::Exp(-TMath::Exp(-z));
+    return amp * val;
 }
+
+
 
 // Tries to find a ~50% crossing of ratio, and an approximate slope from
 // how quickly the ratio goes from ~0.2 to ~0.8.
@@ -7865,7 +7872,7 @@ void PlotCombinedHistograms(
                         histClone->SetLineColor(color);
                         histClone->SetLineWidth(2);
                         histClone->SetTitle(("Jet Overlay for " + combinationName).c_str());
-                        histClone->GetXaxis()->SetTitle("Jet Energy [GeV]");
+                        histClone->GetXaxis()->SetTitle("Leading Jet E_{T} [GeV]");
                         histClone->GetYaxis()->SetTitle("Prescaled Counts");
 
                         // Force the X and Y ranges
@@ -8023,7 +8030,7 @@ void PlotCombinedHistograms(
                             // 4) Set axis ranges
                             ratioJet->GetXaxis()->SetRangeUser(0.0, 50.0);
                             ratioJet->SetTitle(("Jet Turn-On => " + combinationName).c_str());
-                            ratioJet->GetXaxis()->SetTitle("Jet Energy [GeV]");
+                            ratioJet->GetXaxis()->SetTitle("Leading Jet E_{T} [GeV]");
                             ratioJet->GetYaxis()->SetTitle("Ratio to MBD");
                             ratioJet->GetYaxis()->SetRangeUser(0, 2.0);
 
@@ -8050,80 +8057,91 @@ void PlotCombinedHistograms(
                             // Build a single legend label (with or without the 99% info)
                             std::string finalLegendText = displayJet;
 
-                            std::string fitMethod = "gumbel"; // or "erf"
+                            std::string fitMethod = "gumbelAmp";
                             if (enableFits)
                             {
                                 //--------------------------------------------------------
                                 // (A) FIRST PASS: create the re-parameterized function
+                                //     with a free amplitude, in a limited range (e.g. [12..30])
                                 //--------------------------------------------------------
                                 TF1* broadFunc = nullptr;
-                                if (fitMethod == "erf")
+                                if (fitMethod == "erfAmp")
                                 {
-                                    // Use erf
-                                    broadFunc = new TF1("broadFunc", erfTurnOnOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using erfTurnOnOneReparam for first pass\n";
+                                    // Use erf with free amplitude
+                                    broadFunc = new TF1("broadFunc", erfFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using erfFreeAmp in [12,30] for first pass\n";
                                 }
-                                else if (fitMethod == "gumbel")
+                                else if (fitMethod == "gumbelAmp")
                                 {
-                                    // Use gumbel
-                                    broadFunc = new TF1("broadFunc", gumbelTurnOnOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using gumbelTurnOnOneReparam for first pass\n";
+                                    // Use gumbel with free amplitude
+                                    broadFunc = new TF1("broadFunc", gumbelFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using gumbelFreeAmp in [12,30] for first pass\n";
                                 }
                                 else
                                 {
-                                    // Default logistic
-                                    broadFunc = new TF1("broadFunc", logisticFixedOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using logisticFixedOneReparam for first pass\n";
+                                    // Default => logistic with free amplitude
+                                    broadFunc = new TF1("broadFunc", logisticFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using logisticFreeAmp in [12,30] for first pass\n";
                                 }
 
-                                broadFunc->SetParNames("alpha", "XOffset");
+                                // Name the parameters as [Amp, alpha, xOffset]
+                                // p[0] => amplitude, p[1] => alpha, p[2] => offset
+                                broadFunc->SetParNames("Amp", "alpha", "XOffset");
                                 broadFunc->SetLineColor(kGray+2);
 
                                 // Minimizer options
                                 ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
                                 ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
 
-                                // (A1) Estimate alpha, offset from data
+                                // (A1) Estimate slope & offset from data
                                 double alphaGuess, xOffGuess;
                                 autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
 
-                                broadFunc->SetParameter(0, alphaGuess);
-                                broadFunc->SetParameter(1, xOffGuess);
+                                // For amplitude, we pick an initial guess (e.g. 1.0)
+                                double ampGuess = 1.0;
 
-                                // Fit quietly from 0..50
+                                // Set initial guesses
+                                broadFunc->SetParameter(0, ampGuess);    // Amp
+                                broadFunc->SetParameter(1, alphaGuess);  // alpha
+                                broadFunc->SetParameter(2, xOffGuess);   // XOffset
+
+                                // (A2) Fit quietly from 12..30
+                                // "R" -> respect range, "S"->store result, "Q"->quiet
                                 TFitResultPtr firstRes = iterativeFit(ratioJet, broadFunc, "R S Q");
 
-                                // Extract results for second pass
-                                double alphaB = broadFunc->GetParameter(0);
-                                double xOffB  = broadFunc->GetParameter(1);
+                                // Extract first-pass results
+                                double ampB    = broadFunc->GetParameter(0);
+                                double alphaB  = broadFunc->GetParameter(1);
+                                double xOffB   = broadFunc->GetParameter(2);
 
                                 //--------------------------------------------------------
                                 // (C) SECOND PASS: refined fit with the SAME function
                                 //--------------------------------------------------------
                                 std::string fitName = "fit_JetRatio_" + jetTrig;
                                 TF1* finalFunc = nullptr;
-                                if (fitMethod == "erf")
+                                if (fitMethod == "erfAmp")
                                 {
-                                    finalFunc = new TF1(fitName.c_str(), erfTurnOnOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using erfTurnOnOneReparam for second pass\n";
+                                    finalFunc = new TF1(fitName.c_str(), erfFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using erfFreeAmp for second pass\n";
                                 }
-                                else if (fitMethod == "gumbel")
+                                else if (fitMethod == "gumbelAmp")
                                 {
-                                    finalFunc = new TF1(fitName.c_str(), gumbelTurnOnOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using gumbelTurnOnOneReparam for second pass\n";
+                                    finalFunc = new TF1(fitName.c_str(), gumbelFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using gumbelFreeAmp for second pass\n";
                                 }
                                 else
                                 {
-                                    finalFunc = new TF1(fitName.c_str(), logisticFixedOneReparam, 0.0, 50.0, 2);
-                                    std::cout << "[INFO] Using logisticFixedOneReparam for second pass\n";
+                                    finalFunc = new TF1(fitName.c_str(), logisticFreeAmp, 12.0, 30.0, 3);
+                                    std::cout << "[INFO] Using logisticFreeAmp for second pass\n";
                                 }
 
-                                finalFunc->SetParNames("alpha", "XOffset");
+                                finalFunc->SetParNames("Amp", "alpha", "XOffset");
                                 finalFunc->SetLineColor(color);
 
-                                // Initialize from first pass
-                                finalFunc->SetParameter(0, alphaB);
-                                finalFunc->SetParameter(1, xOffB);
+                                // Initialize near the first pass
+                                finalFunc->SetParameter(0, ampB);
+                                finalFunc->SetParameter(1, alphaB);
+                                finalFunc->SetParameter(2, xOffB);
 
                                 // Another iterative fit
                                 TFitResultPtr finalResult = iterativeFit(ratioJet, finalFunc, "R S");
@@ -8133,35 +8151,50 @@ void PlotCombinedHistograms(
 
                                 //--------------------------------------------------------
                                 // (D) Evaluate 95% turn-on crossing
+                                //     *assuming 95% of the fitted amplitude*
                                 //--------------------------------------------------------
-                                double alphaFinal   = finalFunc->GetParameter(0);
-                                double xOffsetFinal = finalFunc->GetParameter(1);
+                                double ampFinal     = finalFunc->GetParameter(0);
+                                double alphaFinal   = finalFunc->GetParameter(1);
+                                double xOffsetFinal = finalFunc->GetParameter(2);
                                 double slopeFinal   = TMath::Exp(alphaFinal);
 
+                                // We want x s.t. f(x) = 0.95 * ampFinal
+                                // The formula depends on logistic vs erf vs gumbel
                                 double x95 = 0.0;
-                                if (fitMethod == "erf")
+
+                                if (fitMethod == "erfAmp")
                                 {
-                                    // erf => 0.95 => 0.5*(1 + erf(z)) => erf(z)=0.90 => z=ErfInverse(0.90)
-                                    x95 = xOffsetFinal + (TMath::Sqrt2()*TMath::ErfInverse(0.90))/slopeFinal;
+                                    // 0.5*amp * [1 + erf(...)] = 0.95 * amp => => 0.5*[1 + erf(...)] = 0.95 => erf(...)=0.90, etc.
+                                    double target = 0.95; // fraction of amp
+                                    double fractionNeeded = (2.0 * target) - 1.0; // solves 0.5*amp*(1+erf)=target*amp => (1+erf)=2*target => erf=2*target -1
+                                    double zVal   = TMath::ErfInverse(fractionNeeded);
+                                    // Then slope*(x - xOffset)/sqrt(2) = zVal => x = xOffset + sqrt(2)*zVal/slope
+                                    x95 = xOffsetFinal + (TMath::Sqrt2() * zVal / slopeFinal);
                                 }
-                                else if (fitMethod == "gumbel")
+                                else if (fitMethod == "gumbelAmp")
                                 {
-                                    // Gumbel => 0.95 = exp(-exp(-z)) => exp(-z)= -ln(0.95) => z= -ln(-ln(0.95)) ~ 2.97
-                                    double z95 = 2.97; // approximate
-                                    x95 = xOffsetFinal + (z95 / slopeFinal);
+                                    // Gumbel => amp*exp[-exp(-z)] = 0.95*amp => exp[-exp(-z)] = 0.95 => -exp(-z)=ln(0.95) => exp(-z)= -ln(0.95)
+                                    // z=2.97, but that was for 0.95 exactly. We want 0.95 fraction => same approach though => z=2.97
+                                    double target = 0.95;
+                                    double lnTerm = -TMath::Log(target); // e.g. 0.051293 if target=0.95
+                                    double zVal   = -TMath::Log(lnTerm); // ~2.97
+                                    x95 = xOffsetFinal + (zVal / slopeFinal);
                                 }
                                 else
                                 {
-                                    // logistic => 0.95 => x95 = xOff + ln(19)/slope
-                                    x95 = xOffsetFinal + TMath::Log(19.0)/slopeFinal;
+                                    // logistic => amp / (1 + e^{-slope*(x - xOff)})=0.95*amp => => 1+ e^{-...}=1/0.95 => e^{-...}=(1/0.95)-1=0.05263 => ...
+                                    double fraction  = 0.95;
+                                    double val       = (1.0/fraction) - 1.0; // e.g. ~0.05263 if fraction=0.95
+                                    double exponent  = -TMath::Log(val);
+                                    x95 = xOffsetFinal + (exponent / slopeFinal);
                                 }
 
                                 combinationToTriggerEfficiencyPoints[combinationName][jetTrig] = x95;
 
-                                // Draw vertical line for x95
-                                if (x95 > 0.0 && x95 < 50.0)
+                                // Draw vertical line if in range
+                                if (x95 > 12.0 && x95 < 30.0)
                                 {
-                                    TLine* verticalLine = new TLine(x95, 0.0, x95, 1.0);
+                                    TLine* verticalLine = new TLine(x95, 0.0, x95, ampFinal);
                                     verticalLine->SetLineStyle(2);
                                     verticalLine->SetLineColor(color);
                                     verticalLine->SetLineWidth(2);
@@ -8176,19 +8209,15 @@ void PlotCombinedHistograms(
                                 }
 
                                 // Print final results
-                                double chi2    = finalResult->Chi2();
-                                double ndf     = finalResult->Ndf();
-                                double chi2NDF = (ndf>0.0)? (chi2/ndf) : 0.0;
+                                double chi2   = finalResult->Chi2();
+                                double ndf    = finalResult->Ndf();
+                                double chi2NDF= (ndf>0.0)? (chi2/ndf) : 0.0;
 
                                 std::cout << "\n\033[1;31m"
                                           << "============================================================\n"
-                                          << " Final Fit Results for " << jetTrig;
-                                if      (fitMethod == "erf")    std::cout << " (Erf-based Turn-On)\n";
-                                else if (fitMethod == "gumbel") std::cout << " (Gumbel-based Turn-On)\n";
-                                else                            std::cout << " (Logistic Turn-On)\n";
-                                std::cout << "============================================================\n"
+                                          << " Final Fit Results for " << jetTrig << "  (free-amp turn-on)\n"
+                                          << "============================================================\n"
                                           << "\033[0m";
-
                                 std::cout << std::setw(12) << "chi2/NDF"
                                           << std::setw(12) << std::fixed << std::setprecision(4) << chi2NDF
                                           << "\n---------------------------------------------\n";
@@ -8208,7 +8237,7 @@ void PlotCombinedHistograms(
                                 }
                                 std::cout << "-----------------------------------------\n\n";
 
-                                delete broadFunc; // optional to free memory
+                                delete broadFunc; // optional
                             }
 
 
@@ -8743,6 +8772,20 @@ void ProcessAllIsolationEnergies(
     }
 }
 
+#include <TFile.h>
+#include <TTree.h>
+#include <TKey.h>
+#include <TDirectory.h>
+#include <TCanvas.h>
+#include <TLegend.h>
+#include <TH1.h>
+#include <TSystem.h>
+#include <TList.h>
+#include <iostream>
+#include <map>
+#include <vector>
+#include <string>
+#include <algorithm>
 
 //----------------------------------------------------------------------------
 // Helper function that returns the MC expression for a given "shower shape base".
