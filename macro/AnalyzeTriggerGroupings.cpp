@@ -8743,20 +8743,6 @@ void ProcessAllIsolationEnergies(
     }
 }
 
-#include <TFile.h>
-#include <TTree.h>
-#include <TKey.h>
-#include <TDirectory.h>
-#include <TCanvas.h>
-#include <TLegend.h>
-#include <TH1.h>
-#include <TSystem.h>
-#include <TList.h>
-#include <iostream>
-#include <map>
-#include <vector>
-#include <string>
-#include <algorithm>
 
 //----------------------------------------------------------------------------
 // Helper function that returns the MC expression for a given "shower shape base".
