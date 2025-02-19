@@ -6999,62 +6999,7 @@ void PlotRunByRunHistograms(
     }
 }
 
-void estimateSigmoidParameters(TH1* ratioHist,
-                               double& amplitude,
-                               double& xOffset,
-                               double& slope,
-                               double& x95Guess)
-{
-    if (!ratioHist) return;
 
-    // (1) Estimate amplitude from the highest bin content
-    amplitude = ratioHist->GetMaximum();
-    if (amplitude <= 0.0) amplitude = 1.0; // fallback to something non-zero
-
-    // (2) Identify xOffset by looking for the ~50% amplitude crossing
-    const double halfMax = 0.5 * amplitude;
-    const int nBins      = ratioHist->GetNbinsX();
-    xOffset = 1.0; // fallback
-    for (int i = 1; i <= nBins; ++i)
-    {
-        double y = ratioHist->GetBinContent(i);
-        if (y >= halfMax)
-        {
-            xOffset = ratioHist->GetBinCenter(i);
-            break;
-        }
-    }
-
-    // (3) Estimate slope from region between 20% and 80% of amplitude
-    const double y20 = 0.2 * amplitude;
-    const double y80 = 0.8 * amplitude;
-    double x20 = 0.0, x80 = 0.0;
-    bool found20 = false, found80 = false;
-    for (int i = 1; i <= nBins; ++i)
-    {
-        double y = ratioHist->GetBinContent(i);
-        if (!found20 && y >= y20)
-        {
-            x20     = ratioHist->GetBinCenter(i);
-            found20 = true;
-        }
-        if (!found80 && y >= y80)
-        {
-            x80     = ratioHist->GetBinCenter(i);
-            found80 = true;
-        }
-        if (found20 && found80) break;
-    }
-    double deltaX = x80 - x20;
-    if (deltaX < 1e-9) deltaX = 1.0;  // fallback
-    slope = 4.0 / deltaX;  // rough logistic scale
-
-    // (4) Optional: guess the 95% crossing by scanning for 0.95*amplitude
-    //    This is just a "data-based" guess, not used in the function but
-    //    we can pass it to the caller for a refined xOffset range if needed.
-    x95Guess = xOffset + std::log(95.0) / slope;  // logistic approximation
-    // But you could also do a direct bin search for y>=0.95*amplitude if you prefer
-}
 
 Double_t logisticFreeAmp(Double_t *x, Double_t *p)
 {
@@ -7070,6 +7015,20 @@ Double_t logisticFreeAmp(Double_t *x, Double_t *p)
     // logistic: amp / (1 + e^{-slope*(x - xOffset)})
     return amp / (1.0 + TMath::Exp(-slope * (x[0] - xOffset)));
 }
+
+Double_t logistic4Param(Double_t *x, Double_t *p)
+{
+    double low     = p[0];
+    double high    = p[1];
+    double alpha   = p[2];        // log(slope)
+    double xOffset = p[3];
+    double slope   = TMath::Exp(alpha);
+    // Now the logistic has two asymptotes:
+    //    as x -> -∞, f(x) -> low
+    //    as x -> +∞, f(x) -> high
+    return low + (high - low) / (1.0 + TMath::Exp(-slope * (x[0] - xOffset)));
+}
+
 
 Double_t erfFreeAmp(Double_t *x, Double_t *p)
 {
@@ -7088,6 +7047,27 @@ Double_t erfFreeAmp(Double_t *x, Double_t *p)
 }
 
 
+Double_t erf4Param(Double_t *x, Double_t *p)
+{
+    // p[0] = baseline
+    // p[1] = scale   (the height of the turn-on above the baseline)
+    // p[2] = alpha   (log(slope))
+    // p[3] = xOffset
+
+    double base    = p[0];
+    double height  = p[1];
+    double alpha   = p[2];
+    double xOffset = p[3];
+    double slope   = TMath::Exp(alpha);
+
+    // f(x) = baseline + height * 0.5 [1 + erf(...)]
+    double arg = slope * (x[0] - xOffset) / TMath::Sqrt2();
+    double erfTerm = 0.5 * (1.0 + TMath::Erf(arg));
+    return base + height * erfTerm;
+}
+
+
+
 Double_t gumbelFreeAmp(Double_t *x, Double_t *p)
 {
     // p[0] = amp
@@ -7103,6 +7083,26 @@ Double_t gumbelFreeAmp(Double_t *x, Double_t *p)
     double z   = slope * (x[0] - xOffset);
     double val = TMath::Exp(-TMath::Exp(-z));
     return amp * val;
+}
+
+
+Double_t gumbel4Param(Double_t *x, Double_t *p)
+{
+    // p[0] = baseline
+    // p[1] = scale
+    // p[2] = alpha   (log(slope))
+    // p[3] = xOffset
+
+    double base    = p[0];
+    double scale   = p[1];
+    double alpha   = p[2];
+    double xOffset = p[3];
+    double slope   = TMath::Exp(alpha);
+
+    // f(x) = base + scale * exp( - exp( -slope*(x - xOffset) ) )
+    double z   = slope * (x[0] - xOffset);
+    double val = TMath::Exp(-TMath::Exp(-z));
+    return base + scale * val;
 }
 
 
@@ -7160,6 +7160,532 @@ TFitResultPtr iterativeFit(TH1* hist, TF1* func, const char* fitOpts,
     }
     return res;
 }
+
+
+//void fitComparison3in1_2row(TH1* ratioJet,
+//                            const std::string& jetTrig,
+//                            const std::string& combinationName,
+//                            Color_t color,
+//                            const std::string& plotDirectory)
+//{
+//    if (!ratioJet) {
+//        std::cerr << "[WARN] ratioJet is null!\n";
+//        return;
+//    }
+//
+//    // We have 3 methods (logistic, erf, gumbel).
+//    // We'll store their results for printing in the bottom row.
+//    const int nMethods = 3;
+//    std::vector<std::string> methodList = {
+//        "logisticFreeAmp",
+//        "erfFreeAmp",
+//        "gumbelFreeAmp"
+//    };
+//    std::map<std::string, std::string> methodTitle = {
+//        {"logisticFreeAmp","Logistic"},
+//        {"erfFreeAmp",     "Erf"},
+//        {"gumbelFreeAmp",  "Gumbel"}
+//    };
+//
+//    // Container to store final numeric info for each method
+//    struct FitResults {
+//        double chi2NDF;
+//        double x95;
+//        double amp;
+//        double alpha;
+//        double xOff;
+//        double ampErr;
+//        double alphaErr;
+//        double xOffErr;
+//    };
+//    std::vector<FitResults> results(nMethods);
+//
+//    // Make a canvas with 3 columns × 2 rows
+//    TCanvas* cFit = new TCanvas("cFit",
+//                                "Comparison (two-row) for logistic/erf/gumbel",
+//                                1200, 600);
+//    cFit->Divide(3, 2);
+//
+//    /////////////////////////////////////////////////////////////////////////////
+//    // (A) Top row: Do the fits + draw each method in separate subpads
+//    /////////////////////////////////////////////////////////////////////////////
+//    for (int i = 0; i < nMethods; i++)
+//    {
+//        cFit->cd(i + 1);
+//        gPad->SetGrid();
+//
+//        const std::string& fitMethod = methodList[i];
+//
+//        // 1) Create the TF1 for this method
+//        TF1* finalFunc = nullptr;
+//        if      (fitMethod == "logisticFreeAmp") {
+//            finalFunc = new TF1("finalFunc_logistic", logisticFreeAmp, 12., 30., 3);
+//        }
+//        else if (fitMethod == "erfFreeAmp") {
+//            finalFunc = new TF1("finalFunc_erf", erfFreeAmp, 12., 30., 3);
+//        }
+//        else {
+//            finalFunc = new TF1("finalFunc_gumbel", gumbelFreeAmp, 12., 30., 3);
+//        }
+//        finalFunc->SetParNames("Amp","alpha","XOffset");
+//        finalFunc->SetLineColor(color);
+//        finalFunc->SetLineWidth(3);
+//
+//        // Minimizer options
+//        ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
+//        ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
+//
+//        // 2) Start with auto‐estimate
+//        double alphaGuess = -0.7;
+//        double xOffGuess  = 10.0;
+//        autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
+//
+//        finalFunc->SetParameter(0, 1.0);         // Amp
+//        finalFunc->SetParameter(1, alphaGuess);  // alpha
+//        finalFunc->SetParameter(2, xOffGuess);   // xOffset
+//
+//        // Fit
+//        TFitResultPtr fitRes = iterativeFit(ratioJet, finalFunc, "R S Q");
+//
+//        // Extract the final parameters
+//        double ampF   = finalFunc->GetParameter(0);
+//        double alphaF = finalFunc->GetParameter(1);
+//        double xOffF  = finalFunc->GetParameter(2);
+//        double slopeF = TMath::Exp(alphaF);
+//
+//        // Draw ratio & final curve
+//        ratioJet->SetMarkerStyle(20);
+//        ratioJet->SetMarkerSize(0.8);
+//        ratioJet->Draw("E1");
+//        ratioJet->GetYaxis()->SetRangeUser(0, 2.0);
+//
+//        finalFunc->Draw("SAME");
+//
+//        // Dashed line at y=1
+//        double xMin = ratioJet->GetXaxis()->GetXmin();
+//        double xMax = ratioJet->GetXaxis()->GetXmax();
+//        TLine* horizontalLine = new TLine(xMin, 1.0, xMax, 1.0);
+//        horizontalLine->SetLineStyle(2);
+//        horizontalLine->SetLineColor(kBlack);
+//        horizontalLine->Draw("SAME");
+//
+//        // 3) Evaluate x95 (95% of amplitude)
+//        double x95 = 0.0;
+//        if (fitMethod == "erfFreeAmp") {
+//            double fracNeeded = 2.0 * 0.95 - 1.0;  // => 0.90
+//            double zVal = TMath::ErfInverse(fracNeeded);
+//            x95 = xOffF + (TMath::Sqrt2() * zVal / slopeF);
+//        }
+//        else if (fitMethod == "gumbelFreeAmp") {
+//            x95 = xOffF + (2.97 / slopeF);
+//        }
+//        else { // logistic
+//            double val = (1.0 / 0.95) - 1.0;
+//            double exponent = -TMath::Log(val);
+//            x95 = xOffF + exponent / slopeF;
+//        }
+//
+//        // Optional vertical line at x95
+//        if (x95 > 12. && x95 < 30.) {
+//            TLine* verticalLine = new TLine(x95, 0.0, x95, ampF);
+//            verticalLine->SetLineStyle(2);
+//            verticalLine->SetLineColor(color);
+//            verticalLine->SetLineWidth(2);
+//            verticalLine->Draw("SAME");
+//        }
+//
+//        // 4) Store numeric results
+//        double chi2 = fitRes->Chi2();
+//        double ndf  = fitRes->Ndf();
+//        double chi2NDF = (ndf > 0.) ? (chi2 / ndf) : 0.0;
+//
+//        results[i].chi2NDF  = chi2NDF;
+//        results[i].x95      = x95;
+//        results[i].amp      = ampF;
+//        results[i].alpha    = alphaF;
+//        results[i].xOff     = xOffF;
+//        results[i].ampErr   = fitRes->ParError(0);
+//        results[i].alphaErr = fitRes->ParError(1);
+//        results[i].xOffErr  = fitRes->ParError(2);
+//
+//        delete finalFunc; // optional
+//    }
+//
+//    /////////////////////////////////////////////////////////////////////////////
+//    // (B) Bottom row: textual “table” with bigger bold method titles,
+//    //     bold labels, truncated x95 => 1 decimal,
+//    //     AND the exact formulas in larger LaTeX text.
+//    /////////////////////////////////////////////////////////////////////////////
+//    for (int i = 0; i < nMethods; i++)
+//    {
+//        cFit->cd(i + 4); // second row => pads 4..6
+//        gPad->Clear();
+//        gPad->SetFillColor(0);
+//
+//        TLatex lat;
+//        lat.SetNDC(true);
+//
+//        // (B1) Method title, bigger & bold
+//        lat.SetTextSize(0.057); // slightly larger for the method name
+//        lat.SetTextAlign(13);
+//        lat.DrawLatex(0.12, 0.80,
+//            Form("#bf{%s}", methodTitle[ methodList[i] ].c_str()));
+//
+//        // (B2) Stats in a slightly smaller font
+//        lat.SetTextSize(0.047);
+//        double yPos = 0.64;
+//        double xPos = 0.12;
+//
+//        // chi²/NDF and x95
+//        std::ostringstream line1;
+//        line1 << "#bf{#chi^{2}/NDF} = "
+//              << std::fixed << std::setprecision(3) << results[i].chi2NDF
+//              << ",  #bf{x_{95}} = "
+//              << std::fixed << std::setprecision(1) << results[i].x95
+//              << " GeV";
+//        lat.DrawLatex(xPos, yPos, line1.str().c_str());
+//        yPos -= 0.14;
+//
+//        // Amp ± error
+//        std::ostringstream line2;
+//        line2 << "#bf{Amp} = "
+//              << std::fixed << std::setprecision(3) << results[i].amp
+//              << " #pm " << std::setprecision(3) << results[i].ampErr;
+//        lat.DrawLatex(xPos, yPos, line2.str().c_str());
+//        yPos -= 0.11;
+//
+//        // alpha ± error
+//        std::ostringstream line3;
+//        line3 << "#bf{#alpha} = "
+//              << std::fixed << std::setprecision(3) << results[i].alpha
+//              << " #pm " << std::setprecision(3) << results[i].alphaErr;
+//        lat.DrawLatex(xPos, yPos, line3.str().c_str());
+//        yPos -= 0.11;
+//
+//        // xOff ± error
+//        std::ostringstream line4;
+//        line4 << "#bf{xOff} = "
+//              << std::fixed << std::setprecision(3) << results[i].xOff
+//              << " #pm " << std::setprecision(3) << results[i].xOffErr
+//              << " GeV";
+//        lat.DrawLatex(xPos, yPos, line4.str().c_str());
+//        yPos -= 0.16;
+//    }
+//
+//    // Finally, save to file
+//    cFit->cd();
+//    cFit->Update();
+//    std::string outName = plotDirectory + "/Comparison3in1_Tabulated_" + jetTrig + ".png";
+//    cFit->SaveAs(outName.c_str());
+//
+//    delete cFit;
+//}
+void fitComparison6in1_4row(TH1* ratioJet,
+                            const std::string& jetTrig,
+                            const std::string& combinationName,
+                            Color_t color,
+                            const std::string& plotDirectory)
+{
+    if (!ratioJet) {
+        std::cerr << "[WARN] ratioJet is null!\n";
+        return;
+    }
+
+    // 6 methods total
+    std::vector<std::string> methodList = {
+        "logisticFreeAmp",  // 3p
+        "erfFreeAmp",       // 3p
+        "gumbelFreeAmp",    // 3p
+        "logistic4Param",   // 4p
+        "erf4Param",        // 4p
+        "gumbel4Param"      // 4p
+    };
+
+    // Display names
+    std::map<std::string, std::string> methodTitle = {
+        {"logisticFreeAmp", "Logistic (3p)"},
+        {"erfFreeAmp",      "Erf (3p)"},
+        {"gumbelFreeAmp",   "Gumbel (3p)"},
+        {"logistic4Param",  "Logistic (4p)"},
+        {"erf4Param",       "Erf (4p)"},
+        {"gumbel4Param",    "Gumbel (4p)"}
+    };
+
+    // Parameter names
+    std::map<std::string, std::vector<std::string>> paramLabels = {
+        {"logisticFreeAmp", {"Amplitude", "Alpha (log slope)", "Offset"}},
+        {"erfFreeAmp",      {"Amplitude", "Alpha (log slope)", "Offset"}},
+        {"gumbelFreeAmp",   {"Amplitude", "Alpha (log slope)", "Offset"}},
+
+        {"logistic4Param",  {"Low Plateau", "High Plateau", "Alpha (log slope)", "Offset"}},
+        {"erf4Param",       {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}},
+        {"gumbel4Param",    {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}}
+    };
+
+    // Results container
+    struct FitResults {
+        double chi2NDF;
+        double x95;
+        std::vector<double> par;
+        std::vector<double> parErr;
+    };
+
+    const int nMethods = (int)methodList.size();
+    std::vector<FitResults> results(nMethods);
+
+    // Fit range
+    double fitXmin = 11.0;
+    double fitXmax = 22.0;
+
+    // Create a 3×4 canvas (two rows of plots + two rows of stats)
+    TCanvas* cFit = new TCanvas("cFit",
+                                "Comparison (3p & 4p logistic/erf/gumbel)",
+                                1600, 1200);
+    cFit->Divide(3, 4);
+
+    //--------------------------------------------------------------------------
+    // (A) Top rows: do the 6 fits, storing the numeric results
+    //--------------------------------------------------------------------------
+    for (int i = 0; i < nMethods; i++)
+    {
+        int padIndex = i + 1; // pad 1..6
+        cFit->cd(padIndex);
+        gPad->SetGrid();
+
+        const std::string& fitMethod = methodList[i];
+        bool is4p = (fitMethod.find("4Param") != std::string::npos);
+        int nPars = (is4p ? 4 : 3);
+
+        // Build a TF1 for the correct function
+        TF1* finalFunc = nullptr;
+        if      (fitMethod == "logisticFreeAmp")
+            finalFunc = new TF1("finalFunc_log3p", logisticFreeAmp,
+                                fitXmin, fitXmax, nPars);
+        else if (fitMethod == "erfFreeAmp")
+            finalFunc = new TF1("finalFunc_erf3p", erfFreeAmp,
+                                fitXmin, fitXmax, nPars);
+        else if (fitMethod == "gumbelFreeAmp")
+            finalFunc = new TF1("finalFunc_gum3p", gumbelFreeAmp,
+                                fitXmin, fitXmax, nPars);
+        else if (fitMethod == "logistic4Param")
+            finalFunc = new TF1("finalFunc_log4p", logistic4Param,
+                                fitXmin, fitXmax, nPars);
+        else if (fitMethod == "erf4Param")
+            finalFunc = new TF1("finalFunc_erf4p", erf4Param,
+                                fitXmin, fitXmax, nPars);
+        else
+            finalFunc = new TF1("finalFunc_gum4p", gumbel4Param,
+                                fitXmin, fitXmax, nPars);
+
+        // Assign parameter names
+        for (int ip=0; ip<nPars; ip++) {
+            finalFunc->SetParName(ip, paramLabels[fitMethod][ip].c_str());
+        }
+        finalFunc->SetLineColor(color);
+        finalFunc->SetLineWidth(3);
+
+        // Minimizer config
+        ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
+        ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
+
+        // Auto-estimate slope/offset
+        double alphaGuess = -0.7;
+        double xOffGuess  = 10.0;
+        autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
+
+        // Initialize param
+        if (!is4p) {
+            // 3-parameter
+            finalFunc->SetParameter(0, 1.0);
+            finalFunc->SetParameter(1, alphaGuess);
+            finalFunc->SetParameter(2, xOffGuess);
+        }
+        else {
+            // 4-parameter
+            if (fitMethod == "logistic4Param") {
+                finalFunc->SetParameter(0, 0.0); // Low
+                finalFunc->SetParameter(1, 1.0); // High
+            }
+            else {
+                finalFunc->SetParameter(0, 0.0); // Baseline
+                finalFunc->SetParameter(1, 1.0); // Scale
+            }
+            finalFunc->SetParameter(2, alphaGuess);
+            finalFunc->SetParameter(3, xOffGuess);
+        }
+
+        // Fit
+        TFitResultPtr fitRes = iterativeFit(ratioJet, finalFunc, "R S Q");
+
+        // Retrieve final param & errors
+        std::vector<double> pars(nPars, 0.);
+        std::vector<double> errs(nPars, 0.);
+        for (int ip=0; ip<nPars; ip++) {
+            pars[ip] = finalFunc->GetParameter(ip);
+            errs[ip] = finalFunc->GetParError(ip);
+        }
+
+        // Draw data + fit curve
+        ratioJet->SetMarkerStyle(20);
+        ratioJet->SetMarkerSize(0.9);
+        ratioJet->Draw("E1");
+        ratioJet->GetYaxis()->SetRangeUser(0., 2.);
+        finalFunc->Draw("SAME");
+
+        // Dashed line at y=1
+        {
+            double hMin = ratioJet->GetXaxis()->GetXmin();
+            double hMax = ratioJet->GetXaxis()->GetXmax();
+            TLine* hLine = new TLine(hMin, 1.0, hMax, 1.0);
+            hLine->SetLineStyle(2);
+            hLine->SetLineColor(kBlack);
+            hLine->Draw("SAME");
+        }
+
+        // Compute x95 for each shape
+        double x95 = 0.;
+        if (fitMethod == "logisticFreeAmp") {
+            // 3p logistic => Amp / (1 + exp(-slope*(x - xOff))) => 95% => ...
+            double slopeF = TMath::Exp(pars[1]);
+            double val    = (1./0.95) - 1.;
+            double exponent = -TMath::Log(val);
+            x95 = pars[2] + exponent/slopeF;
+        }
+        else if (fitMethod == "erfFreeAmp") {
+            // 3p erf => 0.5 * Amp [1 + erf(...)]
+            double slopeF = TMath::Exp(pars[1]);
+            double frac   = 2.*0.95 - 1.; // => 0.90
+            double zVal   = TMath::ErfInverse(frac);
+            x95 = pars[2] + (TMath::Sqrt2()*zVal / slopeF);
+        }
+        else if (fitMethod == "gumbelFreeAmp") {
+            // 3p gumbel => Amp exp[-exp(-slope*(x - xOff))]
+            double slopeF = TMath::Exp(pars[1]);
+            // ~2.97
+            x95 = pars[2] + 2.97/slopeF;
+        }
+        else if (fitMethod == "logistic4Param") {
+            double slopeF = TMath::Exp(pars[2]);
+            double val    = (1./0.95) - 1.;
+            double exponent = -TMath::Log(val);
+            x95 = pars[3] + exponent/slopeF;
+        }
+        else if (fitMethod == "erf4Param") {
+            double slopeF = TMath::Exp(pars[2]);
+            double frac   = 2.*0.95 -1.; // =>0.90
+            double zVal   = TMath::ErfInverse(frac);
+            x95 = pars[3] + (TMath::Sqrt2()*zVal / slopeF);
+        }
+        else { // gumbel4Param
+            double slopeF = TMath::Exp(pars[2]);
+            double lhs    = -TMath::Log(0.95);
+            double zVal   = -TMath::Log(lhs); // ~2.97
+            x95 = pars[3] + (zVal / slopeF);
+        }
+
+        // Vertical line at x95 if in range
+        if (x95>fitXmin && x95<fitXmax) {
+            TLine* line95 = new TLine(x95, 0., x95, finalFunc->Eval(x95));
+            line95->SetLineStyle(2);
+            line95->SetLineColor(color);
+            line95->SetLineWidth(2);
+            line95->Draw("SAME");
+        }
+
+        // Store numeric results
+        double chi2  = fitRes->Chi2();
+        double ndf   = fitRes->Ndf();
+        double c2Ndf = (ndf>0)? (chi2/ndf):0.;
+
+        results[i].chi2NDF = c2Ndf;
+        results[i].x95     = x95;
+        results[i].par     = pars;
+        results[i].parErr  = errs;
+
+        delete finalFunc;
+    }
+
+    //--------------------------------------------------------------------------
+    // (B) Bottom rows: textual stats in pads 7..9 (for 3p) and 10..12 (for 4p)
+    //--------------------------------------------------------------------------
+    for (int i=0; i<nMethods; i++)
+    {
+        int textRow  = (i<3) ? 3 : 4;  // row3 => i=0..2, row4=> i=3..5
+        int colIndex = i % 3;         // 0..2
+        int padIndex = 3*(textRow-1) + (colIndex+1);
+        cFit->cd(padIndex);
+        gPad->Clear();
+        gPad->SetFillColor(0);
+
+        double c2ndf = results[i].chi2NDF;
+        double x95   = results[i].x95;
+        const auto& pars = results[i].par;
+        const auto& errs = results[i].parErr;
+        const auto& fitMethod = methodList[i];
+
+        // More compact but bigger text
+        TLatex lat;
+        lat.SetNDC(true);
+        lat.SetTextFont(42);
+        lat.SetTextAlign(13);
+
+        // (B1) Method title => bigger
+        lat.SetTextSize(0.062);
+        lat.DrawLatex(0.10, 0.82,
+            Form("#bf{%s}", methodTitle.at(fitMethod).c_str()));
+
+        // (B2) Fit Range + Stats => slightly smaller
+        lat.SetTextSize(0.052);
+        double yPos = 0.62;
+        double xPos = 0.10;
+
+        {
+            std::ostringstream rStr;
+            rStr << "#bf{Fit Range: ["<<fitXmin<<", "<<fitXmax<<"] GeV}";
+            lat.DrawLatex(xPos, yPos, rStr.str().c_str());
+        }
+        yPos -= 0.11;
+
+        {
+            // Here we ensure x95 prints with only one decimal
+            std::ostringstream sStr;
+            sStr << "#bf{#chi^{2}/NDF} = "
+                 << std::fixed << std::setprecision(3) << c2ndf
+                 << "   #bf{x_{95}} = "
+                 << std::fixed << std::setprecision(1) << x95  // <<-- only one decimal
+                 << " GeV";
+            lat.DrawLatex(xPos, yPos, sStr.str().c_str());
+        }
+        yPos -= 0.13;
+
+        // (B3) Parameter lines => same or slightly smaller text
+        lat.SetTextSize(0.050);
+        for (size_t ip=0; ip<pars.size(); ip++) {
+            double v  = pars[ip];
+            double ve = errs[ip];
+            std::ostringstream pStr;
+            pStr << "#bf{" << paramLabels.at(fitMethod)[ip]
+                 << "} = "
+                 << std::fixed << std::setprecision(3) << v
+                 << " #pm "
+                 << std::fixed << std::setprecision(3) << ve;
+            lat.DrawLatex(xPos, yPos, pStr.str().c_str());
+            yPos -= 0.10;
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    // (C) Save
+    //--------------------------------------------------------------------------
+    cFit->cd();
+    cFit->Update();
+    std::string outName = plotDirectory + "/Comparison6in1_4row_" + jetTrig + ".png";
+    cFit->SaveAs(outName.c_str());
+
+    delete cFit;
+}
+
+
 
 
 void PlotCombinedHistograms(
@@ -8060,20 +8586,19 @@ void PlotCombinedHistograms(
                             std::string fitMethod = "gumbelAmp";
                             if (enableFits)
                             {
-                                //--------------------------------------------------------
-                                // (A) FIRST PASS: create the re-parameterized function
-                                //     with a free amplitude, in a limited range (e.g. [12..30])
-                                //--------------------------------------------------------
+                                // -------------------------------------------------------------------
+                                // (1) Perform the single "two-pass" fit as normal
+                                //     using whichever fitMethod you want (erfAmp, gumbelAmp, logisticAmp, etc.)
+                                // -------------------------------------------------------------------
+
                                 TF1* broadFunc = nullptr;
                                 if (fitMethod == "erfAmp")
                                 {
-                                    // Use erf with free amplitude
                                     broadFunc = new TF1("broadFunc", erfFreeAmp, 12.0, 30.0, 3);
                                     std::cout << "[INFO] Using erfFreeAmp in [12,30] for first pass\n";
                                 }
                                 else if (fitMethod == "gumbelAmp")
                                 {
-                                    // Use gumbel with free amplitude
                                     broadFunc = new TF1("broadFunc", gumbelFreeAmp, 12.0, 30.0, 3);
                                     std::cout << "[INFO] Using gumbelFreeAmp in [12,30] for first pass\n";
                                 }
@@ -8084,39 +8609,32 @@ void PlotCombinedHistograms(
                                     std::cout << "[INFO] Using logisticFreeAmp in [12,30] for first pass\n";
                                 }
 
-                                // Name the parameters as [Amp, alpha, xOffset]
-                                // p[0] => amplitude, p[1] => alpha, p[2] => offset
+                                // Name parameters
                                 broadFunc->SetParNames("Amp", "alpha", "XOffset");
                                 broadFunc->SetLineColor(kGray+2);
 
-                                // Minimizer options
+                                // Minimizer
                                 ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
                                 ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
 
-                                // (A1) Estimate slope & offset from data
+                                // auto-estimate slope & offset
                                 double alphaGuess, xOffGuess;
                                 autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
 
-                                // For amplitude, we pick an initial guess (e.g. 1.0)
                                 double ampGuess = 1.0;
+                                broadFunc->SetParameter(0, ampGuess);
+                                broadFunc->SetParameter(1, alphaGuess);
+                                broadFunc->SetParameter(2, xOffGuess);
 
-                                // Set initial guesses
-                                broadFunc->SetParameter(0, ampGuess);    // Amp
-                                broadFunc->SetParameter(1, alphaGuess);  // alpha
-                                broadFunc->SetParameter(2, xOffGuess);   // XOffset
-
-                                // (A2) Fit quietly from 12..30
-                                // "R" -> respect range, "S"->store result, "Q"->quiet
+                                // First pass
                                 TFitResultPtr firstRes = iterativeFit(ratioJet, broadFunc, "R S Q");
+                                double ampB   = broadFunc->GetParameter(0);
+                                double alphaB = broadFunc->GetParameter(1);
+                                double xOffB  = broadFunc->GetParameter(2);
 
-                                // Extract first-pass results
-                                double ampB    = broadFunc->GetParameter(0);
-                                double alphaB  = broadFunc->GetParameter(1);
-                                double xOffB   = broadFunc->GetParameter(2);
-
-                                //--------------------------------------------------------
-                                // (C) SECOND PASS: refined fit with the SAME function
-                                //--------------------------------------------------------
+                                // -------------------------------------------------------------------
+                                // (2) Second pass with same method
+                                // -------------------------------------------------------------------
                                 std::string fitName = "fit_JetRatio_" + jetTrig;
                                 TF1* finalFunc = nullptr;
                                 if (fitMethod == "erfAmp")
@@ -8138,60 +8656,41 @@ void PlotCombinedHistograms(
                                 finalFunc->SetParNames("Amp", "alpha", "XOffset");
                                 finalFunc->SetLineColor(color);
 
-                                // Initialize near the first pass
+                                // Initialize from first pass
                                 finalFunc->SetParameter(0, ampB);
                                 finalFunc->SetParameter(1, alphaB);
                                 finalFunc->SetParameter(2, xOffB);
 
-                                // Another iterative fit
                                 TFitResultPtr finalResult = iterativeFit(ratioJet, finalFunc, "R S");
-
-                                // Draw final curve
                                 finalFunc->Draw("SAME");
 
-                                //--------------------------------------------------------
-                                // (D) Evaluate 95% turn-on crossing
-                                //     *assuming 95% of the fitted amplitude*
-                                //--------------------------------------------------------
+                                // Evaluate 95% crossing
                                 double ampFinal     = finalFunc->GetParameter(0);
                                 double alphaFinal   = finalFunc->GetParameter(1);
                                 double xOffsetFinal = finalFunc->GetParameter(2);
                                 double slopeFinal   = TMath::Exp(alphaFinal);
 
-                                // We want x s.t. f(x) = 0.95 * ampFinal
-                                // The formula depends on logistic vs erf vs gumbel
                                 double x95 = 0.0;
-
                                 if (fitMethod == "erfAmp")
                                 {
-                                    // 0.5*amp * [1 + erf(...)] = 0.95 * amp => => 0.5*[1 + erf(...)] = 0.95 => erf(...)=0.90, etc.
-                                    double target = 0.95; // fraction of amp
-                                    double fractionNeeded = (2.0 * target) - 1.0; // solves 0.5*amp*(1+erf)=target*amp => (1+erf)=2*target => erf=2*target -1
-                                    double zVal   = TMath::ErfInverse(fractionNeeded);
-                                    // Then slope*(x - xOffset)/sqrt(2) = zVal => x = xOffset + sqrt(2)*zVal/slope
+                                    double fractionNeeded = (2.0 * 0.95) - 1.0; // 0.90
+                                    double zVal           = TMath::ErfInverse(fractionNeeded);
                                     x95 = xOffsetFinal + (TMath::Sqrt2() * zVal / slopeFinal);
                                 }
                                 else if (fitMethod == "gumbelAmp")
                                 {
-                                    // Gumbel => amp*exp[-exp(-z)] = 0.95*amp => exp[-exp(-z)] = 0.95 => -exp(-z)=ln(0.95) => exp(-z)= -ln(0.95)
-                                    // z=2.97, but that was for 0.95 exactly. We want 0.95 fraction => same approach though => z=2.97
-                                    double target = 0.95;
-                                    double lnTerm = -TMath::Log(target); // e.g. 0.051293 if target=0.95
-                                    double zVal   = -TMath::Log(lnTerm); // ~2.97
+                                    double zVal = 2.97;
                                     x95 = xOffsetFinal + (zVal / slopeFinal);
                                 }
                                 else
                                 {
-                                    // logistic => amp / (1 + e^{-slope*(x - xOff)})=0.95*amp => => 1+ e^{-...}=1/0.95 => e^{-...}=(1/0.95)-1=0.05263 => ...
-                                    double fraction  = 0.95;
-                                    double val       = (1.0/fraction) - 1.0; // e.g. ~0.05263 if fraction=0.95
-                                    double exponent  = -TMath::Log(val);
+                                    double val = (1.0 / 0.95) - 1.0; // ~0.05263
+                                    double exponent = -TMath::Log(val);
                                     x95 = xOffsetFinal + (exponent / slopeFinal);
                                 }
 
                                 combinationToTriggerEfficiencyPoints[combinationName][jetTrig] = x95;
 
-                                // Draw vertical line if in range
                                 if (x95 > 12.0 && x95 < 30.0)
                                 {
                                     TLine* verticalLine = new TLine(x95, 0.0, x95, ampFinal);
@@ -8201,17 +8700,18 @@ void PlotCombinedHistograms(
                                     verticalLine->Draw("SAME");
                                 }
 
-                                // Append label
+                                // Here is where we insert x95 into the legend text with one decimal:
                                 {
                                     std::ostringstream msg;
-                                    msg << " (95% = " << std::fixed << std::setprecision(2) << x95 << " GeV)";
+                                    msg << " (95% = "
+                                        << std::fixed << std::setprecision(1)  // 1 decimal place
+                                        << x95 << " GeV)";
                                     finalLegendText += msg.str();
                                 }
 
-                                // Print final results
-                                double chi2   = finalResult->Chi2();
-                                double ndf    = finalResult->Ndf();
-                                double chi2NDF= (ndf>0.0)? (chi2/ndf) : 0.0;
+                                double chi2 = finalResult->Chi2();
+                                double ndf  = finalResult->Ndf();
+                                double chi2NDF = (ndf>0.0)? (chi2/ndf) : 0.0;
 
                                 std::cout << "\n\033[1;31m"
                                           << "============================================================\n"
@@ -8237,7 +8737,21 @@ void PlotCombinedHistograms(
                                 }
                                 std::cout << "-----------------------------------------\n\n";
 
-                                delete broadFunc; // optional
+                                // optional
+                                delete broadFunc;
+
+                                // -------------------------------------------------------------------
+                                // (3) ADDITIONAL: CALL THE 3-in-1 COMPARISON
+                                // -------------------------------------------------------------------
+                                // You can place this call AFTER the single fit is done,
+                                // so you produce the combined "Comparison3in1" as well.
+                                //   ratioJet   => the same histogram
+                                //   jetTrig    => the same trigger
+                                //   color      => your line color
+                                //   plotDirectory => where to save
+
+                                fitComparison6in1_4row(ratioJet, jetTrig, combinationName, color, plotDirectory);
+
                             }
 
 
