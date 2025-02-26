@@ -180,7 +180,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering statusEMC subsystem..." << std::endl;
         }
         se->registerSubsystem(statusEMC);
-        
+
         CaloTowerStatus *statusHCalIn = new CaloTowerStatus("HCALINSTATUS");
         statusHCalIn->set_detector_type(CaloTowerDefs::HCALIN);
         statusHCalIn->set_time_cut(2);
@@ -190,7 +190,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering towerjetreco subsystem (statusHCalIn)..." << std::endl;
         }
         se->registerSubsystem(statusHCalIn);
-        
+
         CaloTowerStatus *statusHCALOUT = new CaloTowerStatus("HCALOUTSTATUS");
         statusHCALOUT->set_detector_type(CaloTowerDefs::HCALOUT);
         statusHCALOUT->set_time_cut(2);
@@ -200,7 +200,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering statusHCALOUT subsystem..." << std::endl;
         }
         se->registerSubsystem(statusHCALOUT);
-        
+
         RetowerCEMC *rcemc = new RetowerCEMC();
         rcemc->Verbosity(0);
         rcemc->set_towerinfo(true);
@@ -210,7 +210,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering RetowerCEMC subsystem..." << std::endl;
         }
         se->registerSubsystem(rcemc);
-        
+
         if (WANT_VERBOSE) {
             std::cout << "[DEBUG] Creating EmcRawClusterBuilderTemplate (ClusterBuilder)..." << std::endl;
         }
@@ -223,7 +223,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         ClusterBuilder->set_UseTowerInfo(1);  // using TowerInfo objects
         std::cout << "[INFO] Registering ClusterBuilder subsystem..." << std::endl;
         se->registerSubsystem(ClusterBuilder);
-        
+
         if (WANT_VERBOSE) {
             std::cout << "[DEBUG] Creating towerjetreco (JetReco) with Tower inputs...\n";
         }
@@ -239,11 +239,11 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering towerjetreco subsystem..." << std::endl;
         }
         se->registerSubsystem(towerjetreco);
-        
+
         if (WANT_VERBOSE) {
             std::cout << "[DEBUG] Creating DetermineTowerBackground (dtb)..." << std::endl;
         }
-        
+
         DetermineTowerBackground *dtb = new DetermineTowerBackground();
         dtb->SetBackgroundOutputName("TowerInfoBackground_Sub1");
         dtb->SetFlow(HIJETS::do_flow);
@@ -257,7 +257,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         }
 
         se->registerSubsystem(dtb);
-        
+
         CopyAndSubtractJets *casj = new CopyAndSubtractJets();
         casj->SetFlowModulation(HIJETS::do_flow);
         casj->Verbosity(0);
@@ -268,7 +268,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         }
 
         se->registerSubsystem(casj);
-        
+
         DetermineTowerBackground *dtb2 = new DetermineTowerBackground();
         dtb2->SetBackgroundOutputName("TowerInfoBackground_Sub2");
         dtb2->SetFlow(HIJETS::do_flow);
@@ -281,7 +281,7 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
             std::cout << "[INFO] Registering dtb2 subsystem..." << std::endl;
         }
         se->registerSubsystem(dtb2);
-        
+
         SubtractTowers *st = new SubtractTowers();
         st->SetFlowModulation(HIJETS::do_flow);
         st->Verbosity(0);
@@ -292,12 +292,12 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         }
 
         se->registerSubsystem(st);
-        
-        
+
+
         //  ClusterIso(const std::string&, float eTCut, int coneSize, bool do_subtracted, bool do_unsubtracted);
         ClusterIso *makeClusterEt = new ClusterIso("CaloTreeGen", 0, 3, 1, 1);
         makeClusterEt->Verbosity(0);
-        
+
         if (WANT_VERBOSE) {
             std::cout << "[INFO] ClusterIso subsystem created with name 'CaloTreeGen'"
             << " (only for data mode)..." << std::endl;
@@ -352,10 +352,10 @@ void Fun4All_CaloTreeGen(const int nEvents = 0,
         se->registerSubsystem(triggerruninforeco);
         
         if (WANT_VERBOSE) {
-            std::cout << "[DEBUG] Creating Fun4AllDstInputManager (DSTcalo)...\n";
+            std::cout << "[DEBUG] Creating Fun4AllDstInputManager (DSTjet)...\n";
         }
 
-        Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTcalo");
+        Fun4AllInputManager *in = new Fun4AllDstInputManager("DSTjet");
         
         if (WANT_VERBOSE) {
             // Reset the file stream to read all filenames from the beginning
