@@ -637,6 +637,7 @@ void caloTreeGen::createHistos_Data() {
          for photon turn on curve
          */
         qaHistograms["h_maxEnergyClus_" + triggerName] = createHistogram("h_maxEnergyClus_" + triggerName, "Max Cluster Energy; Cluster Energy [GeV]", 40, 0, 20);
+        qaHistograms["h_maxEnergyClus_NewTriggerFilling_doNotScale_" + triggerName] = createHistogram("h_maxEnergyClus_NewTriggerFilling_doNotScale_" + triggerName, "Max Cluster Energy; Cluster Energy [GeV]", 40, 0, 20);
 //        /*
 //         for jet turn on curve
 //         */
@@ -3925,6 +3926,112 @@ int caloTreeGen::process_event(PHCompositeNode *topNode)
 }
 
 
+
+void caloTreeGen::checkMbdAndFillNewHists(
+    PHCompositeNode* topNode,
+    float max_energy_clus,
+    bool verbose)
+{
+    if (!trigAna)
+    {
+        std::cerr << "[ERROR] No TriggerAnalyzer pointer!\n";
+        return;
+    }
+
+    // If you're not certain that triggers have already been decoded, decode here:
+    trigAna->decodeTriggers(topNode);
+
+    // The DB name for MBD
+    const std::string mbdDbName    = "MBD N&S >= 1";
+    // The short name associated with MBD
+    const std::string mbdShortName = "MBD_NandS_geq_1";
+
+    // 1) Check if MBD fired in this event
+    bool isMB = trigAna->didTriggerFire(mbdDbName);
+    if (!isMB)
+    {
+        if (verbose)
+        {
+            std::cout << "[INFO] MBD did not fire => skipping.\n";
+        }
+        return;
+    }
+
+    // 2) If MBD fired, fill the new histogram for MBD itself
+    {
+        // e.g. "h_maxEnergyClus_NewTriggerFilling_doNotScale_MBD_NandS_geq_1"
+        std::string mbdHistName = "h_maxEnergyClus_NewTriggerFilling_doNotScale_" + mbdShortName;
+
+        // -- Use the map-of-maps: "qaHistogramsByTrigger"
+        auto &mbdHistogramMap = qaHistogramsByTrigger[mbdShortName];
+        auto it = mbdHistogramMap.find(mbdHistName);
+        if (it == mbdHistogramMap.end() || !(it->second))
+        {
+            if (verbose)
+            {
+                std::cerr << "[WARNING] Could not find histogram '"
+                          << mbdHistName << "' to fill!\n";
+            }
+        }
+        else
+        {
+            TH1F* hMbdHist = dynamic_cast<TH1F*>(it->second);
+            if (hMbdHist)
+            {
+                hMbdHist->Fill(max_energy_clus);
+                if (verbose)
+                {
+                    std::cout << "[INFO] Filled " << mbdHistName
+                              << " with " << max_energy_clus << std::endl;
+                }
+            }
+        }
+    }
+
+    // 3) Now check the “rare” triggers (photon, jet, etc.) if MBD fired
+    for (const auto &kv : triggerNameMap)
+    {
+        const std::string &dbTriggerName   = kv.first;
+        const std::string &histFriendlyStr = kv.second;
+
+        // Avoid *re*-filling MBD's own histogram
+        if (dbTriggerName == mbdDbName)
+            continue;
+
+        // 4) Check raw bit (or didTriggerFire, depending on your code)
+        bool firedRare = trigAna->checkRawTrigger(dbTriggerName);
+        if (!firedRare) continue;
+
+        // 5) If the “rare” trigger also fired, fill the new histogram
+        //    e.g. "h_maxEnergyClus_NewTriggerFilling_doNotScale_Photon_3_GeV_plus_MBD_NS_geq_1"
+        std::string newHistName = "h_maxEnergyClus_NewTriggerFilling_doNotScale_" + histFriendlyStr;
+
+        // Retrieve the histogram map for this particular shortName
+        auto &rareHistogramMap = qaHistogramsByTrigger[histFriendlyStr];
+        auto it = rareHistogramMap.find(newHistName);
+        if (it == rareHistogramMap.end() || !(it->second))
+        {
+            if (verbose)
+            {
+                std::cerr << "[WARNING] Could not find histogram '"
+                          << newHistName << "' to fill!\n";
+            }
+            continue;
+        }
+
+        TH1F* hNew = dynamic_cast<TH1F*>(it->second);
+        if (hNew)
+        {
+            hNew->Fill(max_energy_clus);
+            if (verbose)
+            {
+                std::cout << "[INFO] Filled " << newHistName
+                          << " with " << max_energy_clus << std::endl;
+            }
+        }
+    }
+}
+
 int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
     event_count++;
 
@@ -4758,6 +4865,7 @@ int caloTreeGen::process_event_Data(PHCompositeNode *topNode) {
                           << " with value: " << max_energy_clus << std::endl;
             }
         }
+        checkMbdAndFillNewHists(topNode, max_energy_clus, verbose);
         
         // Fill the histogram with the maximum cluster energy core value
 //        TH1F* h_leadingJetET = (TH1F*)qaHistograms["h_leadingJetET_" + firedShortName];
