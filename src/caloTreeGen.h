@@ -142,7 +142,6 @@ public:
 
     float getScaledownFactor(const std::string &textFileName); // short name key
 
-
 private:
     
     bool wantSim = false;   // default false
@@ -227,9 +226,9 @@ private:
     
     std::map<std::string, std::string> triggerNameMap = {
         {"MBD N&S >= 1",          "MBD_NandS_geq_1"},
-        {"Jet 8 GeV + MBD NS >= 1","Jet_8_GeV_plus_MBD_NS_geq_1"},
-        {"Jet 10 GeV + MBD NS >= 1","Jet_10_GeV_plus_MBD_NS_geq_1"},
-        {"Jet 12 GeV + MBD NS >= 1","Jet_12_GeV_plus_MBD_NS_geq_1"},
+//        {"Jet 8 GeV + MBD NS >= 1","Jet_8_GeV_plus_MBD_NS_geq_1"},
+//        {"Jet 10 GeV + MBD NS >= 1","Jet_10_GeV_plus_MBD_NS_geq_1"},
+//        {"Jet 12 GeV + MBD NS >= 1","Jet_12_GeV_plus_MBD_NS_geq_1"},
         {"Photon 3 GeV + MBD NS >= 1","Photon_3_GeV_plus_MBD_NS_geq_1"},
         {"Photon 4 GeV + MBD NS >= 1","Photon_4_GeV_plus_MBD_NS_geq_1"},
         {"Photon 5 GeV + MBD NS >= 1","Photon_5_GeV_plus_MBD_NS_geq_1"}
@@ -401,6 +400,11 @@ private:
         float etaMass,
         float etaMassWindow,
         const std::pair<float, float>& pT_bin
+    );
+    void checkMbdAndFillNewHists(
+        PHCompositeNode* topNode,
+        float max_energy_clus,
+        bool verbose
     );
     
     void processIsolationRanges(
