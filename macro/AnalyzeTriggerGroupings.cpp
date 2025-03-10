@@ -817,6 +817,35 @@ void ProcessRunsForCombination(
     } else {
         std::cerr << "[ERROR] Failed to write " << validRunsFilePath << "\n";
     }
+    
+    // --- NEW DIFF PRINT SECTION ---
+    //  At this point, 'runs' is the full list from the CSV
+    //  and 'validRuns' is what actually ended up merged.
+    //  Here we print out which runs were excluded (if any).
+    {
+        std::set<int> allRunsSet(runs.begin(), runs.end());
+        std::set<int> validRunsSet(validRuns.begin(), validRuns.end());
+
+        std::vector<int> excludedRuns;
+        std::set_difference(allRunsSet.begin(),
+                            allRunsSet.end(),
+                            validRunsSet.begin(),
+                            validRunsSet.end(),
+                            std::back_inserter(excludedRuns));
+
+        if (!excludedRuns.empty()) {
+            std::cout << "\n[DEBUG] For combination " << combinationName
+                      << ", the following runs were found in the CSV but NOT "
+                      << "included in the final ROOT file:\n   ";
+            for (int rn : excludedRuns) {
+                std::cout << rn << " ";
+            }
+            std::cout << "\n";
+        } else {
+            std::cout << "\n[DEBUG] All runs for combination " << combinationName
+                      << " were successfully included in the final ROOT file.\n";
+        }
+    }
     // zeroDataFile closes automatically when function ends
 }
 
@@ -6827,7 +6856,7 @@ void PlotRunByRunHistograms(
                 }
 
                 // Construct histogram name
-                std::string histName = "h8by8TowerEnergySum_" + trigger;
+                std::string histName = "h_leadingJetET_NewTriggerFilling_doNotScale_" + trigger;
 
                 // Get histogram from the trigger directory
                 TH1* hist = (TH1*)triggerDir->Get(histName.c_str());
@@ -6923,7 +6952,7 @@ void PlotRunByRunHistograms(
             std::ostringstream runNumberStrIndividual;
             runNumberStrIndividual << "Run " << runNumber;
 
-            runNumberTextIndividual.DrawLatex(0.1, 0.85, runNumberStrIndividual.str().c_str());
+            runNumberTextIndividual.DrawLatex(0.55, 0.45, runNumberStrIndividual.str().c_str());
 
             // Update and save the individual canvas
             individualCanvas->Modified();
@@ -6957,7 +6986,7 @@ void PlotRunByRunHistograms(
             std::ostringstream runNumberStr;
             runNumberStr << "Run " << runNumber;
 
-            runNumberText.DrawLatex(0.1, 0.85, runNumberStr.str().c_str());
+            runNumberText.DrawLatex(0.55, 0.45, runNumberStr.str().c_str());
 
             // Close the run file
             runFile->Close();
@@ -6981,7 +7010,7 @@ void PlotRunByRunHistograms(
 
         // Save the canvas
         std::ostringstream outputFileName;
-        outputFileName << runByRunDir << "/RunOverlay_Page" << pageIndex + 1 << ".png";
+        outputFileName << runByRunDir << "/RunOverlayJet_Page" << pageIndex + 1 << ".png";
         canvas->SaveAs(outputFileName.str().c_str());
         std::cout << "Saved run-by-run overlay plot to " << outputFileName.str() << std::endl;
 
@@ -6997,6 +7026,21 @@ void PlotRunByRunHistograms(
         // Clean up
         delete canvas;
     }
+}
+
+
+
+
+Double_t newExpFunction(Double_t *x, Double_t *p)
+{
+    double baseline = p[0];
+    double scale    = p[1];
+    double alpha    = p[2];   // log(slope)
+    double xOff     = p[3];
+
+    double slope = TMath::Exp(alpha);
+    double expo  = TMath::Exp( slope * (x[0] - xOff) );
+    return baseline + scale * expo;
 }
 
 
@@ -7107,6 +7151,7 @@ Double_t gumbel4Param(Double_t *x, Double_t *p)
 
 
 
+
 // Tries to find a ~50% crossing of ratio, and an approximate slope from
 // how quickly the ratio goes from ~0.2 to ~0.8.
 // If it can’t find them well, it falls back on some default values.
@@ -7146,393 +7191,464 @@ void autoEstimateAlphaOffset(TH1* h, double &alphaGuess, double &xOffGuess)
     }
 }
 
-TFitResultPtr iterativeFit(TH1* hist, TF1* func, const char* fitOpts,
-                           int maxIters=10, double minEdm=1e-9)
+
+
+// -------------------------------------------------------------------------
+// 1) Define new simpler versions of logistic/erf/gumbel that do NOT use log(slope)
+// -------------------------------------------------------------------------
+Double_t logisticSimpleAmp(Double_t *x, Double_t *p)
 {
-    TFitResultPtr res;
-    for (int i=0; i<maxIters; ++i)
+    // p[0] = Amp       (asymptotic plateau)
+    // p[1] = slope     (positive slope)
+    // p[2] = xOffset   (where the transition is ~50%)
+    // logistic: p[0] / (1 + exp( -p[1]*(x - p[2]) ))
+    double amp     = p[0];
+    double slope   = p[1];
+    double xOffset = p[2];
+    return amp / (1.0 + TMath::Exp(-slope * (x[0] - xOffset)));
+}
+
+Double_t erfSimpleAmp(Double_t *x, Double_t *p)
+{
+    // p[0] = Amp
+    // p[1] = slope
+    // p[2] = xOffset
+    // Return 0.5 * amp * [1 + erf( slope*(x-xOffset)/sqrt(2) )]
+    double amp     = p[0];
+    double slope   = p[1];
+    double xOffset = p[2];
+    double arg     = slope * (x[0] - xOffset) / TMath::Sqrt2();
+    return 0.5 * amp * (1.0 + TMath::Erf(arg));
+}
+
+Double_t gumbelSimpleAmp(Double_t *x, Double_t *p)
+{
+    // p[0] = Amp
+    // p[1] = slope
+    // p[2] = xOffset
+    // Gumbel:  amp * exp( - exp( -slope*(x - xOffset) ) )
+    double amp     = p[0];
+    double slope   = p[1];
+    double xOffset = p[2];
+    double z       = slope * (x[0] - xOffset);
+    return amp * TMath::Exp(-TMath::Exp(-z));
+}
+
+// -------------------------------------------------------------------------
+// 2) A new auto-estimate helper to guess (amp, slope, xOffset)
+//    without taking log(slope).  You can adapt if your histograms differ.
+// -------------------------------------------------------------------------
+void autoEstimateSlopeOffsetSimple(TH1* h,
+                                   double &ampGuess,
+                                   double &slopeGuess,
+                                   double &xOffGuess)
+{
+    // Default guesses
+    ampGuess   = 1.0;
+    slopeGuess = 1.0;
+    xOffGuess  = 5.0;
+    if (!h || h->GetNbinsX()<5) return;
+
+    // 2a) Guess the amplitude from the largest bin content
+    //     (If your final plateau is near 1, this will be close to 1.0)
+    double maxVal = 0.0;
+    for (int i=1; i<=h->GetNbinsX(); ++i) {
+        double y = h->GetBinContent(i);
+        if (y > maxVal) maxVal = y;
+    }
+    ampGuess = maxVal;
+
+    // 2b) Find approximate 20%, 50%, 80% crossing
+    //     That is 0.2*ampGuess, 0.5*ampGuess, 0.8*ampGuess.
+    double y20 = 0.20 * ampGuess;
+    double y50 = 0.50 * ampGuess;
+    double y80 = 0.80 * ampGuess;
+
+    double x20=-999, x50=-999, x80=-999;
+    for (int i=1; i<=h->GetNbinsX(); ++i)
     {
-        // One pass of Minuit2
-        res = hist->Fit(func, fitOpts);
+        double y  = h->GetBinContent(i);
+        double xc = h->GetBinCenter(i);
+
+        // store approximate points
+        if (y > y20 && x20<0) x20 = xc;
+        if (y > y50 && x50<0) x50 = xc;
+        if (y > y80 && x80<0) x80 = xc;
+    }
+
+    // 2c) If we found good points, estimate slope from x20->x80,
+    //     and xOff from x50.  logistic or erf range from ~0->amp
+    //     so going from 0.2->0.8 is ln(4)=1.386 for logistic,
+    //     or (erf^-1(0.6)-erf^-1( -0.3 ), etc.) — we’ll just assume
+    //     a small approximate factor.  Gumbel is similar.  This is
+    //     not exact, but usually good enough for initialization.
+    if (x20>0 && x50>0 && x80>0 && (x20 < x80))
+    {
+        xOffGuess  = x50; // ~50% point
+
+        double dx = x80 - x20;
+        if (dx < 1e-6) dx = 1.0;
+        // For a logistic shape from 20%->80% we have ratio=4 => log(4)=1.386...
+        // For erf/gumbel you could use a similar factor ~1–2 for the slope guess
+        // This is a crude guess but usually good enough for a first iteration
+        slopeGuess = 1.386 / dx;
+    }
+}
+
+
+TFitResultPtr iterativeFit(TH1* hist, TF1* func, const char* fitOpts,
+                           int maxIters=20, double minEdm=1e-9)
+{
+    // Combine user’s fit options with "N" so no lines are automatically drawn.
+    std::string localOpts = fitOpts;
+    if (localOpts.find('N') == std::string::npos) {
+        localOpts += "N";  // Add "N" if not already present
+    }
+
+    TFitResultPtr res;
+    for (int i = 0; i < maxIters; ++i)
+    {
+        // Fit with Minuit2, but do NOT draw the function
+        res = hist->Fit(func, localOpts.c_str());
         
-        // If below EDM threshold, break
+        // Break out early if EDM is below threshold
         if (res->Edm() < minEdm) break;
     }
     return res;
 }
 
-
-//void fitComparison3in1_2row(TH1* ratioJet,
-//                            const std::string& jetTrig,
-//                            const std::string& combinationName,
-//                            Color_t color,
-//                            const std::string& plotDirectory)
+//static TRandom3 gRand(0); // global random generator, seed=0
+//
+//// Wrapper that tries multiple times with random "perturbations" around
+//// your auto-initialized guesses. This helps ensure it doesn't get stuck.
+//TFitResultPtr multiAttemptFit(TH1* hist, TF1* func,
+//                              int nAttempts=5,      // how many tries
+//                              const char* fitOpts="R S Q",
+//                              int maxIters=20,      // how many iterative steps
+//                              double minEdm=1e-9)   // how tight to converge
 //{
-//    if (!ratioJet) {
-//        std::cerr << "[WARN] ratioJet is null!\n";
-//        return;
+//    // We'll store best result & best chi2
+//    TFitResultPtr bestRes;
+//    double bestChi2 = 1e30; // large
+//    double bestPar[10];     // store param values for the best so far
+//    int nPars = func->GetNpar();
+//    if (nPars>10) nPars=10; // just a safety
+//
+//    // We'll first remember the user’s "main" initial guess
+//    std::vector<double> mainPars(nPars);
+//    for (int i=0; i<nPars; i++) {
+//        mainPars[i] = func->GetParameter(i);
 //    }
 //
-//    // We have 3 methods (logistic, erf, gumbel).
-//    // We'll store their results for printing in the bottom row.
-//    const int nMethods = 3;
-//    std::vector<std::string> methodList = {
-//        "logisticFreeAmp",
-//        "erfFreeAmp",
-//        "gumbelFreeAmp"
-//    };
-//    std::map<std::string, std::string> methodTitle = {
-//        {"logisticFreeAmp","Logistic"},
-//        {"erfFreeAmp",     "Erf"},
-//        {"gumbelFreeAmp",  "Gumbel"}
-//    };
-//
-//    // Container to store final numeric info for each method
-//    struct FitResults {
-//        double chi2NDF;
-//        double x95;
-//        double amp;
-//        double alpha;
-//        double xOff;
-//        double ampErr;
-//        double alphaErr;
-//        double xOffErr;
-//    };
-//    std::vector<FitResults> results(nMethods);
-//
-//    // Make a canvas with 3 columns × 2 rows
-//    TCanvas* cFit = new TCanvas("cFit",
-//                                "Comparison (two-row) for logistic/erf/gumbel",
-//                                1200, 600);
-//    cFit->Divide(3, 2);
-//
-//    /////////////////////////////////////////////////////////////////////////////
-//    // (A) Top row: Do the fits + draw each method in separate subpads
-//    /////////////////////////////////////////////////////////////////////////////
-//    for (int i = 0; i < nMethods; i++)
+//    for (int attempt=0; attempt < nAttempts; attempt++)
 //    {
-//        cFit->cd(i + 1);
-//        gPad->SetGrid();
+//        // For each attempt, we reset the parameters
+//        for (int i=0; i<nPars; i++)
+//        {
+//            double p0 = mainPars[i];
 //
-//        const std::string& fitMethod = methodList[i];
+//            // We'll do a small random factor. You can tune these:
+//            double factor = 1.0;
+//            // Example heuristics: bigger random range for alpha or slope
+//            // if "alpha" is the log slope or "Slope" is direct slope
+//            TString pName(func->GetParName(i));
+//            pName.ToLower();
 //
-//        // 1) Create the TF1 for this method
-//        TF1* finalFunc = nullptr;
-//        if      (fitMethod == "logisticFreeAmp") {
-//            finalFunc = new TF1("finalFunc_logistic", logisticFreeAmp, 12., 30., 3);
-//        }
-//        else if (fitMethod == "erfFreeAmp") {
-//            finalFunc = new TF1("finalFunc_erf", erfFreeAmp, 12., 30., 3);
-//        }
-//        else {
-//            finalFunc = new TF1("finalFunc_gumbel", gumbelFreeAmp, 12., 30., 3);
-//        }
-//        finalFunc->SetParNames("Amp","alpha","XOffset");
-//        finalFunc->SetLineColor(color);
-//        finalFunc->SetLineWidth(3);
+//            if (pName.Contains("alpha") || pName.Contains("slope")) {
+//                // e.g. ~ ±50% randomizing
+//                factor = 0.5 + gRand.Uniform(1.0); // in [0.5..1.5]
+//            }
+//            else if (pName.Contains("offset")) {
+//                // offset might vary widely; do ±3 GeV around guess
+//                p0 += gRand.Uniform(-3.0, 3.0);
+//                factor=1.0; // we won't scale p0, we just shift it
+//            }
+//            else if (pName.Contains("amp") || pName.Contains("scale") || pName.Contains("high") ) {
+//                // amplitude or scale
+//                factor = 0.8 + gRand.Uniform(0.4); // in [0.8..1.2]
+//            }
+//            else if (pName.Contains("low") || pName.Contains("base")) {
+//                // low plateau or baseline might be near 0; let it roam
+//                factor = 0.5 + gRand.Uniform(1.5); // [0.5..2.0]
+//            }
 //
-//        // Minimizer options
-//        ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
-//        ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
-//
-//        // 2) Start with auto‐estimate
-//        double alphaGuess = -0.7;
-//        double xOffGuess  = 10.0;
-//        autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
-//
-//        finalFunc->SetParameter(0, 1.0);         // Amp
-//        finalFunc->SetParameter(1, alphaGuess);  // alpha
-//        finalFunc->SetParameter(2, xOffGuess);   // xOffset
-//
-//        // Fit
-//        TFitResultPtr fitRes = iterativeFit(ratioJet, finalFunc, "R S Q");
-//
-//        // Extract the final parameters
-//        double ampF   = finalFunc->GetParameter(0);
-//        double alphaF = finalFunc->GetParameter(1);
-//        double xOffF  = finalFunc->GetParameter(2);
-//        double slopeF = TMath::Exp(alphaF);
-//
-//        // Draw ratio & final curve
-//        ratioJet->SetMarkerStyle(20);
-//        ratioJet->SetMarkerSize(0.8);
-//        ratioJet->Draw("E1");
-//        ratioJet->GetYaxis()->SetRangeUser(0, 2.0);
-//
-//        finalFunc->Draw("SAME");
-//
-//        // Dashed line at y=1
-//        double xMin = ratioJet->GetXaxis()->GetXmin();
-//        double xMax = ratioJet->GetXaxis()->GetXmax();
-//        TLine* horizontalLine = new TLine(xMin, 1.0, xMax, 1.0);
-//        horizontalLine->SetLineStyle(2);
-//        horizontalLine->SetLineColor(kBlack);
-//        horizontalLine->Draw("SAME");
-//
-//        // 3) Evaluate x95 (95% of amplitude)
-//        double x95 = 0.0;
-//        if (fitMethod == "erfFreeAmp") {
-//            double fracNeeded = 2.0 * 0.95 - 1.0;  // => 0.90
-//            double zVal = TMath::ErfInverse(fracNeeded);
-//            x95 = xOffF + (TMath::Sqrt2() * zVal / slopeF);
-//        }
-//        else if (fitMethod == "gumbelFreeAmp") {
-//            x95 = xOffF + (2.97 / slopeF);
-//        }
-//        else { // logistic
-//            double val = (1.0 / 0.95) - 1.0;
-//            double exponent = -TMath::Log(val);
-//            x95 = xOffF + exponent / slopeF;
+//            double initVal = p0 * factor;
+//            func->SetParameter(i, initVal);
 //        }
 //
-//        // Optional vertical line at x95
-//        if (x95 > 12. && x95 < 30.) {
-//            TLine* verticalLine = new TLine(x95, 0.0, x95, ampF);
-//            verticalLine->SetLineStyle(2);
-//            verticalLine->SetLineColor(color);
-//            verticalLine->SetLineWidth(2);
-//            verticalLine->Draw("SAME");
+//        // Now do your iterative fit with these random seeds
+//        TFitResultPtr thisRes = iterativeFit(hist, func, fitOpts, maxIters, minEdm);
+//        double thisChi2 = thisRes->Chi2();
+//        // If we improved the chi2, keep it
+//        if (thisChi2 < bestChi2) {
+//            bestChi2 = thisChi2;
+//            bestRes  = thisRes;
+//            // store best param values
+//            for (int i=0; i<nPars; i++) {
+//                bestPar[i] = func->GetParameter(i);
+//            }
 //        }
+//    } // end attempt
 //
-//        // 4) Store numeric results
-//        double chi2 = fitRes->Chi2();
-//        double ndf  = fitRes->Ndf();
-//        double chi2NDF = (ndf > 0.) ? (chi2 / ndf) : 0.0;
-//
-//        results[i].chi2NDF  = chi2NDF;
-//        results[i].x95      = x95;
-//        results[i].amp      = ampF;
-//        results[i].alpha    = alphaF;
-//        results[i].xOff     = xOffF;
-//        results[i].ampErr   = fitRes->ParError(0);
-//        results[i].alphaErr = fitRes->ParError(1);
-//        results[i].xOffErr  = fitRes->ParError(2);
-//
-//        delete finalFunc; // optional
+//    // Finally, restore the best param set to the function
+//    for (int i=0; i<nPars; i++) {
+//        func->SetParameter(i, bestPar[i]);
 //    }
-//
-//    /////////////////////////////////////////////////////////////////////////////
-//    // (B) Bottom row: textual “table” with bigger bold method titles,
-//    //     bold labels, truncated x95 => 1 decimal,
-//    //     AND the exact formulas in larger LaTeX text.
-//    /////////////////////////////////////////////////////////////////////////////
-//    for (int i = 0; i < nMethods; i++)
-//    {
-//        cFit->cd(i + 4); // second row => pads 4..6
-//        gPad->Clear();
-//        gPad->SetFillColor(0);
-//
-//        TLatex lat;
-//        lat.SetNDC(true);
-//
-//        // (B1) Method title, bigger & bold
-//        lat.SetTextSize(0.057); // slightly larger for the method name
-//        lat.SetTextAlign(13);
-//        lat.DrawLatex(0.12, 0.80,
-//            Form("#bf{%s}", methodTitle[ methodList[i] ].c_str()));
-//
-//        // (B2) Stats in a slightly smaller font
-//        lat.SetTextSize(0.047);
-//        double yPos = 0.64;
-//        double xPos = 0.12;
-//
-//        // chi²/NDF and x95
-//        std::ostringstream line1;
-//        line1 << "#bf{#chi^{2}/NDF} = "
-//              << std::fixed << std::setprecision(3) << results[i].chi2NDF
-//              << ",  #bf{x_{95}} = "
-//              << std::fixed << std::setprecision(1) << results[i].x95
-//              << " GeV";
-//        lat.DrawLatex(xPos, yPos, line1.str().c_str());
-//        yPos -= 0.14;
-//
-//        // Amp ± error
-//        std::ostringstream line2;
-//        line2 << "#bf{Amp} = "
-//              << std::fixed << std::setprecision(3) << results[i].amp
-//              << " #pm " << std::setprecision(3) << results[i].ampErr;
-//        lat.DrawLatex(xPos, yPos, line2.str().c_str());
-//        yPos -= 0.11;
-//
-//        // alpha ± error
-//        std::ostringstream line3;
-//        line3 << "#bf{#alpha} = "
-//              << std::fixed << std::setprecision(3) << results[i].alpha
-//              << " #pm " << std::setprecision(3) << results[i].alphaErr;
-//        lat.DrawLatex(xPos, yPos, line3.str().c_str());
-//        yPos -= 0.11;
-//
-//        // xOff ± error
-//        std::ostringstream line4;
-//        line4 << "#bf{xOff} = "
-//              << std::fixed << std::setprecision(3) << results[i].xOff
-//              << " #pm " << std::setprecision(3) << results[i].xOffErr
-//              << " GeV";
-//        lat.DrawLatex(xPos, yPos, line4.str().c_str());
-//        yPos -= 0.16;
-//    }
-//
-//    // Finally, save to file
-//    cFit->cd();
-//    cFit->Update();
-//    std::string outName = plotDirectory + "/Comparison3in1_Tabulated_" + jetTrig + ".png";
-//    cFit->SaveAs(outName.c_str());
-//
-//    delete cFit;
+//    // We'll return the bestRes, which also has the best CovMatrix etc.
+//    return bestRes;
 //}
+
+
 void fitComparison6in1_4row(TH1* ratioJet,
                             const std::string& jetTrig,
                             const std::string& combinationName,
                             Color_t color,
                             const std::string& plotDirectory)
 {
+    // 0) Only proceed if combinationName is exactly the one of interest
+    //    MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate
+    //
+//    static const std::string specialCombo =
+//        "MBD_NandS_geq_1_Jet_8_GeV_plus_MBD_NS_geq_1_Jet_10_GeV_plus_"
+//        "MBD_NS_geq_1_Jet_12_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate";
+    static const std::string specialCombo =
+        "MBD_NandS_geq_1_Photon_3_GeV_plus_MBD_NS_geq_1_Photon_4_GeV_plus_"
+        "MBD_NS_geq_1_Photon_5_GeV_plus_MBD_NS_geq_1_afterTriggerFirmwareUpdate";
+
+
+    if (combinationName != specialCombo) {
+        // Immediately return if not the desired combination
+        return;
+    }
+
     if (!ratioJet) {
         std::cerr << "[WARN] ratioJet is null!\n";
         return;
     }
 
-    // 6 methods total
+    //----------------------------------------------------------------------
+    // Prepare the output ROOT file (in UPDATE mode) so we can store TF1’s
+    //----------------------------------------------------------------------
+    const std::string rootOutName = plotDirectory + "/FitFunctions_" + jetTrig + ".root";
+    TFile* fOut = TFile::Open(rootOutName.c_str(), "UPDATE");
+    if (!fOut || fOut->IsZombie()) {
+        std::cerr << "[ERROR] Could not open or create ROOT file: " << rootOutName << std::endl;
+        return;
+    }
+
+    // Create/get the top directory for this trigger
+    TDirectory* trigDir = dynamic_cast<TDirectory*>( fOut->Get(jetTrig.c_str()) );
+    if (!trigDir) {
+        trigDir = fOut->mkdir(jetTrig.c_str());
+    }
+    trigDir->cd();
+
+    // (A) We have 9 methods total:
     std::vector<std::string> methodList = {
-        "logisticFreeAmp",  // 3p
-        "erfFreeAmp",       // 3p
-        "gumbelFreeAmp",    // 3p
-        "logistic4Param",   // 4p
-        "erf4Param",        // 4p
-        "gumbel4Param"      // 4p
+        // Original 3-parameter fits
+        "logisticFreeAmp",
+        "erfFreeAmp",
+        "gumbelFreeAmp",
+
+        // Original 4-parameter fits
+        "logistic4Param",
+        "erf4Param",
+        "gumbel4Param",
+
+        // New "simple" 3-parameter fits
+        "logisticSimpleAmp",
+        "erfSimpleAmp",
+        "gumbelSimpleAmp"
     };
 
-    // Display names
+    // Titles for each method
     std::map<std::string, std::string> methodTitle = {
-        {"logisticFreeAmp", "Logistic (3p)"},
-        {"erfFreeAmp",      "Erf (3p)"},
-        {"gumbelFreeAmp",   "Gumbel (3p)"},
-        {"logistic4Param",  "Logistic (4p)"},
-        {"erf4Param",       "Erf (4p)"},
-        {"gumbel4Param",    "Gumbel (4p)"}
+        {"logisticFreeAmp",   "Logistic (3p)"},
+        {"erfFreeAmp",        "Erf (3p)"},
+        {"gumbelFreeAmp",     "Gumbel (3p)"},
+        {"logistic4Param",    "Logistic (4p)"},
+        {"erf4Param",         "Erf (4p)"},
+        {"gumbel4Param",      "Gumbel (4p)"},
+        {"logisticSimpleAmp", "Logistic (simple 3p)"},
+        {"erfSimpleAmp",      "Erf (simple 3p)"},
+        {"gumbelSimpleAmp",   "Gumbel (simple 3p)"}
     };
 
-    // Parameter names
+    // Parameter labels (used in TF1::SetParName)
     std::map<std::string, std::vector<std::string>> paramLabels = {
-        {"logisticFreeAmp", {"Amplitude", "Alpha (log slope)", "Offset"}},
-        {"erfFreeAmp",      {"Amplitude", "Alpha (log slope)", "Offset"}},
-        {"gumbelFreeAmp",   {"Amplitude", "Alpha (log slope)", "Offset"}},
+        {"logisticFreeAmp",   {"Amplitude", "Alpha (log slope)", "Offset"}},
+        {"erfFreeAmp",        {"Amplitude", "Alpha (log slope)", "Offset"}},
+        {"gumbelFreeAmp",     {"Amplitude", "Alpha (log slope)", "Offset"}},
 
-        {"logistic4Param",  {"Low Plateau", "High Plateau", "Alpha (log slope)", "Offset"}},
-        {"erf4Param",       {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}},
-        {"gumbel4Param",    {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}}
+        {"logistic4Param",    {"Low Plateau", "High Plateau", "Alpha (log slope)", "Offset"}},
+        {"erf4Param",         {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}},
+        {"gumbel4Param",      {"Baseline",    "Scale",        "Alpha (log slope)", "Offset"}},
+
+        // The "simple" variants use direct slope, not log(slope)
+        {"logisticSimpleAmp", {"Amp", "Slope", "Offset"}},
+        {"erfSimpleAmp",      {"Amp", "Slope", "Offset"}},
+        {"gumbelSimpleAmp",   {"Amp", "Slope", "Offset"}}
     };
 
-    // Results container
+    // Store final results in this struct (same as before)
     struct FitResults {
+        double chi2;
+        double ndf;
         double chi2NDF;
         double x95;
+        std::vector<std::string> parName;
         std::vector<double> par;
         std::vector<double> parErr;
     };
 
-    const int nMethods = (int)methodList.size();
+    const int nMethods = (int)methodList.size(); // 9
     std::vector<FitResults> results(nMethods);
 
-    // Fit range
-    double fitXmin = 11.0;
-    double fitXmax = 22.0;
+    // Official fit range in code is [8.0, 30.0] for jets
+    double fitXmin = 8.0;
+    double fitXmax = 30.0;
 
-    // Create a 3×4 canvas (two rows of plots + two rows of stats)
+    // Create a 3×3 canvas => 9 pads (one per method)
     TCanvas* cFit = new TCanvas("cFit",
-                                "Comparison (3p & 4p logistic/erf/gumbel)",
+                                "Comparison (logistic/erf/gumbel, 3p/4p/simple)",
                                 1600, 1200);
-    cFit->Divide(3, 4);
+    cFit->Divide(3, 3);
 
-    //--------------------------------------------------------------------------
-    // (A) Top rows: do the 6 fits, storing the numeric results
-    //--------------------------------------------------------------------------
+    //----------------------------------------------------------------------
+    // (B) Loop over the 9 methods
+    //----------------------------------------------------------------------
     for (int i = 0; i < nMethods; i++)
     {
-        int padIndex = i + 1; // pad 1..6
-        cFit->cd(padIndex);
+        // Go to sub-pad i+1
+        cFit->cd(i + 1);
         gPad->SetGrid();
 
         const std::string& fitMethod = methodList[i];
         bool is4p = (fitMethod.find("4Param") != std::string::npos);
-        int nPars = (is4p ? 4 : 3);
 
-        // Build a TF1 for the correct function
+        // Number of parameters
+        int nPars = (is4p ? 4 : 3);
+        bool usesLogSlope = (fitMethod.find("Simple") == std::string::npos);
+
+        // Create function over [fitXmin, fitXmax]
         TF1* finalFunc = nullptr;
         if      (fitMethod == "logisticFreeAmp")
-            finalFunc = new TF1("finalFunc_log3p", logisticFreeAmp,
-                                fitXmin, fitXmax, nPars);
+            finalFunc = new TF1(Form("finalFunc_log3p_%d", i),
+                                logisticFreeAmp, fitXmin, fitXmax, nPars);
         else if (fitMethod == "erfFreeAmp")
-            finalFunc = new TF1("finalFunc_erf3p", erfFreeAmp,
-                                fitXmin, fitXmax, nPars);
+            finalFunc = new TF1(Form("finalFunc_erf3p_%d", i),
+                                erfFreeAmp, fitXmin, fitXmax, nPars);
         else if (fitMethod == "gumbelFreeAmp")
-            finalFunc = new TF1("finalFunc_gum3p", gumbelFreeAmp,
-                                fitXmin, fitXmax, nPars);
+            finalFunc = new TF1(Form("finalFunc_gum3p_%d", i),
+                                gumbelFreeAmp, fitXmin, fitXmax, nPars);
         else if (fitMethod == "logistic4Param")
-            finalFunc = new TF1("finalFunc_log4p", logistic4Param,
-                                fitXmin, fitXmax, nPars);
+            finalFunc = new TF1(Form("finalFunc_log4p_%d", i),
+                                logistic4Param, fitXmin, fitXmax, nPars);
         else if (fitMethod == "erf4Param")
-            finalFunc = new TF1("finalFunc_erf4p", erf4Param,
-                                fitXmin, fitXmax, nPars);
-        else
-            finalFunc = new TF1("finalFunc_gum4p", gumbel4Param,
-                                fitXmin, fitXmax, nPars);
+            finalFunc = new TF1(Form("finalFunc_erf4p_%d", i),
+                                erf4Param, fitXmin, fitXmax, nPars);
+        else if (fitMethod == "gumbel4Param")
+            finalFunc = new TF1(Form("finalFunc_gum4p_%d", i),
+                                gumbel4Param, fitXmin, fitXmax, nPars);
+        else if (fitMethod == "logisticSimpleAmp")
+            finalFunc = new TF1(Form("finalFunc_logSimple_%d", i),
+                                logisticSimpleAmp, fitXmin, fitXmax, nPars);
+        else if (fitMethod == "erfSimpleAmp")
+            finalFunc = new TF1(Form("finalFunc_erfSimple_%d", i),
+                                erfSimpleAmp, fitXmin, fitXmax, nPars);
+        else // gumbelSimpleAmp
+            finalFunc = new TF1(Form("finalFunc_gumSimple_%d", i),
+                                gumbelSimpleAmp, fitXmin, fitXmax, nPars);
 
-        // Assign parameter names
-        for (int ip=0; ip<nPars; ip++) {
+        // Assign parameter names (for clarity / CSV)
+        for (int ip = 0; ip < nPars; ip++) {
             finalFunc->SetParName(ip, paramLabels[fitMethod][ip].c_str());
         }
+
+        // Style
         finalFunc->SetLineColor(color);
         finalFunc->SetLineWidth(3);
 
-        // Minimizer config
-        ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
-        ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
-
-        // Auto-estimate slope/offset
-        double alphaGuess = -0.7;
-        double xOffGuess  = 10.0;
-        autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
-
-        // Initialize param
-        if (!is4p) {
-            // 3-parameter
+        // Auto-init guesses
+        if (usesLogSlope && !is4p) {
+            // 3p with log-slope
+            double alphaGuess = -0.7;
+            double xOffGuess  = 7.0;
+            autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
             finalFunc->SetParameter(0, 1.0);
             finalFunc->SetParameter(1, alphaGuess);
             finalFunc->SetParameter(2, xOffGuess);
         }
-        else {
-            // 4-parameter
+        else if (usesLogSlope && is4p) {
+            // 4p with log-slope
+            double alphaGuess = -0.7;
+            double xOffGuess  = 7.0;
+            autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
             if (fitMethod == "logistic4Param") {
                 finalFunc->SetParameter(0, 0.0); // Low
                 finalFunc->SetParameter(1, 1.0); // High
-            }
-            else {
+            } else {
                 finalFunc->SetParameter(0, 0.0); // Baseline
                 finalFunc->SetParameter(1, 1.0); // Scale
             }
             finalFunc->SetParameter(2, alphaGuess);
             finalFunc->SetParameter(3, xOffGuess);
         }
-
-        // Fit
-        TFitResultPtr fitRes = iterativeFit(ratioJet, finalFunc, "R S Q");
-
-        // Retrieve final param & errors
-        std::vector<double> pars(nPars, 0.);
-        std::vector<double> errs(nPars, 0.);
-        for (int ip=0; ip<nPars; ip++) {
-            pars[ip] = finalFunc->GetParameter(ip);
-            errs[ip] = finalFunc->GetParError(ip);
+        else {
+            // "Simple" 3p
+            double ampGuess   = 1.0;
+            double slopeGuess = 1.0;
+            double xOffGuess  = 5.0;
+            autoEstimateSlopeOffsetSimple(ratioJet, ampGuess, slopeGuess, xOffGuess);
+            finalFunc->SetParameter(0, ampGuess);
+            finalFunc->SetParameter(1, slopeGuess);
+            finalFunc->SetParameter(2, xOffGuess);
         }
 
-        // Draw data + fit curve
+        // Perform the fit
+        TFitResultPtr fitRes = iterativeFit(ratioJet, finalFunc, "R S Q");
+
+        // Extract final parameters
+        std::vector<std::string> paramNames(nPars);
+        std::vector<double> pars(nPars), errs(nPars);
+        for (int ip = 0; ip < nPars; ip++) {
+            paramNames[ip] = finalFunc->GetParName(ip);
+            pars[ip]       = finalFunc->GetParameter(ip);
+            errs[ip]       = finalFunc->GetParError(ip);
+        }
+
+        // Draw the histogram
         ratioJet->SetMarkerStyle(20);
         ratioJet->SetMarkerSize(0.9);
         ratioJet->Draw("E1");
-        ratioJet->GetYaxis()->SetRangeUser(0., 2.);
+        ratioJet->GetXaxis()->SetRangeUser(0., 50.);
+        ratioJet->GetYaxis()->SetRangeUser(0., 1.4);
+
+        // Mark [fitXmin, fitXmax]
+        {
+            TLine* leftBound  = new TLine(fitXmin, 0.0, fitXmin, 1.4);
+            leftBound->SetLineStyle(3);
+            leftBound->SetLineColor(kGray+2);
+            leftBound->Draw("SAME");
+
+            TLine* rightBound = new TLine(fitXmax, 0.0, fitXmax, 1.4);
+            rightBound->SetLineStyle(3);
+            rightBound->SetLineColor(kGray+2);
+            rightBound->Draw("SAME");
+        }
+
+        // Build an extension function from 0..50 with same params
+        TF1* extFunc = (TF1*)finalFunc->Clone(Form("extFunc_%s_%d", fitMethod.c_str(), i));
+        extFunc->SetRange(0.0, 50.0);
+        extFunc->SetLineColor(color);
+        extFunc->SetLineStyle(2);
+        extFunc->SetLineWidth(2);
+
+        // Draw extended (dashed), then the official fitted function
+        extFunc->Draw("SAME");
         finalFunc->Draw("SAME");
 
-        // Dashed line at y=1
+        // Horizontal line y=1
         {
             double hMin = ratioJet->GetXaxis()->GetXmin();
             double hMax = ratioJet->GetXaxis()->GetXmax();
@@ -7542,147 +7658,216 @@ void fitComparison6in1_4row(TH1* ratioJet,
             hLine->Draw("SAME");
         }
 
-        // Compute x95 for each shape
-        double x95 = 0.;
+        // Compute x95 exactly
+        double x95 = 0.0;
         if (fitMethod == "logisticFreeAmp") {
-            // 3p logistic => Amp / (1 + exp(-slope*(x - xOff))) => 95% => ...
             double slopeF = TMath::Exp(pars[1]);
             double val    = (1./0.95) - 1.;
             double exponent = -TMath::Log(val);
-            x95 = pars[2] + exponent/slopeF;
+            x95 = pars[2] + exponent / slopeF;
         }
         else if (fitMethod == "erfFreeAmp") {
-            // 3p erf => 0.5 * Amp [1 + erf(...)]
             double slopeF = TMath::Exp(pars[1]);
-            double frac   = 2.*0.95 - 1.; // => 0.90
+            double frac   = 2.*0.95 - 1.; // =>0.90
             double zVal   = TMath::ErfInverse(frac);
-            x95 = pars[2] + (TMath::Sqrt2()*zVal / slopeF);
+            x95 = pars[2] + (TMath::Sqrt2() * zVal / slopeF);
         }
         else if (fitMethod == "gumbelFreeAmp") {
-            // 3p gumbel => Amp exp[-exp(-slope*(x - xOff))]
             double slopeF = TMath::Exp(pars[1]);
-            // ~2.97
-            x95 = pars[2] + 2.97/slopeF;
+            x95 = pars[2] + 2.97 / slopeF; // ~2.97 = -ln(-ln(0.95))
         }
         else if (fitMethod == "logistic4Param") {
             double slopeF = TMath::Exp(pars[2]);
             double val    = (1./0.95) - 1.;
             double exponent = -TMath::Log(val);
-            x95 = pars[3] + exponent/slopeF;
+            x95 = pars[3] + exponent / slopeF;
         }
         else if (fitMethod == "erf4Param") {
             double slopeF = TMath::Exp(pars[2]);
-            double frac   = 2.*0.95 -1.; // =>0.90
+            double frac   = 2.*0.95 - 1.;
             double zVal   = TMath::ErfInverse(frac);
-            x95 = pars[3] + (TMath::Sqrt2()*zVal / slopeF);
+            x95 = pars[3] + (TMath::Sqrt2() * zVal / slopeF);
         }
-        else { // gumbel4Param
+        else if (fitMethod == "gumbel4Param") {
             double slopeF = TMath::Exp(pars[2]);
             double lhs    = -TMath::Log(0.95);
             double zVal   = -TMath::Log(lhs); // ~2.97
             x95 = pars[3] + (zVal / slopeF);
         }
+        else if (fitMethod == "logisticSimpleAmp") {
+            double slope = pars[1];
+            double val   = (1./0.95) - 1.;
+            double exponent = -TMath::Log(val);
+            x95 = pars[2] + exponent / slope;
+        }
+        else if (fitMethod == "erfSimpleAmp") {
+            double slope = pars[1];
+            double frac  = 2.*0.95 - 1.;
+            double zVal  = TMath::ErfInverse(frac);
+            x95 = pars[2] + (TMath::Sqrt2() * zVal / slope);
+        }
+        else if (fitMethod == "gumbelSimpleAmp") {
+            double amp   = pars[0];
+            double slope = pars[1];
+            double ratio = 0.95 / amp;
+            if (ratio>0 && ratio<1) {
+                double zVal = -TMath::Log(-TMath::Log(ratio));
+                x95 = pars[2] + zVal / slope;
+            }
+        }
 
-        // Vertical line at x95 if in range
-        if (x95>fitXmin && x95<fitXmax) {
-            TLine* line95 = new TLine(x95, 0., x95, finalFunc->Eval(x95));
+        // Mark x95 if in [fitXmin, fitXmax]
+        if (x95 > fitXmin && x95 < fitXmax) {
+            double y95 = finalFunc->Eval(x95);
+            if (y95 > 1.4) y95 = 1.4; // clip at the pad top
+            TLine* line95 = new TLine(x95, 0., x95, y95);
             line95->SetLineStyle(2);
             line95->SetLineColor(color);
             line95->SetLineWidth(2);
             line95->Draw("SAME");
         }
 
-        // Store numeric results
+        // Retrieve stats
         double chi2  = fitRes->Chi2();
         double ndf   = fitRes->Ndf();
-        double c2Ndf = (ndf>0)? (chi2/ndf):0.;
+        double c2Ndf = (ndf > 0) ? (chi2 / ndf) : 0.0;
 
-        results[i].chi2NDF = c2Ndf;
-        results[i].x95     = x95;
-        results[i].par     = pars;
-        results[i].parErr  = errs;
-
-        delete finalFunc;
-    }
-
-    //--------------------------------------------------------------------------
-    // (B) Bottom rows: textual stats in pads 7..9 (for 3p) and 10..12 (for 4p)
-    //--------------------------------------------------------------------------
-    for (int i=0; i<nMethods; i++)
-    {
-        int textRow  = (i<3) ? 3 : 4;  // row3 => i=0..2, row4=> i=3..5
-        int colIndex = i % 3;         // 0..2
-        int padIndex = 3*(textRow-1) + (colIndex+1);
-        cFit->cd(padIndex);
-        gPad->Clear();
-        gPad->SetFillColor(0);
-
-        double c2ndf = results[i].chi2NDF;
-        double x95   = results[i].x95;
-        const auto& pars = results[i].par;
-        const auto& errs = results[i].parErr;
-        const auto& fitMethod = methodList[i];
-
-        // More compact but bigger text
-        TLatex lat;
-        lat.SetNDC(true);
-        lat.SetTextFont(42);
-        lat.SetTextAlign(13);
-
-        // (B1) Method title => bigger
-        lat.SetTextSize(0.062);
-        lat.DrawLatex(0.10, 0.82,
-            Form("#bf{%s}", methodTitle.at(fitMethod).c_str()));
-
-        // (B2) Fit Range + Stats => slightly smaller
-        lat.SetTextSize(0.052);
-        double yPos = 0.62;
-        double xPos = 0.10;
-
+        // (NEW) Draw text for method name, x95, and chi2/ndf in this pad
         {
-            std::ostringstream rStr;
-            rStr << "#bf{Fit Range: ["<<fitXmin<<", "<<fitXmax<<"] GeV}";
-            lat.DrawLatex(xPos, yPos, rStr.str().c_str());
-        }
-        yPos -= 0.11;
+            TLatex latPad;
+            latPad.SetNDC(true);
+            latPad.SetTextFont(42);
+            latPad.SetTextSize(0.045);
+            latPad.SetTextAlign(13); // top-left
 
+            double x0 = 0.57;
+            double y0 = 0.65;
+
+            latPad.DrawLatex(x0, y0,
+                Form("#bf{%s}", methodTitle.at(fitMethod).c_str()));
+            y0 -= 0.07;
+            latPad.DrawLatex(x0, y0,
+                Form("#bf{x_{95} = %.1f GeV}", x95));
+            y0 -= 0.07;
+            latPad.DrawLatex(x0, y0,
+                Form("#bf{#chi^{2}/NDF = %.3f}", c2Ndf));
+        }
+
+        // Also top-right label with the trigger name
         {
-            // Here we ensure x95 prints with only one decimal
-            std::ostringstream sStr;
-            sStr << "#bf{#chi^{2}/NDF} = "
-                 << std::fixed << std::setprecision(3) << c2ndf
-                 << "   #bf{x_{95}} = "
-                 << std::fixed << std::setprecision(1) << x95  // <<-- only one decimal
-                 << " GeV";
-            lat.DrawLatex(xPos, yPos, sStr.str().c_str());
+            TLatex latTrig;
+            latTrig.SetNDC(true);
+            latTrig.SetTextFont(42);
+            latTrig.SetTextSize(0.05);
+            latTrig.SetTextAlign(33); // top-right
+            latTrig.DrawLatex(0.90, 0.90, Form("#bf{%s}", jetTrig.c_str()));
         }
-        yPos -= 0.13;
 
-        // (B3) Parameter lines => same or slightly smaller text
-        lat.SetTextSize(0.050);
-        for (size_t ip=0; ip<pars.size(); ip++) {
-            double v  = pars[ip];
-            double ve = errs[ip];
-            std::ostringstream pStr;
-            pStr << "#bf{" << paramLabels.at(fitMethod)[ip]
-                 << "} = "
-                 << std::fixed << std::setprecision(3) << v
-                 << " #pm "
-                 << std::fixed << std::setprecision(3) << ve;
-            lat.DrawLatex(xPos, yPos, pStr.str().c_str());
-            yPos -= 0.10;
+        // Extra legend at bottom-right
+        {
+            TLegend* extraLegend = new TLegend(0.5, 0.2, 0.8, 0.33);
+            extraLegend->SetBorderSize(0);
+            extraLegend->SetFillStyle(0);
+            extraLegend->SetTextSize(0.05);
+            extraLegend->AddEntry((TObject*)nullptr, "#it{#bf{sPHENIX}} Internal", "");
+            extraLegend->AddEntry((TObject*)nullptr, "p+p #sqrt{s} = 200 GeV", "");
+            extraLegend->Draw();
         }
-    }
 
-    //--------------------------------------------------------------------------
-    // (C) Save
-    //--------------------------------------------------------------------------
+        // Save numeric results
+        results[i].chi2      = chi2;
+        results[i].ndf       = ndf;
+        results[i].chi2NDF   = c2Ndf;
+        results[i].x95       = x95;
+        results[i].parName   = paramNames;
+        results[i].par       = pars;
+        results[i].parErr    = errs;
+
+        // ------------------------------------------------------------------
+        // (C) Write this TF1 and the histogram into the ROOT file
+        //     in subdirectories named after the method (NOT the combination)
+        // ------------------------------------------------------------------
+        trigDir->cd();
+        TDirectory* methodDir =
+            dynamic_cast<TDirectory*>( trigDir->Get(fitMethod.c_str()) );
+        if (!methodDir) {
+            methodDir = trigDir->mkdir(fitMethod.c_str());
+        }
+        methodDir->cd();
+
+        finalFunc->SetName("finalFunc");
+        finalFunc->Write("", TObject::kOverwrite);
+
+        // Optionally store the histogram in the same subdir
+        // (If you call this function multiple times on the same histogram,
+        //  or repeatedly, it will keep overwriting the same object name.)
+        ratioJet->SetName("ratioHist");
+        ratioJet->Write("", TObject::kOverwrite);
+
+        delete extFunc;
+    } // end for (methods)
+
+    // ----------------------------------------------------------------------
+    // Save the big canvas as PDF
+    // ----------------------------------------------------------------------
     cFit->cd();
     cFit->Update();
-    std::string outName = plotDirectory + "/Comparison6in1_4row_" + jetTrig + ".png";
+    std::string outName = plotDirectory + "/Comparison9in1_" + jetTrig + ".pdf";
     cFit->SaveAs(outName.c_str());
-
     delete cFit;
+
+    // ----------------------------------------------------------------------
+    // Write the same info to CSV
+    // ----------------------------------------------------------------------
+    std::string csvName = plotDirectory + "/FitResults_" + jetTrig + ".csv";
+    std::ofstream ofs(csvName.c_str());
+    if (!ofs.is_open()) {
+        std::cerr << "[ERROR] Could not open CSV file for writing: " << csvName << std::endl;
+        fOut->Close();
+        return;
+    }
+
+    // Header line
+    ofs << "Method,Chi2NDF,Chi2,NDF,x95GeV";
+    for (int pIndex = 0; pIndex < 4; pIndex++) {
+        ofs << ",Par" << pIndex << "Name"
+            << ",Par" << pIndex << "Val"
+            << ",Par" << pIndex << "Err";
+    }
+    ofs << "\n";
+
+    // Fill lines
+    for (int i = 0; i < nMethods; i++)
+    {
+        const std::string& fitMeth = methodList[i];
+        int nPars = (fitMeth.find("4Param") != std::string::npos) ? 4 : 3;
+
+        ofs << fitMeth
+            << "," << results[i].chi2NDF
+            << "," << results[i].chi2
+            << "," << results[i].ndf
+            << "," << results[i].x95;
+
+        for (int pIndex = 0; pIndex < 4; pIndex++) {
+            if (pIndex < nPars) {
+                ofs << "," << results[i].parName[pIndex]
+                    << "," << results[i].par[pIndex]
+                    << "," << results[i].parErr[pIndex];
+            } else {
+                ofs << ",,,";
+            }
+        }
+        ofs << "\n";
+    }
+
+    ofs.close();
+    std::cout << "[INFO] Wrote CSV file: " << csvName << std::endl;
+
+    //----------------------------------------------------------------------
+    // Finally, close the ROOT file
+    //----------------------------------------------------------------------
+    fOut->Close();
+    std::cout << "[INFO] ROOT file updated: " << rootOutName << std::endl;
 }
 
 
@@ -7709,7 +7894,8 @@ void PlotCombinedHistograms(
 
     if (histogramType == "maxEnergy")
     {
-        histPrefix        = "h_leadingJetET_";
+        //h_maxEnergyClus_NewTriggerFilling_doNotScale_
+        histPrefix        = "h_leadingJetET_NewTriggerFilling_doNotScale_";
         xAxisTitle        = "Maximum Cluster Energy [GeV]";
         xAxisTitleTurnOn  = "Maximum Cluster Energy [GeV]";
     }
@@ -7722,7 +7908,7 @@ void PlotCombinedHistograms(
     }
 
     // Jet triggers always use this, ignoring histogramType:
-    const std::string jetHistPrefix = "h_leadingJetET_";
+    const std::string jetHistPrefix = "h_leadingJetET_NewTriggerFilling_doNotScale_";
 
     // --------------------------------------------------------------------------
     // 2) Remove trailing underscore from histPrefix for file naming
@@ -7767,7 +7953,7 @@ void PlotCombinedHistograms(
         int numColumns;
 
         // Example-based customizing
-        if (runNumbers.size() == 692) {
+        if (runNumbers.size() == 640) {
             numColumns = 27;
             textSize   = 0.012;
             xStart     = 0.54; xEnd = 0.93;
@@ -7824,23 +8010,24 @@ void PlotCombinedHistograms(
             ySpacingFactor = 1.0;
         }
 
-        double headerTextSize = 0.03;
+        double headerTextSize = 0.032;
         runNumbersLatex.SetTextSize(headerTextSize);
         std::ostringstream headerText;
         headerText << runNumbers.size() << " runs";
         if (!firmwareStatus.empty()) {
             headerText << " (" << firmwareStatus << ")";
         }
-        runNumbersLatex.DrawLatex(0.42, 0.9, headerText.str().c_str());
+        runNumbersLatex.DrawLatex(0.45, 0.92, headerText.str().c_str());
 
         // Some sets we skip
-        if (runNumbers.size() == 646 || runNumbers.size() == 251 || runNumbers.size() == 555 ||
+        if (runNumbers.size() == 646 || runNumbers.size() == 644 || runNumbers.size() == 640 ||
             runNumbers.size() == 101 || runNumbers.size() == 240 || runNumbers.size() == 142 ||
             runNumbers.size() == 440 || runNumbers.size() == 443 || runNumbers.size() == 725 ||
             runNumbers.size() == 100 || runNumbers.size() == 250 || runNumbers.size() == 141 ||
-            runNumbers.size() == 254 || runNumbers.size() == 641 || runNumbers.size() == 291 ||
+            runNumbers.size() == 645 || runNumbers.size() == 641 || runNumbers.size() == 291 ||
             runNumbers.size() == 326 || runNumbers.size() == 723 || runNumbers.size() == 382 ||
-            runNumbers.size() == 419 || runNumbers.size() == 539 || runNumbers.size() == 305) {
+            runNumbers.size() == 419 || runNumbers.size() == 539 || runNumbers.size() == 305 ||
+            runNumbers.size() == 84) {
             std::cout << "[INFO] Skipping run number plotting for runNumbers.size() = 692.\n";
             return;
         }
@@ -8010,6 +8197,14 @@ void PlotCombinedHistograms(
         }
 
         legend->Draw();
+        
+        TLegend* extraLegend = new TLegend(0.2, 0.2, 0.5, 0.3);
+        extraLegend->SetBorderSize(0);
+        extraLegend->SetFillStyle(0);
+        extraLegend->SetTextSize(0.038);
+        extraLegend->AddEntry((TObject*)nullptr, "#it{#bf{sPHENIX}} Internal", "");
+        extraLegend->AddEntry((TObject*)nullptr, "p+p #sqrt{s} = 200 GeV", "");
+        extraLegend->Draw();
 
         auto itRunNumbers = combinationToValidRuns.find(combinationName);
         if (itRunNumbers != combinationToValidRuns.end()) {
@@ -8025,250 +8220,399 @@ void PlotCombinedHistograms(
 
         canvas->Modified();
         canvas->Update();
-        std::string outFileName = plotDirectory + "/" + histPrefixForFile + "_Overlay.png";
+        std::string outFileName = plotDirectory + "/" + histPrefixForFile + "_Overlay.pdf";
         canvas->SaveAs(outFileName.c_str());
         std::cout << "[INFO] Saved overlay => " << outFileName << "\n";
         delete canvas;
 
-//        // ----------------------------------------------------------------------
-//        // 8) Photon turn-on
-//        // ----------------------------------------------------------------------
-//        std::vector<std::string> photonTriggersInCombination;
-//        for (const auto& trig : triggers) {
-//            if (std::find(photonTriggers.begin(), photonTriggers.end(), trig) != photonTriggers.end()) {
-//                photonTriggersInCombination.push_back(trig);
-//            }
-//        }
-//        if (!photonTriggersInCombination.empty()) {
-//            TDirectory* minbiasDir = inputFile->GetDirectory("MBD_NandS_geq_1");
-//            if (!minbiasDir) {
-//                std::cerr << "[WARN] MBD_NandS_geq_1 dir missing => " << rootFileName << "\n";
-//            }
-//            else {
-//                std::string minbiasHistName = histPrefix + "MBD_NandS_geq_1";
-//                TH1* minbiasHist = (TH1*)minbiasDir->Get(minbiasHistName.c_str());
-//                if (!minbiasHist) {
-//                    std::cerr << "[WARN] minbias hist => " << minbiasHistName
-//                              << " not found => " << rootFileName << "\n";
-//                }
-//                else {
-//                    TCanvas* cPhotonTurnOn = new TCanvas("cPhotonTurnOn", "Photon Turn-On", 800,600);
-//                    TLegend* legPhotonTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
-//                    legPhotonTurnOn->SetTextSize(0.028);
-//                    bool firstDrawTurnOn = true;
+        // ----------------------------------------------------------------------
+        // 8) Photon turn-on
+        // ----------------------------------------------------------------------
+        {
+            // Identify which triggers are photon triggers
+            std::vector<std::string> photonTriggersInCombination;
+            for (auto &trg: triggers) {
+                if (std::find(photonTriggers.begin(), photonTriggers.end(), trg)!=photonTriggers.end()) {
+                    photonTriggersInCombination.push_back(trg);
+                }
+            }
+
+
+            if (!photonTriggersInCombination.empty()) {
+                TDirectory* minbiasDir = inputFile->GetDirectory("MBD_NandS_geq_1");
+                if (minbiasDir) {
+                    std::string minbiasHistName = histPrefix + "MBD_NandS_geq_1";
+                    TH1* minbiasHist = (TH1*)minbiasDir->Get(minbiasHistName.c_str());
+                    if (minbiasHist) {
+                        TCanvas* cPhotonTurnOn = new TCanvas("cPhotonTurnOn","Photon Turn-On",800,600);
+                        TLegend* legPhotonTurnOn = new TLegend(0.185, 0.77, 0.47, 0.92);
+                        legPhotonTurnOn->SetTextSize(0.026);
+
+                        bool firstDrawTurnOn = true;
+
+                        // 1) If we have run information, add it at the top of the legend
+                        auto itRunNumbers = combinationToValidRuns.find(combinationName);
+                        if (itRunNumbers != combinationToValidRuns.end()) {
+                            // e.g. "640 runs (After firmware update at run 47289)"
+                            std::stringstream runLine;
+                            legPhotonTurnOn->SetTextSize(0.032);
+                            runLine << itRunNumbers->second.size() << " runs (" << firmwareStatus << ")";
+                            legPhotonTurnOn->AddEntry((TObject*)nullptr, runLine.str().c_str(), "");
+                        } else {
+                            legPhotonTurnOn->AddEntry((TObject*)nullptr, "Run numbers not available", "");
+                        }
+
+                        // We'll cycle marker styles among {circle, square, bigger triangle}
+                        static int markerStyles[3] = {20, 21, 22};
+                        static double markerSizes[3] = {1.0, 1.0, 1.3};
+
+                        int trigIndex = 0; // to pick the style/size from the arrays
+
+                        for (auto &photonTrig : photonTriggersInCombination) {
+                            TDirectory* pDir = inputFile->GetDirectory(photonTrig.c_str());
+                            if(!pDir) continue;
+
+                            std::string photonHistName = histPrefix + photonTrig;
+                            TH1* photonHist = (TH1*)pDir->Get(photonHistName.c_str());
+                            if(!photonHist) continue;
+
+                            // Build ratio vs. minbias
+                            TH1* ratioPhoton = (TH1*)photonHist->Clone(("ratio_"+photonTrig).c_str());
+                            ratioPhoton->SetDirectory(nullptr);
+                            ratioPhoton->Divide(photonHist, minbiasHist, 1.0,1.0, "B");
+
+                            // Basic styling
+                            int color = kBlack;
+                            auto itC = triggerColorMap.find(photonTrig);
+                            if(itC!=triggerColorMap.end()) color=itC->second;
+
+                            // Cycle through circle, square, bigger triangle
+                            int styleIndex = trigIndex % 3;
+                            ratioPhoton->SetMarkerStyle(markerStyles[styleIndex]);
+                            ratioPhoton->SetMarkerSize(markerSizes[styleIndex]);
+                            ratioPhoton->SetMarkerColor(color);
+                            ratioPhoton->SetLineColor(color);
+
+                            ratioPhoton->SetTitle(("Photon Turn-On => " + combinationName).c_str());
+                            ratioPhoton->GetXaxis()->SetTitle(xAxisTitleTurnOn.c_str());
+                            ratioPhoton->GetYaxis()->SetTitle("Efficiency");
+                            ratioPhoton->GetXaxis()->SetRangeUser(0.,50.);
+                            ratioPhoton->GetYaxis()->SetRangeUser(0.,1.4);
+                            ratioPhoton->SetMinimum(0.0);     // (NEW) Force lower edge
+                            ratioPhoton->SetMaximum(1.4);     // (NEW) Force upper edge
+
+                            // Draw
+                            if (firstDrawTurnOn) {
+                                ratioPhoton->Draw("E1");
+                                firstDrawTurnOn = false;
+                            } else {
+                                ratioPhoton->Draw("E1 SAME");
+                            }
+
+                            // horizontal line y=1
+                            {
+                                double xmin= ratioPhoton->GetXaxis()->GetXmin();
+                                double xmax= ratioPhoton->GetXaxis()->GetXmax();
+                                TLine* l1 = new TLine(xmin, 1.0, xmax, 1.0);
+                                l1->SetLineStyle(2);
+                                l1->SetLineColor(kBlack);
+                                l1->Draw("SAME");
+                            }
+
+                            // display name
+                            std::string displayName = photonTrig;
+                            auto it_nm = triggerNameMap.find(photonTrig);
+                            if(it_nm!=triggerNameMap.end()) {
+                                displayName = it_nm->second;
+                            }
+                            std::string finalLegendText = displayName;
+
+                            //------------------------------------------------------------------
+                            // Declare TF1* finalFunc OUTSIDE the if(enableFits) block so we
+                            // can still reference it later in the 2-panel code.
+                            //------------------------------------------------------------------
+                            TF1* finalFunc = nullptr;
+                            if (enableFits)
+                            {
+                              // 1) Decide method => e.g. "logisticSimple"
+                              std::string fitMethod = "logisticSimple";
+                              double fitMin = 3.0;
+                              double fitMax = 12.0;
+
+                              // 2) First pass "broadFunc"
+                              TF1* broadFunc = nullptr;
+                              bool useSimple = false;
+
+                              if      (fitMethod == "erfSimple")      { broadFunc = new TF1("broadFunc", erfSimpleAmp,     fitMin, fitMax, 3); useSimple = true; }
+                              else if (fitMethod == "gumbelSimple")   { broadFunc = new TF1("broadFunc", gumbelSimpleAmp,  fitMin, fitMax, 3); useSimple = true; }
+                              else if (fitMethod == "logisticSimple") { broadFunc = new TF1("broadFunc", logisticSimpleAmp, fitMin, fitMax, 3); useSimple = true; }
+                              else if (fitMethod == "erfAmp")         { broadFunc = new TF1("broadFunc", erfFreeAmp,        fitMin, fitMax, 3); }
+                              else if (fitMethod == "gumbelAmp")      { broadFunc = new TF1("broadFunc", gumbelFreeAmp,     fitMin, fitMax, 3); }
+                              else                                    { broadFunc = new TF1("broadFunc", logisticFreeAmp,   fitMin, fitMax, 3); }
+
+                              // Assign parameter names
+                              broadFunc->SetParNames("Amp", (useSimple ? "slope" : "alpha"), "XOffset");
+
+                              // Auto-init
+                              if (useSimple)
+                              {
+                                double Aguess, slopeGuess, xOffGuess;
+                                autoEstimateSlopeOffsetSimple(ratioPhoton, Aguess, slopeGuess, xOffGuess);
+                                broadFunc->SetParameter(0, Aguess);
+                                broadFunc->SetParameter(1, slopeGuess);
+                                broadFunc->SetParameter(2, xOffGuess);
+                              }
+                              else
+                              {
+                                double alphaGuess, xOffGuess;
+                                autoEstimateAlphaOffset(ratioPhoton, alphaGuess, xOffGuess);
+                                broadFunc->SetParameter(0, 1.0);
+                                broadFunc->SetParameter(1, alphaGuess);
+                                broadFunc->SetParameter(2, xOffGuess);
+                              }
+
+                              // 3) First-pass fit => add "N" so it doesn't auto-redraw/rescale
+                              iterativeFit(ratioPhoton, broadFunc, "R S Q N");
+
+                              double ampB   = broadFunc->GetParameter(0);
+                              double slopeB = broadFunc->GetParameter(1);
+                              double xOffB  = broadFunc->GetParameter(2);
+
+                              // 4) Build second pass => "finalFunc"
+                              std::string fitName = "fit_PhotonRatio_" + photonTrig;
+                              if      (fitMethod == "erfSimple")      finalFunc = new TF1(fitName.c_str(), erfSimpleAmp,     fitMin, fitMax, 3);
+                              else if (fitMethod == "gumbelSimple")   finalFunc = new TF1(fitName.c_str(), gumbelSimpleAmp,  fitMin, fitMax, 3);
+                              else if (fitMethod == "logisticSimple") finalFunc = new TF1(fitName.c_str(), logisticSimpleAmp, fitMin, fitMax, 3);
+                              else if (fitMethod == "erfAmp")         finalFunc = new TF1(fitName.c_str(), erfFreeAmp,        fitMin, fitMax, 3);
+                              else if (fitMethod == "gumbelAmp")      finalFunc = new TF1(fitName.c_str(), gumbelFreeAmp,     fitMin, fitMax, 3);
+                              else                                    finalFunc = new TF1(fitName.c_str(), logisticFreeAmp,   fitMin, fitMax, 3);
+
+                              finalFunc->SetParNames("Amp", (useSimple ? "slope" : "alpha"), "XOffset");
+                              finalFunc->SetLineColor(color);
+                              finalFunc->SetRange(fitMin, fitMax);
+                              finalFunc->SetNpx(500);
+
+                              // Initialize from first pass
+                              finalFunc->SetParameter(0, ampB);
+                              finalFunc->SetParameter(1, slopeB);
+                              finalFunc->SetParameter(2, xOffB);
+
+                              // 5) Final fit => again "N" so no auto-rescale
+                              iterativeFit(ratioPhoton, finalFunc, "R S Q N");
+                              finalFunc->Draw("SAME");
+
+                              // 6) Extract final parameters & do EXPLICIT formula for x95
+                              double p0 = finalFunc->GetParameter(0);  // Amp
+                              double p1 = finalFunc->GetParameter(1);  // slope or alpha
+                              double p2 = finalFunc->GetParameter(2);  // xOffset
+                              double x95 = 0.0;
+
+                              if      (fitMethod == "logisticFreeAmp") {
+                                  double slopeF = TMath::Exp(p1);
+                                  double val    = (1./0.95) - 1.;
+                                  double exponent = -TMath::Log(val);
+                                  x95 = p2 + exponent / slopeF;
+                              }
+                              else if (fitMethod == "erfFreeAmp") {
+                                  double slopeF = TMath::Exp(p1);
+                                  double frac   = 2.*0.95 - 1.; // => 0.90
+                                  double zVal   = TMath::ErfInverse(frac);
+                                  x95 = p2 + (TMath::Sqrt2() * zVal / slopeF);
+                              }
+                              else if (fitMethod == "gumbelAmp") {
+                                  double slopeF = TMath::Exp(p1);
+                                  x95 = p2 + 2.97 / slopeF; // ~2.97 = -ln(-ln(0.95))
+                              }
+                              else if (fitMethod == "logisticSimple") {
+                                  double slope = p1; // direct slope
+                                  double val   = (1./0.95) - 1.;
+                                  double exponent = -TMath::Log(val);
+                                  x95 = p2 + exponent / slope;
+                              }
+                              else if (fitMethod == "erfSimple") {
+                                  double slope = p1;
+                                  double frac  = 2.*0.95 - 1.; // => 0.90
+                                  double zVal  = TMath::ErfInverse(frac);
+                                  x95 = p2 + (TMath::Sqrt2() * zVal / slope);
+                              }
+                              else if (fitMethod == "gumbelSimple") {
+                                  // fraction=0.95 => 0.95=amp*exp(-exp(-slope*(x-x0))) => solve
+                                  double ratio = 0.95 / p0; // 0.95 / amp
+                                  if (ratio>0 && ratio<1) {
+                                      double zVal = -TMath::Log(-TMath::Log(ratio));
+                                      x95 = p2 + zVal / p1; // p1 => slope
+                                  }
+                              }
+                              // else could add 4Param logic if needed
+
+                              // 7) Add to legend => e.g. "(95%= 2.1 GeV)"
+                              {
+                                std::ostringstream msg;
+                                msg << " (95%=" << std::fixed << std::setprecision(1) << x95 << " GeV)";
+                                finalLegendText += msg.str();
+                              }
+
+                              // 8) Draw the dashed line if within [fitMin, fitMax]
+                              if (x95 > fitMin && x95 < fitMax)
+                              {
+                                double yCross = finalFunc->Eval(x95);  // Usually near 0.95
+                                if (yCross > 1.4) yCross = 1.4;        // clip to top
+
+                                TLine* line95 = new TLine(x95, 0.0, x95, yCross);
+                                line95->SetLineStyle(2);
+                                line95->SetLineColor(color);
+                                line95->SetLineWidth(2);
+                                line95->Draw("SAME");
+                              }
+
+                              // optional big comparison
+                              fitComparison6in1_4row(ratioPhoton, photonTrig, combinationName, color, plotDirectory);
+
+                              // clean up broadFunc
+                              delete broadFunc;
+                            }
+                            
+                            // Add to legend
+                            legPhotonTurnOn->SetTextSize(0.025);
+                            legPhotonTurnOn->AddEntry(ratioPhoton, finalLegendText.c_str(), "p");
+                            trigIndex++;
+
+//                            // ===================================================================
+//                            // Special single-plot code *only* for Photon_4_GeV_plus_MBD_NS_geq_1
+//                            //         with a 2-panel canvas
+//                            // ===================================================================
+//                            if (photonTrig == "Photon_4_GeV_plus_MBD_NS_geq_1")
+//                            {
+//                                // 1) Make a separate canvas, split into top (~65%) and bottom (~35%) pads
+//                                TCanvas* cPhoton4Only = new TCanvas("cPhoton4Only",
+//                                                                    "Photon 4 GeV Turn-On + Zoom",
+//                                                                    800, 600);
 //
-//                    for (const auto& photonTrigger : photonTriggersInCombination) {
-//                        TDirectory* pDir = inputFile->GetDirectory(photonTrigger.c_str());
-//                        if (!pDir) {
-//                            std::cerr << "[WARN] Photon trig dir => " << photonTrigger
-//                                      << " not found => " << rootFileName << "\n";
-//                            continue;
-//                        }
-//                        std::string photonHistName = histPrefix + photonTrigger;
-//                        TH1* photonHist = (TH1*)pDir->Get(photonHistName.c_str());
-//                        if (!photonHist) {
-//                            std::cerr << "[WARN] Hist => " << photonHistName
-//                                      << " not found => " << rootFileName << "\n";
-//                            continue;
-//                        }
+//                                // Create top pad from y=0.35 up to y=1.0
+//                                TPad* pad1 = new TPad("pad1","Full Range", 0.0, 0.35, 1.0, 1.0);
+//                                // Give the top pad just a small bottom margin
+//                                pad1->SetBottomMargin(0.02);
+//                                pad1->Draw();
 //
-//                        TH1* ratioHist = (TH1*)photonHist->Clone(("ratio_" + photonTrigger).c_str());
-//                        ratioHist->SetDirectory(0);
-//                        ratioHist->Divide(photonHist, minbiasHist, 1.0,1.0,"B");
+//                                // Create bottom pad from y=0.0 up to y=0.35
+//                                TPad* pad2 = new TPad("pad2","Zoom: 10-20 GeV", 0.0, 0.0, 1.0, 0.35);
+//                                // Give it a bigger top margin to ensure the top axis ticks/labels aren’t cut off
+//                                pad2->SetTopMargin(0.07);
+//                                // Also keep enough room for x‐axis labels on the bottom
+//                                pad2->SetBottomMargin(0.25);
+//                                pad2->Draw();
 //
-//                        int color = kBlack;
-//                        auto itColor = triggerColorMap.find(photonTrigger);
-//                        if (itColor != triggerColorMap.end()) color = itColor->second;
+//                                // ---------------------------------------------------------
+//                                // 2) TOP PAD => full turn-on + the same 3-parameter fit
+//                                // ---------------------------------------------------------
+//                                pad1->cd();
 //
-//                        ratioHist->SetMarkerStyle(20);
-//                        ratioHist->SetMarkerColor(color);
-//                        ratioHist->SetLineColor(color);
-//                        ratioHist->SetTitle(("Turn-On for " + combinationName).c_str());
-//                        ratioHist->GetXaxis()->SetTitle(xAxisTitleTurnOn.c_str());
-//                        ratioHist->GetYaxis()->SetTitle("Ratio to MBD");
-//                        ratioHist->GetYaxis()->SetRangeUser(0, 2.0);
+//                                TH1* ratioPhotonTop = (TH1*) ratioPhoton->Clone("ratioPhoton4_top");
+//                                ratioPhotonTop->SetDirectory(nullptr);
+//                                // Show 0–20 GeV in the top pad
+//                                ratioPhotonTop->GetXaxis()->SetRangeUser(0., 20.);
+//                                ratioPhotonTop->Draw("E1");
 //
-//                        if (firstDrawTurnOn) {
-//                            ratioHist->Draw("E1");
-//                            firstDrawTurnOn = false;
-//                        } else {
-//                            ratioHist->Draw("E1 SAME");
-//                        }
+//                                // If we did the 3-parameter fit, draw it here
+//                                if (enableFits && finalFunc) {
+//                                    finalFunc->Draw("SAME");
 //
-//                        TLine* line = new TLine(ratioHist->GetXaxis()->GetXmin(),1,
-//                                                ratioHist->GetXaxis()->GetXmax(),1);
-//                        line->SetLineStyle(1);
-//                        line->SetLineColor(kBlack);
-//                        line->Draw("SAME");
+//                                    // Print the amplitude from the finalFunc
+//                                    double amplitudeVal = finalFunc->GetParameter(0);
+//                                    TLatex latTop;
+//                                    latTop.SetNDC();
+//                                    latTop.SetTextSize(0.05);
+//                                    latTop.DrawLatex(0.2, 0.85, Form("Amplitude = %.3f", amplitudeVal));
+//                                }
 //
-//                        // Fit if available
-//                        std::string displayPhoton = photonTrigger;
-//                        auto it_nm = triggerNameMap.find(photonTrigger);
-//                        if (it_nm != triggerNameMap.end()) {
-//                            displayPhoton = it_nm->second;
-//                        }
-//                        std::ostringstream legendEntry;
-//                        legendEntry << displayPhoton;
+//                                // Optional horizontal line at y=1
+//                                {
+//                                    double xmin = ratioPhotonTop->GetXaxis()->GetXmin();
+//                                    double xmax = ratioPhotonTop->GetXaxis()->GetXmax();
+//                                    TLine* l1 = new TLine(xmin, 1.0, xmax, 1.0);
+//                                    l1->SetLineStyle(2);
+//                                    l1->SetLineColor(kBlack);
+//                                    l1->Draw("SAME");
+//                                }
 //
-//                        // Search fit parameters
-//                        std::pair<std::string, std::string> key = std::make_pair(combinationName, photonTrigger);
-//                        auto it_fitParams = TriggerConfig::triggerFitParameters.find(key);
-//                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
-//                            std::string comboNoFirmware = Utils::stripFirmwareTag(combinationName);
-//                            key = std::make_pair(comboNoFirmware, photonTrigger);
-//                            it_fitParams = TriggerConfig::triggerFitParameters.find(key);
-//                        }
-//                        if (it_fitParams == TriggerConfig::triggerFitParameters.end()) {
-//                            key = std::make_pair("", photonTrigger);
-//                            it_fitParams = TriggerConfig::triggerFitParameters.find(key);
-//                        }
+//                                // ---------------------------------------------------------
+//                                // 3) BOTTOM PAD => zoom 10–20 GeV + constant fit
+//                                // ---------------------------------------------------------
+//                                pad2->cd();
 //
-//                        if (enableFits && it_fitParams != TriggerConfig::triggerFitParameters.end()) {
-//                            DataStructures::FitParameters params = it_fitParams->second;
-//                            TF1* fitFunc = nullptr;
-//                            if (fitFunctionType == "sigmoid") {
-//                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(),
-//                                                            0.0, 20.0,
-//                                                            params.amplitudeEstimate,
-//                                                            params.slopeEstimate,
-//                                                            params.xOffsetEstimate,
-//                                                            params.amplitudeMin,
-//                                                            params.amplitudeMax,
-//                                                            params.slopeMin,
-//                                                            params.slopeMax,
-//                                                            params.xOffsetMin,
-//                                                            params.xOffsetMax);
-//                            }
-//                            else if (fitFunctionType == "erf") {
-//                                fitFunc = Utils::erfFit(("fit_" + photonTrigger).c_str(),
-//                                                        0.0, 20.0,
-//                                                        params.amplitudeEstimate,
-//                                                        params.xOffsetEstimate,
-//                                                        params.sigmaEstimate,
-//                                                        params.amplitudeMin,
-//                                                        params.amplitudeMax,
-//                                                        params.xOffsetMin,
-//                                                        params.xOffsetMax,
-//                                                        params.sigmaMin,
-//                                                        params.sigmaMax);
-//                            }
-//                            else {
-//                                // default to sigmoid
-//                                fitFunc = Utils::sigmoidFit(("fit_" + photonTrigger).c_str(),
-//                                                            0.0, 20.0,
-//                                                            params.amplitudeEstimate,
-//                                                            params.slopeEstimate,
-//                                                            params.xOffsetEstimate,
-//                                                            params.amplitudeMin,
-//                                                            params.amplitudeMax,
-//                                                            params.slopeMin,
-//                                                            params.slopeMax,
-//                                                            params.xOffsetMin,
-//                                                            params.xOffsetMax);
-//                            }
+//                                TH1* ratioPhotonBottom = (TH1*) ratioPhoton->Clone("ratioPhoton4_bottom");
+//                                ratioPhotonBottom->SetDirectory(nullptr);
+//                                ratioPhotonBottom->GetXaxis()->SetRangeUser(10., 20.);
+//                                ratioPhotonBottom->Draw("E1");
 //
-//                            fitFunc->SetLineColor(color);
-//                            ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
-//                            ratioHist->Fit(fitFunc, "R");
-//                            fitFunc->Draw("SAME");
+//                                TF1* fConstant = new TF1("fConstant","[0]", 10., 20.);
+//                                ratioPhotonBottom->Fit(fConstant, "R S Q");  // "R" => range, "S" => store, "Q" => quiet
+//                                fConstant->Draw("SAME");
 //
-//                            double A      = fitFunc->GetParameter(0);
-//                            double A_error= fitFunc->GetParError(0);
+//                                // Print the constant fit result
+//                                double cVal = fConstant->GetParameter(0);
+//                                {
+//                                    TLatex latBot;
+//                                    latBot.SetNDC();
+//                                    latBot.SetTextSize(0.075);
+//                                    latBot.DrawLatex(0.2, 0.78, Form("Constant = %.3f", cVal));
+//                                }
 //
-//                            double x99      = 0;
-//                            double x99_error= 0;
-//                            if (fitFunctionType == "sigmoid") {
-//                                double k      = fitFunc->GetParameter(1);
-//                                double x0     = fitFunc->GetParameter(2);
-//                                double k_error= fitFunc->GetParError(1);
-//                                double x0_error= fitFunc->GetParError(2);
+//                                // Optional horizontal line at y=1 in bottom pad
+//                                {
+//                                    double xmin = ratioPhotonBottom->GetXaxis()->GetXmin();
+//                                    double xmax = ratioPhotonBottom->GetXaxis()->GetXmax();
+//                                    TLine* l1 = new TLine(xmin, 1.0, xmax, 1.0);
+//                                    l1->SetLineStyle(2);
+//                                    l1->SetLineColor(kGray + 2);
+//                                    l1->SetLineWidth(1);
+//                                    l1->Draw("SAME");
+//                                }
 //
-//                                x99 = x0 + (std::log(99) / k);
-//                                x99_error = std::sqrt((x0_error*x0_error) +
-//                                                      (std::pow((std::log(99)/(k*k)),2)*k_error*k_error));
-//                                std::cout << "[FIT] Sigmoid for " << photonTrigger
-//                                          << ": A=" << A << " ± " << A_error
-//                                          << ", k=" << k << " ± " << k_error
-//                                          << ", x0="<< x0 << " ± " << x0_error
-//                                          << ", x99="<< x99 << " ± " << x99_error << " GeV\n";
-//                            }
-//                            else if (fitFunctionType == "erf") {
-//                                double x0 = fitFunc->GetParameter(1);
-//                                double sigma = fitFunc->GetParameter(2);
-//                                double x0_error = fitFunc->GetParError(1);
-//                                double sigma_error = fitFunc->GetParError(2);
-//                                double erfInvVal = TMath::ErfInverse(0.98);
-//                                x99 = x0 + sqrt(2)*sigma*erfInvVal;
-//                                x99_error = std::sqrt(x0_error*x0_error +
-//                                    (sqrt(2)*erfInvVal*sigma_error)*
-//                                    (sqrt(2)*erfInvVal*sigma_error));
-//                                std::cout << "[FIT] Erf for " << photonTrigger
-//                                          << ": A=" << A << " ± " << A_error
-//                                          << ", x0=" << x0 << " ± " << x0_error
-//                                          << ", sigma=" << sigma << " ± " << sigma_error
-//                                          << ", x99=" << x99 << " ± " << x99_error << " GeV\n";
-//                            }
+//                                // 4) Finally, save as PNG
+//                                cPhoton4Only->SaveAs("/Users/patsfan753/Desktop/Photon_4_GeV_ConstantFit.png");
 //
-//                            triggerEfficiencyPoints[photonTrigger] = x99;
-//                            combinationToTriggerEfficiencyPoints[combinationName][photonTrigger] = x99;
-//
-//                            legendEntry << ", 99% eff = "
-//                                        << std::fixed << std::setprecision(2)
-//                                        << x99 << " GeV";
-//
-//                            if (x99 > ratioHist->GetXaxis()->GetXmin() &&
-//                                x99 < ratioHist->GetXaxis()->GetXmax()) {
-//                                TLine* verticalLine = new TLine(x99, 0, x99, 1);
-//                                verticalLine->SetLineStyle(2);
-//                                verticalLine->SetLineColor(color);
-//                                verticalLine->SetLineWidth(5);
-//                                verticalLine->Draw("SAME");
-//                            }
-//                        }
-//                        else {
-//                            std::cerr << "[INFO] No fit parameters found => "
-//                                      << photonTrigger
-//                                      << " in combination => " << combinationName << "\n";
-//                        }
-//
-//                        legPhotonTurnOn->AddEntry(ratioHist, legendEntry.str().c_str(), "p");
-//                        std::cout << "[DEBUG] Legend Entry Added => " << legendEntry.str() << "\n";
-//                    }
-//
-//                    legPhotonTurnOn->Draw();
-//
-//                    TLegend* legendEfficiencyLine = new TLegend(0.18, 0.62, 0.38, 0.72);
-//                    legendEfficiencyLine->SetTextSize(0.03);
-//                    legendEfficiencyLine->SetBorderSize(0);
-//                    legendEfficiencyLine->SetFillStyle(0);
-//                    TLine* dummyLine = new TLine(0,0,0,0);
-//                    dummyLine->SetLineStyle(2);
-//                    dummyLine->SetLineColor(kGray+1);
-//                    dummyLine->SetLineWidth(2);
-//                    legendEfficiencyLine->AddEntry(dummyLine, "99% Efficiency Point", "l");
-//                    legendEfficiencyLine->Draw();
-//
-//                    if (!firmwareStatus.empty()) {
-//                        cPhotonTurnOn->cd();
-//                        TLatex firmwareStatusText;
-//                        firmwareStatusText.SetNDC();
-//                        firmwareStatusText.SetTextAlign(22);
-//                        firmwareStatusText.SetTextSize(0.03);
-//                        firmwareStatusText.SetTextColor(kBlack);
-//                        firmwareStatusText.DrawLatex(0.5, 0.96, firmwareStatus.c_str());
-//                    }
-//
-//                    cPhotonTurnOn->Modified();
-//                    cPhotonTurnOn->Update();
-//
-//                    std::string outputTurnOnFileName = plotDirectory + "/" + histPrefixForFile + "_TurnOn.png";
-//                    cPhotonTurnOn->SaveAs(outputTurnOnFileName.c_str());
-//                    std::cout << "[INFO] Saved turn-on plot => " << outputTurnOnFileName << "\n";
-//
-//                    delete cPhotonTurnOn;
-//                }
-//            }
-//        }
+//                                // Clean up
+//                                delete ratioPhotonTop;
+//                                delete ratioPhotonBottom;
+//                                delete fConstant;
+//                                delete cPhoton4Only;
+//                            } // end if (photonTrig == "Photon_4_GeV_plus_MBD_NS_geq_1")
+
+
+                        } // end loop over photonTriggersInCombination
+
+
+                        // Draw the main legend (top-left)
+                        legPhotonTurnOn->Draw();
+
+
+                        //-------------------------------------------------------------
+                        // EXTRA: Add the lines "#it{#bf{sPHENIX}} Internal" and
+                        //        "p+p #sqrt{s} = 200 GeV" in bottom-right corner
+                        //-------------------------------------------------------------
+                        TLegend* extraLegend = new TLegend(0.55, 0.2, 0.85, 0.3);
+                        extraLegend->SetBorderSize(0);
+                        extraLegend->SetFillStyle(0);
+                        extraLegend->SetTextSize(0.038);
+                        extraLegend->AddEntry((TObject*)nullptr, "#it{#bf{sPHENIX}} Internal", "");
+                        extraLegend->AddEntry((TObject*)nullptr, "p+p #sqrt{s} = 200 GeV", "");
+                        extraLegend->Draw();
+
+                        cPhotonTurnOn->Modified();
+                        cPhotonTurnOn->Update();
+
+                        // Finally, save
+                        std::string outputTurnOnName = plotDirectory + "/" + histPrefixForFile + "_PhotonTurnOn.pdf";
+                        cPhotonTurnOn->SaveAs(outputTurnOnName.c_str());
+                        std::cout << "[INFO] Saved photon turn-on => "<< outputTurnOnName <<"\n";
+
+                        delete cPhotonTurnOn;
+                    } // end if(minbiasHist)
+                } // end if(minbiasDir)
+            }
+        } // end photon triggers
+
 
         // ----------------------------------------------------------------------
         // 9) Jet triggers => always use h_jet_energy_ prefix
@@ -8337,7 +8681,7 @@ void PlotCombinedHistograms(
                         
                         // 1) Zero out bins below 8 GeV
                         for (int bin = 1; bin <= histClone->GetNbinsX(); ++bin) {
-                            if (histClone->GetBinCenter(bin) < 8.0) {
+                            if (histClone->GetBinCenter(bin) < 7.0) {
                                 histClone->SetBinContent(bin, 0);
                                 histClone->SetBinError(bin, 0);
                             }
@@ -8424,6 +8768,17 @@ void PlotCombinedHistograms(
                     }
 
                     legJetOverlay->Draw();
+                    
+                    TLegend* extraLegendOverlay = new TLegend(0.58, 0.4, 0.88, 0.5);
+                    extraLegendOverlay->SetBorderSize(0);
+                    extraLegendOverlay->SetFillStyle(0);
+                    extraLegendOverlay->SetTextSize(0.038);
+                    extraLegendOverlay->AddEntry((TObject*)nullptr, "#it{#bf{sPHENIX}} Internal", "");
+                    extraLegendOverlay->AddEntry((TObject*)nullptr, "p+p #sqrt{s} = 200 GeV", "");
+                    extraLegendOverlay->Draw();
+
+                    cJetOverlay->Modified();
+                    cJetOverlay->Update();
 
                     // Possibly run numbers
                     auto it_runJetOverlay = combinationToValidRuns.find(combinationName);
@@ -8435,7 +8790,7 @@ void PlotCombinedHistograms(
                     cJetOverlay->Update();
 
                     // Save
-                    std::string outJetOverlay = plotDirectory + "/" + jetHistPrefix + "_JetOverlay.png";
+                    std::string outJetOverlay = plotDirectory + "/" + jetHistPrefix + "_JetOverlay.pdf";
                     cJetOverlay->SaveAs(outJetOverlay.c_str());
                     std::cout << "[INFO] Saved Jet overlay => " << outJetOverlay << "\n";
 
@@ -8507,8 +8862,8 @@ void PlotCombinedHistograms(
                     {
                         // Ratio-based "Jet Turn-On"
                         TCanvas* cJetTurnOn = new TCanvas("cJetTurnOn", "Jet Turn-On", 800, 600);
-                        TLegend* legJetTurnOn = new TLegend(0.18, 0.72, 0.45, 0.9);
-                        legJetTurnOn->SetTextSize(0.028);
+                        TLegend* legJetTurnOn = new TLegend(0.18, 0.75, 0.45, 0.9);
+                        legJetTurnOn->SetTextSize(0.026);
                         bool firstJet = true;
 
                         for (const auto& jetTrig : jetTriggersInCombination)
@@ -8547,7 +8902,7 @@ void PlotCombinedHistograms(
 
                             // 3) Zero out bins below 8 GeV
                             for (int bin = 1; bin <= ratioJet->GetNbinsX(); ++bin) {
-                                if (ratioJet->GetBinCenter(bin) < 8.0) {
+                                if (ratioJet->GetBinCenter(bin) < 7.0) {
                                     ratioJet->SetBinContent(bin, 0);
                                     ratioJet->SetBinError(bin, 0);
                                 }
@@ -8557,7 +8912,7 @@ void PlotCombinedHistograms(
                             ratioJet->GetXaxis()->SetRangeUser(0.0, 50.0);
                             ratioJet->SetTitle(("Jet Turn-On => " + combinationName).c_str());
                             ratioJet->GetXaxis()->SetTitle("Leading Jet E_{T} [GeV]");
-                            ratioJet->GetYaxis()->SetTitle("Ratio to MBD");
+                            ratioJet->GetYaxis()->SetTitle("Efficiency");
                             ratioJet->GetYaxis()->SetRangeUser(0, 2.0);
 
                             // Choose color
@@ -8583,149 +8938,206 @@ void PlotCombinedHistograms(
                             // Build a single legend label (with or without the 99% info)
                             std::string finalLegendText = displayJet;
 
-                            std::string fitMethod = "gumbelAmp";
+                            TF1* finalFunc = nullptr;
                             if (enableFits)
                             {
-                                // -------------------------------------------------------------------
-                                // (1) Perform the single "two-pass" fit as normal
-                                //     using whichever fitMethod you want (erfAmp, gumbelAmp, logisticAmp, etc.)
-                                // -------------------------------------------------------------------
+                                // --------------------------------------
+                                // (1) Decide method + range for Jet fits
+                                // --------------------------------------
+                                std::string fitMethod = "logisticSimple";  // e.g. "logisticSimple", "erfAmp", "gumbelAmp", etc.
+                                double fitMin = 8.0;
+                                double fitMax = 30.0;
 
+                                // We'll do a two-pass fit:
+                                //   first pass => "broadFunc"
+                                //   second pass => "finalFunc"
                                 TF1* broadFunc = nullptr;
-                                if (fitMethod == "erfAmp")
-                                {
-                                    broadFunc = new TF1("broadFunc", erfFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using erfFreeAmp in [12,30] for first pass\n";
+                                bool useSimple = false; // 'true' => slope-based, 'false' => alpha-based
+
+                                // --------------------------------------
+                                // (2) Create first-pass "broadFunc"
+                                // --------------------------------------
+                                if      (fitMethod == "erfSimple") {
+                                    broadFunc = new TF1("broadFunc", erfSimpleAmp,     fitMin, fitMax, 3);
+                                    useSimple = true;
                                 }
-                                else if (fitMethod == "gumbelAmp")
-                                {
-                                    broadFunc = new TF1("broadFunc", gumbelFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using gumbelFreeAmp in [12,30] for first pass\n";
+                                else if (fitMethod == "gumbelSimple") {
+                                    broadFunc = new TF1("broadFunc", gumbelSimpleAmp,  fitMin, fitMax, 3);
+                                    useSimple = true;
                                 }
-                                else
-                                {
-                                    // Default => logistic with free amplitude
-                                    broadFunc = new TF1("broadFunc", logisticFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using logisticFreeAmp in [12,30] for first pass\n";
+                                else if (fitMethod == "logisticSimple") {
+                                    broadFunc = new TF1("broadFunc", logisticSimpleAmp, fitMin, fitMax, 3);
+                                    useSimple = true;
+                                }
+                                else if (fitMethod == "erfAmp") {
+                                    broadFunc = new TF1("broadFunc", erfFreeAmp,       fitMin, fitMax, 3);
+                                }
+                                else if (fitMethod == "gumbelAmp") {
+                                    broadFunc = new TF1("broadFunc", gumbelFreeAmp,    fitMin, fitMax, 3);
+                                }
+                                else {
+                                    // default
+                                    broadFunc = new TF1("broadFunc", logisticFreeAmp,  fitMin, fitMax, 3);
                                 }
 
-                                // Name parameters
-                                broadFunc->SetParNames("Amp", "alpha", "XOffset");
-                                broadFunc->SetLineColor(kGray+2);
+                                // Name the parameters:
+                                //  - If "simple", p[1] = slope
+                                //  - If "amp" (free-amp), p[1] = alpha = ln(slope)
+                                broadFunc->SetParNames("Amp", (useSimple ? "slope" : "alpha"), "XOffset");
+                                broadFunc->SetLineColor(kGray + 2);  // or any color
 
-                                // Minimizer
-                                ROOT::Math::MinimizerOptions::SetDefaultMinimizer("Minuit2");
-                                ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(5000);
+                                // --------------------------------------
+                                // Auto-estimate parameters for first pass
+                                // --------------------------------------
+                                if (useSimple) {
+                                    // slope-based fits => autoEstimateSlopeOffsetSimple
+                                    double Aguess, slopeGuess, xOffGuess;
+                                    autoEstimateSlopeOffsetSimple(ratioJet, Aguess, slopeGuess, xOffGuess);
+                                    broadFunc->SetParameter(0, Aguess);
+                                    broadFunc->SetParameter(1, slopeGuess);
+                                    broadFunc->SetParameter(2, xOffGuess);
+                                }
+                                else {
+                                    // alpha-based fits => autoEstimateAlphaOffset
+                                    double alphaGuess, xOffGuess;
+                                    autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
+                                    broadFunc->SetParameter(0, 1.0); // Amp guess
+                                    broadFunc->SetParameter(1, alphaGuess);
+                                    broadFunc->SetParameter(2, xOffGuess);
+                                }
 
-                                // auto-estimate slope & offset
-                                double alphaGuess, xOffGuess;
-                                autoEstimateAlphaOffset(ratioJet, alphaGuess, xOffGuess);
-
-                                double ampGuess = 1.0;
-                                broadFunc->SetParameter(0, ampGuess);
-                                broadFunc->SetParameter(1, alphaGuess);
-                                broadFunc->SetParameter(2, xOffGuess);
-
-                                // First pass
-                                TFitResultPtr firstRes = iterativeFit(ratioJet, broadFunc, "R S Q");
+                                // --------------------------------------
+                                // (3) First-pass fit
+                                // --------------------------------------
+                                TFitResultPtr firstRes = iterativeFit(ratioJet, broadFunc, "R S Q"); // or "R S Q N"
                                 double ampB   = broadFunc->GetParameter(0);
-                                double alphaB = broadFunc->GetParameter(1);
+                                double slopeB = broadFunc->GetParameter(1);
                                 double xOffB  = broadFunc->GetParameter(2);
 
-                                // -------------------------------------------------------------------
-                                // (2) Second pass with same method
-                                // -------------------------------------------------------------------
+                                // --------------------------------------
+                                // (4) Create second-pass "finalFunc"
+                                // --------------------------------------
                                 std::string fitName = "fit_JetRatio_" + jetTrig;
-                                TF1* finalFunc = nullptr;
-                                if (fitMethod == "erfAmp")
-                                {
-                                    finalFunc = new TF1(fitName.c_str(), erfFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using erfFreeAmp for second pass\n";
+                                if      (fitMethod == "erfSimple") {
+                                    finalFunc = new TF1(fitName.c_str(), erfSimpleAmp,     fitMin, fitMax, 3);
                                 }
-                                else if (fitMethod == "gumbelAmp")
-                                {
-                                    finalFunc = new TF1(fitName.c_str(), gumbelFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using gumbelFreeAmp for second pass\n";
+                                else if (fitMethod == "gumbelSimple") {
+                                    finalFunc = new TF1(fitName.c_str(), gumbelSimpleAmp,  fitMin, fitMax, 3);
                                 }
-                                else
-                                {
-                                    finalFunc = new TF1(fitName.c_str(), logisticFreeAmp, 12.0, 30.0, 3);
-                                    std::cout << "[INFO] Using logisticFreeAmp for second pass\n";
+                                else if (fitMethod == "logisticSimple") {
+                                    finalFunc = new TF1(fitName.c_str(), logisticSimpleAmp, fitMin, fitMax, 3);
+                                }
+                                else if (fitMethod == "erfAmp") {
+                                    finalFunc = new TF1(fitName.c_str(), erfFreeAmp,       fitMin, fitMax, 3);
+                                }
+                                else if (fitMethod == "gumbelAmp") {
+                                    finalFunc = new TF1(fitName.c_str(), gumbelFreeAmp,    fitMin, fitMax, 3);
+                                }
+                                else {
+                                    finalFunc = new TF1(fitName.c_str(), logisticFreeAmp,  fitMin, fitMax, 3);
                                 }
 
-                                finalFunc->SetParNames("Amp", "alpha", "XOffset");
+                                finalFunc->SetParNames("Amp", (useSimple ? "slope" : "alpha"), "XOffset");
                                 finalFunc->SetLineColor(color);
+                                finalFunc->SetRange(fitMin, fitMax);
+                                finalFunc->SetNpx(500);
 
                                 // Initialize from first pass
                                 finalFunc->SetParameter(0, ampB);
-                                finalFunc->SetParameter(1, alphaB);
+                                finalFunc->SetParameter(1, slopeB);
                                 finalFunc->SetParameter(2, xOffB);
 
-                                TFitResultPtr finalResult = iterativeFit(ratioJet, finalFunc, "R S");
+                                // --------------------------------------
+                                // (5) Second-pass fit
+                                // --------------------------------------
+                                TFitResultPtr finalResult = iterativeFit(ratioJet, finalFunc, "R S Q"); // or "R S Q N"
                                 finalFunc->Draw("SAME");
 
-                                // Evaluate 95% crossing
-                                double ampFinal     = finalFunc->GetParameter(0);
-                                double alphaFinal   = finalFunc->GetParameter(1);
-                                double xOffsetFinal = finalFunc->GetParameter(2);
-                                double slopeFinal   = TMath::Exp(alphaFinal);
-
+                                // --------------------------------------
+                                // (6) Evaluate x95 crossing explicitly
+                                // --------------------------------------
+                                double p0 = finalFunc->GetParameter(0);  // Amp
+                                double p1 = finalFunc->GetParameter(1);  // slope or alpha
+                                double p2 = finalFunc->GetParameter(2);  // xOffset
                                 double x95 = 0.0;
-                                if (fitMethod == "erfAmp")
-                                {
-                                    double fractionNeeded = (2.0 * 0.95) - 1.0; // 0.90
-                                    double zVal           = TMath::ErfInverse(fractionNeeded);
-                                    x95 = xOffsetFinal + (TMath::Sqrt2() * zVal / slopeFinal);
-                                }
-                                else if (fitMethod == "gumbelAmp")
-                                {
-                                    double zVal = 2.97;
-                                    x95 = xOffsetFinal + (zVal / slopeFinal);
-                                }
-                                else
-                                {
-                                    double val = (1.0 / 0.95) - 1.0; // ~0.05263
-                                    double exponent = -TMath::Log(val);
-                                    x95 = xOffsetFinal + (exponent / slopeFinal);
-                                }
 
+                                if      (fitMethod == "logisticFreeAmp") {
+                                    // p1 = ln(slope)
+                                    double slopeF  = TMath::Exp(p1);
+                                    double val     = (1./0.95) - 1.;  // ~0.05263
+                                    double exponent = -TMath::Log(val);
+                                    x95 = p2 + exponent / slopeF;
+                                }
+                                else if (fitMethod == "erfFreeAmp") {
+                                    double slopeF = TMath::Exp(p1);
+                                    double frac   = 2.*0.95 - 1.;   // => 0.90
+                                    double zVal   = TMath::ErfInverse(frac);
+                                    x95 = p2 + (TMath::Sqrt2() * zVal / slopeF);
+                                }
+                                else if (fitMethod == "gumbelAmp") {
+                                    //  ~2.97 = -ln(-ln(0.95))
+                                    double slopeF = TMath::Exp(p1);
+                                    x95 = p2 + 2.97 / slopeF;
+                                }
+                                else if (fitMethod == "logisticSimple") {
+                                    // p1 = slope directly
+                                    double val = (1./0.95) - 1.;
+                                    double exponent = -TMath::Log(val);
+                                    x95 = p2 + exponent / p1;
+                                }
+                                else if (fitMethod == "erfSimple") {
+                                    // p1 = slope
+                                    double frac = 2.*0.95 - 1.; // => 0.90
+                                    double zVal = TMath::ErfInverse(frac);
+                                    x95 = p2 + (TMath::Sqrt2() * zVal / p1);
+                                }
+                                else if (fitMethod == "gumbelSimple") {
+                                    // fraction=0.95 => 0.95=amp*exp(-exp(-slope*(x-x0)))
+                                    double ratio = 0.95 / p0; // 0.95 / Amp
+                                    if (ratio>0 && ratio<1) {
+                                        double zVal = -TMath::Log(-TMath::Log(ratio));
+                                        x95 = p2 + zVal / p1; // p1 => slope
+                                    }
+                                }
+                                // else if (fitMethod == "some4Param") { ... }
+
+                                // Store or print x95
                                 combinationToTriggerEfficiencyPoints[combinationName][jetTrig] = x95;
 
-                                if (x95 > 12.0 && x95 < 30.0)
+                                // Draw vertical line if x95 is in [fitMin, fitMax]
+                                if (x95 > fitMin && x95 < fitMax)
                                 {
-                                    TLine* verticalLine = new TLine(x95, 0.0, x95, ampFinal);
+                                    double y95 = finalFunc->Eval(x95); // typically near 0.95
+                                    TLine* verticalLine = new TLine(x95, 0.0, x95, y95);
                                     verticalLine->SetLineStyle(2);
                                     verticalLine->SetLineColor(color);
                                     verticalLine->SetLineWidth(2);
                                     verticalLine->Draw("SAME");
                                 }
 
-                                // Here is where we insert x95 into the legend text with one decimal:
+                                // Add the (95% = XX GeV) text somewhere, e.g. in a legend
                                 {
                                     std::ostringstream msg;
-                                    msg << " (95% = "
-                                        << std::fixed << std::setprecision(1)  // 1 decimal place
-                                        << x95 << " GeV)";
+                                    msg << " (95% = " << std::fixed << std::setprecision(1) << x95 << " GeV)";
                                     finalLegendText += msg.str();
                                 }
 
+                                // Optional big comparison after the single fit
+                                fitComparison6in1_4row(ratioJet, jetTrig, combinationName, color, plotDirectory);
+
+                                // Clean up first-pass TF1
+                                delete broadFunc;
+
+                                // Print final fit results
                                 double chi2 = finalResult->Chi2();
                                 double ndf  = finalResult->Ndf();
-                                double chi2NDF = (ndf>0.0)? (chi2/ndf) : 0.0;
-
+                                double chi2NDF = (ndf > 0.0) ? (chi2 / ndf) : 0.0;
                                 std::cout << "\n\033[1;31m"
                                           << "============================================================\n"
-                                          << " Final Fit Results for " << jetTrig << "  (free-amp turn-on)\n"
+                                          << " Final Fit Results for " << jetTrig << " (" << fitMethod << ")\n"
                                           << "============================================================\n"
                                           << "\033[0m";
-                                std::cout << std::setw(12) << "chi2/NDF"
-                                          << std::setw(12) << std::fixed << std::setprecision(4) << chi2NDF
-                                          << "\n---------------------------------------------\n";
-                                std::cout << std::setw(12) << "Parameter"
-                                          << std::setw(12) << "Value"
-                                          << std::setw(15) << "Error"
-                                          << "\n---------------------------------------------\n";
-
+                                std::cout << "   chi2/NDF = " << chi2NDF << "\n---------------------------------------------\n";
                                 for (int p = 0; p < finalFunc->GetNpar(); ++p)
                                 {
                                     double val = finalFunc->GetParameter(p);
@@ -8735,23 +9147,7 @@ void PlotCombinedHistograms(
                                               << std::setw(15) << std::fixed << std::setprecision(8) << err
                                               << "\n";
                                 }
-                                std::cout << "-----------------------------------------\n\n";
-
-                                // optional
-                                delete broadFunc;
-
-                                // -------------------------------------------------------------------
-                                // (3) ADDITIONAL: CALL THE 3-in-1 COMPARISON
-                                // -------------------------------------------------------------------
-                                // You can place this call AFTER the single fit is done,
-                                // so you produce the combined "Comparison3in1" as well.
-                                //   ratioJet   => the same histogram
-                                //   jetTrig    => the same trigger
-                                //   color      => your line color
-                                //   plotDirectory => where to save
-
-                                fitComparison6in1_4row(ratioJet, jetTrig, combinationName, color, plotDirectory);
-
+                                std::cout << "---------------------------------------------\n\n";
                             }
 
 
@@ -8770,18 +9166,30 @@ void PlotCombinedHistograms(
                         // Draw legend
                         legJetTurnOn->Draw();
 
-//                        // Possibly run numbers
-//                        auto it_runJet = combinationToValidRuns.find(combinationName);
-//                        if (it_runJet != combinationToValidRuns.end())
-//                        {
-//                            drawRunNumbersOnCanvas(it_runJet->second, firmwareStatus);
-//                        }
+                        
+                        // Possibly run numbers
+                        auto it_runJet = combinationToValidRuns.find(combinationName);
+                        if (it_runJet != combinationToValidRuns.end())
+                        {
+                            drawRunNumbersOnCanvas(it_runJet->second, firmwareStatus);
+                        }
+
+                        
+                        // ADD THESE LINES:
+                        TLegend* extraLegendTurnOn = new TLegend(0.55, 0.2, 0.85, 0.3);
+                        extraLegendTurnOn->SetBorderSize(0);
+                        extraLegendTurnOn->SetFillStyle(0);
+                        extraLegendTurnOn->SetTextSize(0.038);
+                        extraLegendTurnOn->AddEntry((TObject*)nullptr, "#it{#bf{sPHENIX}} Internal", "");
+                        extraLegendTurnOn->AddEntry((TObject*)nullptr, "p+p #sqrt{s} = 200 GeV", "");
+                        extraLegendTurnOn->Draw();
 
                         cJetTurnOn->Modified();
                         cJetTurnOn->Update();
 
+
                         // Save
-                        std::string outJetTurnOn = plotDirectory + "/" + jetHistPrefix + "_JetTurnOn.png";
+                        std::string outJetTurnOn = plotDirectory + "/" + jetHistPrefix + "_JetTurnOn.pdf";
                         cJetTurnOn->SaveAs(outJetTurnOn.c_str());
                         delete cJetTurnOn;
                     }
@@ -9286,21 +9694,6 @@ void ProcessAllIsolationEnergies(
     }
 }
 
-#include <TFile.h>
-#include <TTree.h>
-#include <TKey.h>
-#include <TDirectory.h>
-#include <TCanvas.h>
-#include <TLegend.h>
-#include <TH1.h>
-#include <TSystem.h>
-#include <TList.h>
-#include <iostream>
-#include <map>
-#include <vector>
-#include <string>
-#include <algorithm>
-
 //----------------------------------------------------------------------------
 // Helper function that returns the MC expression for a given "shower shape base".
 // Adjust these mappings to match how you want to interpret each ratio/variable
@@ -9720,244 +10113,244 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     bool debugMode = false;
     std::map<int, std::map<std::string, std::string>> overrideTriggerStatus; // Empty map
     
-    overrideTriggerStatus[47333]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47363]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47380]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47628]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47636]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47637]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47638]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47650]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47657]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47659]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47666]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47667]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47715]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47716]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47719]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47725]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47727]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47730]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47791]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47824]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47873]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47889]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47890]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47892]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47893]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47944]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47946]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47975]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47977]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47982]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47999]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48001]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48084]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48089]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48097]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48185]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48233]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48236]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48237]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48239]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48240]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48246]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48255]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48256]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48257]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48258]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48259]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48260]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48261]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48262]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48263]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48265]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48290]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48291]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48293]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48294]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48295]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48312]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48313]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48320]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48323]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48325]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48326]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48342]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48346]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48348]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48349]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48352]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48356]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48357]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48358]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48359]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48364]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48366]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48367]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48368]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48369]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48398]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48409]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48410]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48412]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48416]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48417]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48421]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48461]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48462]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48469]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48513]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48516]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48518]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48519]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48520]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48522]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48530]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48531]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48533]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48625]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48635]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48636]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49118]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[47482]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49251]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49254]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49218]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49224]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49226]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48645]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48657]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48658]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48721]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48725]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48743]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48745]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48813]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48824]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48829]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48863]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50663]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50676]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50677]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50853]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50875]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50885]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50886]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50897]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50965]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50969]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50987]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50992]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51012]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51093]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51152]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51160]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51162]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51179]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51188]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51200]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51201]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51202]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51208]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51230]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51493]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51495]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51502]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51504]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51509]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51570]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51573]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[51574]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49230]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49241]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49245]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48867]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48883]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48900]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48935]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48938]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48940]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48971]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48982]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48984]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48987]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[48990]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49026]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49029]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49030]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49031]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49060]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49066]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49070]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49071]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49073]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49100]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49113]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49133]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49308]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49311]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49313]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49317]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49339]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49340]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49341]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49346]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49347]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49362]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49368]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49369]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49374]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49379]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49384]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49390]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49437]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49439]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49445]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49446]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49449]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49454]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49455]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49658]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49736]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49742]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49743]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49752]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49756]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49761]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49925]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49959]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49962]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[49967]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50046]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50047]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50070]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50073]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50076]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50520]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50535]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50536]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50546]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50561]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50563]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50564]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50569]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50600]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50601]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50605]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50607]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50615]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50655]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    overrideTriggerStatus[50660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
-    
+//    overrideTriggerStatus[47333]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47363]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47380]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47628]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47636]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47637]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47638]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47650]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47657]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47659]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47666]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47667]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47715]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47716]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47719]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47725]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47727]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47730]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47791]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47824]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47873]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47889]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47890]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47892]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47893]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47944]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47946]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47975]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47977]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47982]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47999]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48001]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48084]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48089]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48097]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48185]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48233]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48236]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48237]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48239]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48240]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48246]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48255]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48256]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48257]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48258]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48259]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48260]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48261]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48262]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48263]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48265]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48290]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48291]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48293]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48294]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48295]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48312]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48313]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48320]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48323]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48325]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48326]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48342]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48346]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48348]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48349]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48352]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48356]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48357]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48358]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48359]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48364]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48366]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48367]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48368]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48369]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48398]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48409]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48410]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48412]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48416]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48417]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48421]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48461]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48462]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48469]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48513]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48516]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48518]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48519]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48520]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48522]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48530]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48531]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48533]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48625]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48635]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48636]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49118]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[47482]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49251]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49254]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49218]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49224]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49226]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48645]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48657]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48658]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48721]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48725]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48743]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48745]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48813]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48824]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48829]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48863]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50663]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50676]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50677]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50853]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50875]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50885]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50886]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50897]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50965]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50969]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50987]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50992]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51012]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51093]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51152]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51160]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51162]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51179]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51188]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51200]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51201]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51202]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51208]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51230]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51493]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51495]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51502]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51504]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51509]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51570]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51573]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[51574]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49230]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49241]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49245]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48867]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48883]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48900]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48935]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48938]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48940]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48971]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48982]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48984]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48987]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[48990]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49026]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49029]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49030]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49031]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49060]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49066]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49070]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49071]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49073]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49100]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49113]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49133]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49308]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49311]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49313]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49317]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49339]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49340]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49341]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49346]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49347]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49362]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49368]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49369]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49374]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49379]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49384]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49390]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49437]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49439]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49445]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49446]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49449]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49454]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49455]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49658]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49662]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49664]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49736]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49742]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49743]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49752]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49756]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49761]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49925]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49959]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49962]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[49967]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50046]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50047]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50070]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50073]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50076]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50520]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50535]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50536]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50546]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50561]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50563]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50564]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50569]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50600]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50601]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50605]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50607]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50615]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50655]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//    overrideTriggerStatus[50660]["Jet_12_GeV_plus_MBD_NS_geq_1"] = "OFF";
+//
     
     
     
@@ -10086,7 +10479,7 @@ void AnalyzeTriggerGroupings(std::string specificCombinationName = "") {
     PlotCombinedHistograms(outputDirectory, combinedRootFiles, combinationToValidRuns, "sigmoid", false);
 
 //    ProcessAllIsolationEnergies(outputDirectory, combinedRootFiles, TriggerCombinationNames::triggerCombinationNameMap);
-//    
+//
 //    ProcessAllShowerShapeQA(
 //        outputDirectory,
 //        combinedRootFiles,
